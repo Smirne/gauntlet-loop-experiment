@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>MICRO GAUNTLET</title>
+<link rel="stylesheet" href="./src/ui/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/build/three.module.js",
+    "three/addons/": "./vendor/three/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+  <div id="app">
+    <canvas id="stage"></canvas>
+    <div id="ui-root"></div>
+    <div id="boot">
+      <div class="boot-inner">
+        <div class="boot-logo">MICRO<span>GAUNTLET</span></div>
+        <div class="boot-bar"><i></i></div>
+        <div class="boot-msg">warming up the tarmac&hellip;</div>
+      </div>
+    </div>
+    <div id="fatal" hidden><pre></pre></div>
+  </div>
+  <script type="module">
+    window.addEventListener('error', (e) => window.__mgFatal?.(e.error || e.message));
+    window.addEventListener('unhandledrejection', (e) => window.__mgFatal?.(e.reason));
+    window.__mgFatal = (err) => {
+      const el = document.getElementById('fatal');
+      if (!el) return;
+      el.hidden = false;
+      el.querySelector('pre').textContent = (err && (err.stack || err.message)) || String(err);
+      console.error('[MICRO GAUNTLET] fatal:', err);
+    };
+    import('./src/main.js').catch((err) => window.__mgFatal(err));
+  </script>
+</body>
+</html>
