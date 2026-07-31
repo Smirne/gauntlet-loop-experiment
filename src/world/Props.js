@@ -1358,14 +1358,27 @@ export class Props {
     }
   }
 
+  /**
+   * Ground normal, forced into the upper hemisphere. The sign guard is load
+   * bearing, not padding: world/Track.js builds its frame normal as
+   * cross(right, tangent), which evaluates to -up, and a prop oriented to it
+   * would be rotated 180 degrees and planted through the floor.
+   */
   _normalAt(x, z, out) {
     const t = this.trackRef;
     out.set(0, 1, 0);
     if (!t?.normalAt) return out;
     try {
       const n = t.normalAt(x, z, out);
-      if (n && Number.isFinite(n.y)) out.copy(n);
-    } catch (err) { /* flat ground is a fine fallback */ }
+      if (n && Number.isFinite(n.x + n.y + n.z) && n.lengthSq() > 1e-6) {
+        out.copy(n);
+        if (out.y < 0) out.negate();
+      } else {
+        out.set(0, 1, 0);
+      }
+    } catch (err) {
+      out.set(0, 1, 0);
+    }
     return out;
   }
 
