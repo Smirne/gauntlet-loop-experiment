@@ -49,6 +49,7 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
   /* set from JS on every resize: viewport factor x user ui scale */
   --mg-vp: 1;
   --mg-ui: 1;
+  --mg-mn: 1;
   --mg-s: calc(var(--mg-vp) * var(--mg-ui));
 
   /* --- ground ---------------------------------------------------------- */
@@ -305,8 +306,12 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
 .hud-c--tr { top: 0; right: 0; padding: var(--s5) var(--s5) 0 0; transform-origin: 100% 0;  transform: scale(var(--mg-s)); flex-direction: column; align-items: flex-end; gap: var(--s2); }
 .hud-c--bl { bottom: 0; left: 0; padding: 0 0 var(--s5) var(--s5); transform-origin: 0 100%; transform: scale(var(--mg-s)); flex-direction: column; gap: var(--s2); }
 .hud-c--br { bottom: 0; right: 0; padding: 0 var(--s5) var(--s5) 0; transform-origin: 100% 100%; transform: scale(var(--mg-s)); align-items: flex-end; gap: var(--s3); }
-.hud-c--bc { bottom: 0; left: 50%; padding-bottom: var(--s4); transform-origin: 50% 100%; transform: translateX(-50%) scale(var(--mg-s)); }
-.hud-c--tc { top: 0; left: 50%; padding-top: var(--s5); transform-origin: 50% 0; transform: translateX(-50%) scale(var(--mg-s)); flex-direction: column; align-items: center; gap: var(--s2); width: 720px; }
+/* The two centred clusters scale about their anchor *edge* and translate in
+   the element's own space, so the percentage translate is scaled with them.
+   Origin 50% with a percentage translate would drift as --mg-s moves away
+   from 1 — the classic version of this bug. */
+.hud-c--bc { bottom: 0; left: 50%; padding-bottom: var(--s4); transform-origin: 0 100%; transform: scale(var(--mg-s)) translateX(-50%); }
+.hud-c--tc { top: 0; left: 50%; padding-top: var(--s5); transform-origin: 0 0; transform: scale(var(--mg-s)) translateX(-50%); flex-direction: column; align-items: center; gap: var(--s2); width: 720px; }
 
 /* --- position ------------------------------------------------------------- */
 
@@ -439,19 +444,42 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
 
 .hud-gauge { position: relative; width: 210px; height: 210px; }
 .hud-gauge svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+/* Dial face. Presentation attributes can't take custom properties, so every
+   part of the gauge is styled from here — which also keeps the SVG builder in
+   HUD.js free of hard-coded colour. */
+.spd-face  { fill: rgba(8, 10, 15, .74); stroke: rgba(255, 255, 255, .10); stroke-width: 2; }
+.spd-track { fill: none; stroke: rgba(255, 255, 255, .10); stroke-width: 9; stroke-linecap: butt; }
+.spd-red   { fill: none; stroke: rgba(255, 59, 82, .55); stroke-width: 9; stroke-linecap: butt; }
+.spd-val   { fill: none; stroke: var(--accent); stroke-width: 9; stroke-linecap: butt; filter: drop-shadow(0 0 6px rgba(255, 90, 60, .55)); transition: none; }
+.spd-rpm   { fill: none; stroke: rgba(53, 224, 255, .70); stroke-width: 5; stroke-linecap: butt; }
+.spd-rpm.is-hot { stroke: var(--bad); }
+.spd-tick  { stroke: rgba(255, 255, 255, .28); stroke-width: 2; }
+.spd-tick--maj { stroke: rgba(255, 255, 255, .70); stroke-width: 3.5; }
+.spd-num   { fill: var(--ink-2); font: 800 15px/1 var(--f-num); text-anchor: middle; }
+.spd-needle > polygon { fill: var(--accent); filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .8)); }
+.spd-hub    { fill: #12151d; stroke: rgba(255, 255, 255, .3); stroke-width: 2; }
+.spd-hub-in { fill: var(--accent); }
+/* A digital window sunk into the dial face, so the needle passing behind it at
+   low speed reads as instrumentation rather than as an overlap bug. */
 .hud-gauge-read {
-  position: absolute; left: 0; right: 0; bottom: 44px;
+  position: absolute; left: 50%; bottom: 40px;
+  width: 124px; margin-left: -62px;
+  padding: 5px 0 6px;
   text-align: center;
   pointer-events: none;
+  background: linear-gradient(180deg, rgba(4, 6, 10, .88), rgba(4, 6, 10, .70));
+  clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07);
 }
 .hud-speed {
-  font: 900 46px/1 var(--f-num);
+  font: 900 42px/1 var(--f-num);
   font-variant-numeric: tabular-nums;
   color: #fff;
   letter-spacing: -.03em;
-  text-shadow: var(--tshadow-lg);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, .9), 0 0 18px rgba(255, 255, 255, .18);
 }
-.hud-speed-unit { font: 800 var(--t1)/1 var(--f-ui); letter-spacing: .3em; color: var(--ink-3); margin-top: 2px; }
+.hud-speed-unit { font: 800 var(--t1)/1 var(--f-ui); letter-spacing: .3em; color: var(--ink-3); margin-top: 3px; }
 
 .hud-gear {
   position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%);
@@ -498,6 +526,7 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
 
 /* --- banners / warnings --------------------------------------------------- */
 
+.hud-banners { display: flex; flex-direction: column; align-items: center; gap: var(--s2); }
 .hud-banner {
   padding: 10px var(--s6);
   background: linear-gradient(90deg, var(--accent-lo), var(--accent) 55%, #ff8a5c);
@@ -614,23 +643,34 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
 
 /* Vignette + scanline veil. Keeps type legible over any attract-mode frame
    without hiding the action behind a solid panel. */
+/* Title/pause scrim: a dark column on the left for the type, and enough left
+   over on the right that the attract-mode camera is still a picture. */
 .mn-veil {
   position: absolute; inset: 0;
   background:
-    repeating-linear-gradient(0deg, rgba(0, 0, 0, .22) 0 1px, transparent 1px 3px),
-    radial-gradient(120% 90% at 30% 40%, rgba(6, 7, 11, .30) 0%, rgba(6, 7, 11, .82) 72%);
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, .20) 0 1px, transparent 1px 3px),
+    linear-gradient(90deg, rgba(6, 7, 11, .90) 0%, rgba(6, 7, 11, .66) 32%, rgba(6, 7, 11, .30) 60%, rgba(6, 7, 11, .48) 100%),
+    radial-gradient(120% 100% at 58% 46%, rgba(6, 7, 11, 0) 26%, rgba(6, 7, 11, .60) 100%);
   animation: mg-scanroll 1.2s linear infinite;
 }
 .mn-veil--heavy { background:
     repeating-linear-gradient(0deg, rgba(0, 0, 0, .26) 0 1px, transparent 1px 3px),
     linear-gradient(105deg, rgba(6, 7, 11, .96) 0%, rgba(6, 7, 11, .90) 46%, rgba(6, 7, 11, .70) 100%); }
 
+/* The garage veil has to leave the left of frame clear: the car behind it is
+   the real renderer, and a full-screen scrim would black it out. Opaque only
+   under the spec sheet, with a vignette to keep the stage composed. */
+.mn-veil--stage { background:
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, .20) 0 1px, transparent 1px 3px),
+    radial-gradient(80% 120% at 30% 50%, rgba(6, 7, 11, 0) 30%, rgba(6, 7, 11, .55) 100%),
+    linear-gradient(90deg, rgba(6, 7, 11, .06) 0%, rgba(6, 7, 11, .22) 42%, rgba(6, 7, 11, .93) 62%, rgba(6, 7, 11, .97) 100%); }
+
 /* Design frame: everything inside is authored against 1280x720. */
 .mn-frame {
   position: absolute; left: 50%; top: 50%;
   width: 1280px; height: 720px;
   margin: -360px 0 0 -640px;
-  transform: scale(var(--mg-s));
+  transform: scale(var(--mg-mn, 1));
   transform-origin: 50% 50%;
 }
 .mn-page { position: absolute; inset: 0; padding: var(--s6); display: flex; flex-direction: column; }
@@ -665,7 +705,8 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
 .mn-logo-rule .mg-rule { flex: 1; }
 .mn-logo-sub { font: 800 var(--t2)/1 var(--f-ui); letter-spacing: .42em; text-transform: uppercase; color: var(--ink-3); white-space: nowrap; }
 
-.mn-mark { position: absolute; right: -8px; top: 4px; width: 92px; height: 92px; opacity: .95; }
+.mn-mark { position: absolute; right: -8px; top: 4px; width: 92px; height: 92px; }
+.mn-mark path { fill: var(--accent); }
 
 /* --- title layout --------------------------------------------------------- */
 
@@ -674,10 +715,10 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
 .mn-nav .mg-btn { width: 100%; }
 .mn-blurb { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: var(--s3); padding-bottom: var(--s3); }
 .mn-blurb-title { font: 900 var(--t5)/1 var(--f-display); letter-spacing: .06em; color: var(--ink); text-shadow: var(--tshadow); transform: skewX(-6deg); }
-.mn-blurb-text { font: 500 var(--t3)/1.55 var(--f-ui); color: var(--ink-2); max-width: 520px; }
+.mn-blurb-text { font: 500 var(--t3)/1.55 var(--f-ui); color: var(--ink-2); max-width: 520px; text-shadow: 0 2px 4px rgba(0, 0, 0, .8); }
 .mn-stat-row { display: flex; gap: var(--s5); }
 .mn-stat { display: flex; flex-direction: column; gap: 6px; }
-.mn-stat-v { font: 900 var(--t4)/1 var(--f-num); color: var(--ink); }
+.mn-stat-v { font: 900 var(--t4)/1 var(--f-num); color: var(--ink); text-shadow: var(--tshadow); }
 
 /* --- footer / hints ------------------------------------------------------- */
 
@@ -743,9 +784,19 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
 }
 .mn-arrow:hover, .mn-arrow.is-focused { background: rgba(255, 90, 60, .3); color: #fff; transform: scale(1.08); }
 
-/* fallback card if the 3D preview could not be built */
-.mn-stage-fallback { position: absolute; inset: 12%; display: grid; place-items: center; }
-.mn-stage-fallback svg { width: 100%; height: auto; }
+/* Fallback card if the 3D preview could not be built. It is a real side
+   elevation plotted from the chassis's own body sections, not a placeholder. */
+.mn-stage-fallback { position: absolute; inset: 14% 10% 22%; display: grid; place-items: center; }
+.mn-stage-fallback svg { width: 100%; height: 100%; }
+.mn-sil-body {
+  fill: var(--plate-3);
+  stroke: var(--accent);
+  stroke-width: .12;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 .3px 0 rgba(0, 0, 0, .9));
+}
+.mn-sil-tyre { fill: #14161b; stroke: rgba(255, 255, 255, .16); stroke-width: .07; }
+.mn-sil-rim  { fill: #454b57; }
 
 .mn-spec { width: 424px; display: flex; flex-direction: column; gap: var(--s3); }
 .mn-spec-blurb { font: 500 var(--t3)/1.5 var(--f-ui); color: var(--ink-2); min-height: 72px; }
@@ -919,11 +970,12 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
  * 6. Results
  * ========================================================================== */
 
-#mg-results { position: absolute; inset: 0; pointer-events: auto; }
-#mg-results.is-out { opacity: 0; pointer-events: none; transition: opacity .3s var(--ease); }
+#mg-results { position: absolute; inset: 0; pointer-events: auto; opacity: 1; transition: opacity .3s var(--ease); }
+#mg-results.is-out { opacity: 0; pointer-events: none; }
 
 .rs-body { display: flex; gap: var(--s5); flex: 1; min-height: 0; }
-.rs-table { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rs-table { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.rs-rows { display: flex; flex-direction: column; gap: 3px; }
 
 .rs-head {
   display: grid;
