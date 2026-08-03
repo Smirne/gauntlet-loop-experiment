@@ -231,7 +231,10 @@ export class Driver {
     this.brakeDist = 0;
     this.toBrake = Infinity;
     this.aLat = 150;
+    this.aLong = 165;
     this.aBrake = 170;
+    this.aBrakeUse = 150;
+    this.thrustCap = 55;
     this.latUse = 0;
     this.ellipse = 1;
     this.band = 1;               // rubber-band multiplier, hard-capped at +/-6%
@@ -547,7 +550,9 @@ export class Driver {
 
     const veh = this.vehicle;
     const line = this.line;
-    const L = line.length || 1;
+    // Gaps are measured in *track* parameter, so they scale by the track's own
+    // lap length, not the racing line's — the two differ by a percent or two.
+    const L = finite(this.track?.length, 0) || line.length || 1;
     const px = veh.position.x;
     const pz = veh.position.z;
 
@@ -623,15 +628,26 @@ export class Driver {
   /**
    * Speed-for-curvature, solved against this car's own tyres.
    *
-   *   v_corner = sqrt(a_lat / kappa)                    grip limit in the corner
+   *   v_corner = sqrt(a_lat(v_corner) / kappa)          grip limit in the corner
    *   v_allow  = sqrt(v_corner^2 + 2 * a_brake * d)     what may be carried now
    *
-   * a_lat comes from Tires.cornerLimit() with this frame's downforce and the
-   * surface grip the racing line recorded, so a formula car with 2% downforce
-   * genuinely does carry more into a fast sweeper than a pickup does. Walking
-   * the line ahead and taking the minimum over every probe gives both the speed
-   * cap and — from the probe that produced it — the distance still left before
-   * the brakes have to come on, which is what drives the pedal phases.
+   * a_lat comes from Tires.cornerLimit(), so a formula car with 2% downforce
+   * genuinely does carry more into a fast sweeper than a pickup does — and
+   * because that downforce is itself a function of speed, the corner-speed
+   * equation is implicit and is solved rather than evaluated (_cornerSpeed).
+   *
+   * TWO SEPARATE ANSWERS COME OUT OF THIS, and keeping them apart is the whole
+   * point of the method:
+   *
+   *   vLimit   the fastest this car may legitimately be going *right now*,
+   *            including the corner it is already in.
+   *   toBrake  metres of road left before the brakes have to come on for a
+   *            corner still AHEAD. Infinity when there is no such corner.
+   *
+   * Folding the corner underneath the car into `toBrake` is the classic way to
+   * end up with an AI that coasts through every corner: at the limit there is
+   * nothing left to slow down for, and the correct pedal is the one that holds
+   * the speed, not zero.
    */
   _plan() {
     const veh = this.vehicle;
@@ -641,23 +657,36 @@ export class Driver {
     const g = finite(this.ctx?.settings?.physics?.gravity, 260);
     const v = Math.max(1, this.speed);
     const mass = Math.max(0.05, finite(t.mass, 1));
-
-    const dfRatio = 1 + finite(t.downforceCoef, 0.0105) * v * v / Math.max(1, mass * g);
-    const axle = (finite(t.gripFront, 1) + finite(t.gripRear, 1)) * 0.5;
     const tires = veh.tires;
-    const aLatBase = (tires && typeof tires.cornerLimit === 'function')
-      ? Math.max(20, tires.cornerLimit(g, 1, dfRatio) * axle)
-      : 0.6 * g * dfRatio * axle;
+
+    // Frame-constant pieces of this car's grip model, cached for _aLatAt().
+    this._g = g;
+    this._tires = (tires && typeof tires.cornerLimit === 'function') ? tires : null;
+    this._axle = (finite(t.gripFront, 1) + finite(t.gripRear, 1)) * 0.5;
+    this._cDf = finite(t.downforceCoef, 0.0105) / Math.max(1, mass * g);
+    this._gripUse = p.gripUse;
+
+    const vTop = Math.max(20, finite(veh.topSpeed, 100)) * p.pace * this.band;
+    this._vTop = vTop;
+
+    const aLatNow = this._aLatAt(v);
     const muRatio = (tires && tires.muLat > 0 && tires.muLong > 0)
       ? clamp(tires.muLong / tires.muLat, 0.7, 1.6)
       : 1.1;
     const dragAcc = finite(t.dragCoef, 0.0074) * v * v / mass;
 
-    this.aLat = aLatBase;
-    this.aBrake = aLatBase * muRatio + dragAcc;
+    this.aLat = aLatNow;
+    this.aLong = aLatNow * muRatio;
+    this.aBrake = this.aLong + dragAcc;
+
+    // Full-throttle thrust, taken from the identity Vehicle._calibrate() used
+    // to solve the drag coefficient in the first place: at top speed thrust and
+    // drag balance, so drag AT top speed *is* what the engine can still make
+    // there. Everything below that is geared up roughly as P/v.
+    const vTopRaw = Math.max(20, finite(veh.topSpeed, 100));
+    this.thrustCap = Math.max(8, finite(t.dragCoef, 0.0074) * vTopRaw * vTopRaw / mass);
 
     const surfNow = this._lineGrip(this.lineT) * (veh.offTrack ? 0.78 : 1);
-    const aLatUse = aLatBase * p.gripUse;
     // Personal brake-point variance, per corner and per mistake. `brakeLate`
     // is the out-braking mistake: it shortens the distance the driver *thinks*
     // he needs, so he arrives too fast and has to deal with the consequence.
@@ -666,11 +695,11 @@ export class Driver {
       0.72, 2.0
     );
     const aBrakeUse = Math.max(20, this.aBrake * p.brakeUse / margin);
+    this.aBrakeUse = aBrakeUse;
 
-    const vTop = Math.max(20, finite(veh.topSpeed, 100)) * p.pace * this.band;
     let vLimit = vTop;
-    let bestD = Infinity;
-    let bestV = vTop;
+    let brakeD = Infinity;   // distance to the corner that will need the brakes
+    let brakeV = vTop;       // and the speed it has to be taken at
 
     const L = line.length || 1;
     const horizon = clamp((v * v) / (2 * aBrakeUse) * 1.3 + 34, PLAN_MIN_HORIZON, PLAN_MAX_HORIZON);
@@ -682,18 +711,17 @@ export class Driver {
       const lt = this.lineT + d / L;
       const k = Math.abs(line.curvatureAt(lt));
       if (k <= EPS_CURV) continue;
-      const vCorner = Math.sqrt((aLatUse * this._lineGrip(lt)) / k);
+      const vCorner = this._cornerSpeed(k, this._lineGrip(lt));
       if (vCorner >= vTop) continue;
       const allow = Math.sqrt(vCorner * vCorner + 2 * aBrakeUse * d);
-      if (allow < vLimit) { vLimit = allow; bestD = d; bestV = vCorner; }
+      if (allow < vLimit) { vLimit = allow; brakeD = d; brakeV = vCorner; }
     }
 
-    // The corner already underneath the car caps it too.
+    // The corner already underneath the car caps the speed — but it is a limit,
+    // not an event. See the header note.
     const kNow = Math.abs(this.here.curvature);
-    if (kNow > EPS_CURV) {
-      const vNow = Math.sqrt((aLatUse * surfNow) / kNow);
-      if (vNow < vLimit) { vLimit = vNow; bestD = 0; bestV = vNow; }
-    }
+    const vNow = kNow > EPS_CURV ? this._cornerSpeed(kNow, surfNow) : vTop;
+    if (vNow < vLimit) vLimit = vNow;
 
     // Off the road, on milk or on oil there is no argument to be had.
     if (surfNow < 0.9) vLimit = Math.min(vLimit, vTop * lerp(0.55, 1, saturate((surfNow - 0.35) / 0.55)));
@@ -701,11 +729,51 @@ export class Driver {
     if (this._finished()) vLimit = Math.min(vLimit, vTop * 0.85);
 
     this.vLimit = clamp(vLimit, 8, vTop);
-    this.cornerV = bestV;
-    this.cornerD = bestD;
-    this.brakeDist = bestD < Infinity ? Math.max(0, (v * v - bestV * bestV) / (2 * aBrakeUse)) : 0;
-    // Positive: still room to accelerate. Zero: brakes now. Negative: too late.
-    this.toBrake = bestD < Infinity ? bestD - this.brakeDist : Infinity;
+    this.cornerV = brakeV;
+    this.cornerD = brakeD;
+    if (brakeD < Infinity) {
+      // Deliberately signed. Clamping this at zero would make `toBrake` read as
+      // "brake now" for a corner the car is already slow enough for.
+      this.brakeDist = (v * v - brakeV * brakeV) / (2 * aBrakeUse);
+      this.toBrake = brakeD - this.brakeDist;
+    } else {
+      this.brakeDist = 0;
+      this.toBrake = Infinity;
+    }
+  }
+
+  /**
+   * Lateral acceleration this car would have AT speed v, including the
+   * downforce it generates there. Routed through the vehicle's own tyre model
+   * so load sensitivity is the real curve rather than a second copy of it.
+   */
+  _aLatAt(v) {
+    const df = 1 + this._cDf * v * v;
+    const base = this._tires
+      ? this._tires.cornerLimit(this._g, 1, df)
+      : 0.6 * this._g * df;
+    return Math.max(20, base * this._axle);
+  }
+
+  /**
+   * Solve v = sqrt(a_lat(v) * grip / kappa).
+   *
+   * a_lat rises with v (downforce) so the equation is implicit. Starting at the
+   * car's top speed and re-substituting gives a monotonically decreasing
+   * sequence that converges on the fixed point from above in two or three
+   * steps; if the first step does not come back below the top speed, the corner
+   * is downforce-unlimited and the honest answer is "flat out".
+   */
+  _cornerSpeed(k, grip) {
+    if (!(k > EPS_CURV)) return this._vTop;
+    const use = this._gripUse * (grip > 0 ? grip : 1);
+    let vc = this._vTop;
+    for (let i = 0; i < 3; i++) {
+      const next = Math.sqrt((this._aLatAt(vc) * use) / k);
+      if (next >= vc) return this._vTop;
+      vc = next;
+    }
+    return vc;
   }
 
   /** Surface grip the racing line recorded at a line parameter. */
@@ -745,8 +813,7 @@ export class Driver {
       + apex
       + this.passOffset
       + this.defendOffset
-      + this.avoidOffset
-      + this.mistakeOffset;
+      + this.avoidOffset;
 
     if (this.state === 'rejoin') off = 0;   // get back to the line, nothing else
 
@@ -759,6 +826,14 @@ export class Driver {
     let hi = room - lineLat;
     if (lo > hi) { const m = (lo + hi) * 0.5; lo = m; hi = m; }
     this.offsetTarget = clamp(off, lo, hi);
+
+    // A mistake is added OUTSIDE the corridor clamp, because a run wide that
+    // politely stops at the white line is not a mistake. Bounded at a little
+    // over two metres of kerb so it costs a bobble and some time, never a
+    // barrier strike or a car launched into the scenery.
+    if (this.mistakeOffset !== 0 && this.state === 'race') {
+      this.offsetTarget = clamp(this.offsetTarget + this.mistakeOffset, lo - 2.6, hi + 2.6);
+    }
 
     // Cars change lanes at a rate, not instantly. This is the single biggest
     // difference between AI that looks driven and AI that looks snapped.
@@ -1232,11 +1307,19 @@ export class Driver {
       brake = 0.3 * lerp(0.5, 1, p.recover);
     } else {
       const v = this.speed;
+      const vTop = Math.max(20, finite(veh.topSpeed, 100));
+      const err = this.vLimit - v;                 // + = room left to go faster
       const liftBand = Math.max(3, v * lerp(0.10, 0.22, p.skill));
 
+      // The pedal that merely holds the current speed. Available thrust falls
+      // as roughly P/v while drag climbs as v^2, so what it takes to sit at a
+      // speed grows with it — which is why a fast sweeper is taken nearly flat
+      // and a hairpin on a whiff of power. No lookup table anywhere.
+      const maintain = clamp((v / vTop) * (v / vTop), 0.08, 1);
+
       if (this.toBrake <= 0) {
-        // On the brakes. Depth ramps in over the first slice of the zone so the
-        // pedal is applied, not stamped on.
+        // On the brakes for the corner ahead. Depth ramps in over the first
+        // slice of the zone so the pedal is applied, not stamped on.
         const depth = saturate((-this.toBrake) / Math.max(4, this.brakeDist * 0.35 + 4));
         brake = lerp(0.55, 1, depth);
         throttle = 0;
@@ -1244,31 +1327,46 @@ export class Driver {
         // The lift. Off the power, not yet on the brake — this is the phase
         // that makes an AI car look like it is being driven into a corner
         // rather than switched into one.
-        throttle = saturate(this.toBrake / liftBand) * 0.35;
+        throttle = Math.min(maintain, saturate(this.toBrake / liftBand) * 0.5);
       } else {
-        throttle = 1;
+        // Hold the limit: feed-forward plus a proportional term on the speed
+        // error. On a straight the error is enormous and this saturates at full
+        // throttle; mid-corner it settles on exactly the pedal that maintains
+        // the cornering speed, which is what gets an AI car back on the power
+        // at the apex instead of coasting to the exit.
+        throttle = saturate(maintain + err * 0.075);
       }
 
-      // Overspeed for any reason — a mistake, a bad exit, a shove — outranks
-      // the phase logic.
-      const over = v - this.vLimit;
-      if (over > 0.4) {
-        brake = Math.max(brake, saturate(over / Math.max(6, this.vLimit * 0.14)));
+      // Overspeed for any reason — a mistake, a bad exit, a shove, or simply
+      // the corner already underneath the car — outranks the phase logic. A
+      // driver lifts long before he brakes, so a small excess is coasted off
+      // and only a real one gets the pedal; without that dead band the car
+      // would flicker its brake lights all the way down every straight.
+      const overTol = 0.8 + this.vLimit * 0.012;
+      if (err < -overTol) {
+        brake = Math.max(brake, saturate((-err - overTol) / Math.max(5, this.vLimit * 0.12)));
         throttle = 0;
+      } else if (err < 0) {
+        throttle = Math.min(throttle, maintain * 0.5);
       }
 
       // Trail braking. As lock goes on, the ellipse takes the pedal away; the
       // taper into the apex is the physics, not an animation curve.
       if (brake > 0) brake = Math.min(brake, this.ellipse + 0.14);
 
-      if (brake <= 0.02) {
-        const want = saturate((this.vLimit - v) / Math.max(2.5, this.vLimit * 0.09));
-        // Throttle needed merely to hold speed rises as the square of it, so a
-        // fast sweeper is taken nearly flat and a hairpin on a whiff of power.
-        const vTop = Math.max(20, finite(veh.topSpeed, 100));
-        const maintain = clamp((v / vTop) * (v / vTop), 0.10, 1);
-        const cap = Math.max(maintain, this.ellipse * p.exitBold);
-        throttle = Math.min(throttle, want, cap);
+      if (brake > 0.02) {
+        throttle = 0;
+      } else {
+        // Exit traction, as a force balance rather than a fudge. The thrust the
+        // engine can make here is roughly P/v; the thrust the tyres will accept
+        // is what the friction ellipse has left after cornering. Their ratio is
+        // the pedal ceiling — which is why this bites hard out of a hairpin in
+        // second gear and barely at all through a fast sweeper, exactly as it
+        // does for a real driver. `exitBold` is how far past it the driver is
+        // willing to go; the wheelspin trim below is what it costs him.
+        const thrust = this.thrustCap * (vTop / Math.max(v, vTop * 0.3));
+        const cap = saturate((this.aLong * this.ellipse) / Math.max(1e-3, thrust) * p.exitBold);
+        throttle = Math.min(throttle, Math.max(0.10, cap));
 
         const spin = finite(veh.wheelSpin, 0);
         if (spin > 0.45) {
@@ -1365,6 +1463,9 @@ export class Driver {
     if (throttle < 0.85) return 0;
     if (this.speed < Math.max(20, finite(veh.topSpeed, 100)) * 0.45) return 0;
     if (this.toBrake < Math.max(28, this.speed * 0.55)) return 0;
+    // Never mid-corner: the tyres have nothing spare to turn it into speed and
+    // it would only push the car wide.
+    if (this.latUse > 0.55) return 0;
 
     const chasing = this.ahead && this.aheadGap < 32;
     const defending = this.behind && this.behindGap < 14;

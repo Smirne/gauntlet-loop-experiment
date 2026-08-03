@@ -152,7 +152,7 @@ void main() {
 
   if (amount < 0.002) discard;
   // Additive blending is (SrcAlpha, One), and every term above already carries
-  // its own intensity in the colour — so alpha stays at 1 and `amount` is used
+  // its own intensity in the colour — so alpha stays at 1 and "amount" is used
   // only to reject pixels that would contribute nothing.
   gl_FragColor = vec4(col, 1.0);
 

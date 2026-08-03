@@ -37,7 +37,34 @@ highlight. Should be near-neutral grey with anisotropic streaks and roughness ~0
 dark warm brown. The grain, plank seams and ray fleck are otherwise excellent — this is a
 palette bug in the knot pass only.
 
-## D6 — Cars spawn upside-down — CRITICAL
+## D6, D7, D8 — ALL FIXED BY ONE SIGN ERROR
+
+`world/Track.js` built its per-frame surface normal as `right × tangent`. With forward = +Z
+the `right` vector it constructs is +X, and X × Z = **−Y** — so every track frame's normal
+pointed straight down. Corrected to `tangent × right` (Z × X = +Y).
+
+That single error produced every symptom below, which is why they looked like three
+independent bugs in three different modules:
+
+- **Cars spawned upside-down.** `basisFromFrame` feeds the normal in as "up", so an inverted
+  normal flips the grid quaternion. Measured `up · worldUp = −0.984` at spawn.
+- **Cars fell through the track.** Inverted cars point their wheels skyward, so the
+  suspension rays cast *away* from the road and never found ground. They free-fell to
+  y ≈ −32. This looked like a physics bug; physics was fine. `PhysicsWorld` even masked the
+  bad normal with an `n.y > 0.05` fallback, which is why a direct `raycast()` probe returned
+  a correct (0,1,0) and sent me looking in the wrong module.
+- **The race finished instantly.** Cars tumbling below the world produced nonsense checkpoint
+  progress, so every entry reported `lap: 3, finished: true` within a tick.
+- **The road ribbon rendered washed-out**, because its normals faced away from the sun.
+
+After the fix: `up · worldUp = 1`, all four wheels grounded, body resting at y = 2.29,
+race state `racing`, zero module errors. Verified in `shots/fixed-grid.png`.
+
+The earlier D7 "livery bakes near-black" entry was a **misdiagnosis** — I sampled the paint
+atlas across regions that are legitimately dark trim. The liveries render correctly in colour
+once the cars are the right way up.
+
+## (historical) D6 — Cars spawn upside-down — CRITICAL
 `vehicle/VehicleVisual.js` [A7] or the grid placement in `vehicle/Vehicle.js` `_placeOnGrid`.
 Every car sits inverted on the grid, presenting its die-cast base plate to the camera. In
 wide shots this reads as a row of pale rectangles on the track and is easily mistaken for

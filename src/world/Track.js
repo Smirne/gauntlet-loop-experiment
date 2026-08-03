@@ -646,10 +646,13 @@ export class Track {
       rx[i] = right.x;
       ry[i] = right.y;
       rz[i] = right.z;
-      // normal = right x tangent (verified: t=+X, r=+Z -> n=+Y)
-      nx[i] = right.y * axis.z - right.z * axis.y;
-      ny[i] = right.z * axis.x - right.x * axis.z;
-      nz[i] = right.x * axis.y - right.y * axis.x;
+      // normal = tangent x right. With forward = +Z the `right` built above is
+      // +X, and Z x X = +Y. The reverse order yields -Y, which silently flips
+      // every consumer: grid quaternions spawn cars upside down, suspension
+      // rays cast away from the road, and the ribbon shades away from the sun.
+      nx[i] = axis.y * right.z - axis.z * right.y;
+      ny[i] = axis.z * right.x - axis.x * right.z;
+      nz[i] = axis.x * right.y - axis.y * right.x;
       const nl = Math.hypot(nx[i], ny[i], nz[i]) || 1;
       nx[i] /= nl; ny[i] /= nl; nz[i] /= nl;
     }
