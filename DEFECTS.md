@@ -37,6 +37,42 @@ highlight. Should be near-neutral grey with anisotropic streaks and roughness ~0
 dark warm brown. The grain, plank seams and ray fleck are otherwise excellent — this is a
 palette bug in the knot pass only.
 
+## D6 — Cars spawn upside-down — CRITICAL
+`vehicle/VehicleVisual.js` [A7] or the grid placement in `vehicle/Vehicle.js` `_placeOnGrid`.
+Every car sits inverted on the grid, presenting its die-cast base plate to the camera. In
+wide shots this reads as a row of pale rectangles on the track and is easily mistaken for
+painted grid-box markings — that misreading cost real diagnosis time. Confirmed by isolating
+one car against a hidden scene: `shots/car-closeup.png` shows the cream base plate up and
+the wheels splayed outward.
+Check the sign of the roll/pitch applied when the visual group is synced to the body
+quaternion, and whether `_placeOnGrid` composes the spawn rotation in the same handedness as
+`Track.spawnPoints`.
+
+## D7 — Livery texture bakes near-black
+`vehicle/VehicleVisual.js` [A7]. `makePaintMaterial` deliberately keeps the material colour
+white and carries the livery in `tex.map` — that design is fine. But the baked 1024×512 canvas
+is 22% #080808, 17% #000000, 17% #080810, with only ~19% of a dark orange. The livery record
+itself is correct (`Hemi Orange` base #D85A1C, `Forest Green` #1D5A34), so the fault is in the
+canvas paint pass, not the palette. Cars will read as black even once D6 is fixed.
+
+## D8 — Race finishes instantly
+`game/Race.js` [A12]. At `raceTime` 5.4 s with the field only 8% around the lap
+(`t: 0.083`), every entry already reports `lap: 3, cp: 19, finished: true`, so the state
+machine jumps to `finished` and the director drops into results framing. Suspect the
+checkpoint wrap: with 20 checkpoints the "previous" index at the start line is 19, which
+likely satisfies the crossing test on every tick and increments the lap counter each frame.
+
+---
+
+## Fixed during integration
+
+- **`main.js` race start glue.** `ctx.race?.start?.(opts) ?? ctx.race?.begin?.()` fired *both*
+  entry points, because `begin()` is an alias for `start()` and `start()` returns undefined.
+  The second call re-entered the state machine. Now resolves one callable and invokes it once.
+- **`vehicle/Vehicle.js` syntax error.** Line 339 had an unquoted object key containing a
+  space (`group b: 'rally'`) in the chassis alias map. The whole module failed to parse, so
+  no vehicle ever constructed and the game ran with an empty grid. Quoted the key.
+
 ---
 
 ## Verification notes (not defects)

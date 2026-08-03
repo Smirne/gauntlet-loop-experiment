@@ -336,7 +336,7 @@ const ARCHETYPE_IDS = Object.keys(ARCHETYPES);
 const ALIASES = {
   muscle: 'muscle', stang: 'muscle', charger: 'muscle', bruiser: 'muscle', v8: 'muscle',
   kart: 'kart', gokart: 'kart', mini: 'kart', pod: 'kart', bug: 'kart',
-  rally: 'rally', wrc: 'rally', group b: 'rally', groupb: 'rally', gravel: 'rally',
+  rally: 'rally', wrc: 'rally', 'group b': 'rally', groupb: 'rally', gravel: 'rally',
   gt: 'gt', sports: 'gt', supercar: 'gt', coupe: 'gt', racer: 'gt', wedge: 'gt',
   hotrod: 'hotrod', rod: 'hotrod', drifter: 'hotrod', drift: 'hotrod', roadster: 'hotrod',
   truck: 'truck', pickup: 'truck', ute: 'truck', monster: 'truck', lorry: 'truck',

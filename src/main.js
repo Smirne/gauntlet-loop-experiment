@@ -332,7 +332,10 @@ async function boot() {
   const skipMenu = params.get('skipmenu') === '1' || params.has('t');
   if (skipMenu) {
     ctx.menu?.hide?.();
-    ctx.race?.start?.({ skipCountdown: true }) ?? ctx.race?.begin?.();
+    // begin() is an alias for start(), so `start(...) ?? begin()` fires both
+    // whenever start() returns undefined and re-enters the state machine.
+    const startRace = ctx.race?.start ?? ctx.race?.begin;
+    startRace?.call(ctx.race, { skipCountdown: true });
   }
   if (params.get('nohud') === '1') ctx.hud?.hide?.();
 
