@@ -500,12 +500,19 @@ export class Race {
     this.stateTime += fdt;
     if (this.clockRunning) this.raceTime += fdt;
 
-    // Headless capture: main.js fast-forwards by calling engine.stepFixed() in
-    // a tight loop with no rendered frames, so the AI's per-frame update()
-    // never runs and the whole field would sit on the grid in every review
-    // shot. Detect the burst and pump the drivers ourselves at a plausible
-    // frame rate. The threshold sits above the engine's catch-up cap so a
-    // hitching frame during normal play can never trip it.
+    // Safety net for any caller that drives fixedUpdate in a tight loop without
+    // ever running the update phase: the AI thinks in update(), so the field
+    // would sit on the grid in every headless shot. Detect the burst and pump
+    // the drivers ourselves at a plausible frame rate. The threshold sits above
+    // the engine's catch-up cap so a hitching frame in normal play cannot trip
+    // it.
+    //
+    // Dormant on the current capture path. main.js fast-forwards through
+    // engine.stepOnce(), which runs fixedUpdate and update in order, and
+    // update() zeroes the counter — so it never reaches the limit. It used to
+    // fire because main.js called engine.stepFixed(), a method Engine does not
+    // have; the optional call no-opped and nothing was stepped at all. Keep the
+    // net, but do not trust it to be exercised.
     if (++this._ffSteps > this._ffLimit) this._headlessDrive(fdt);
 
     switch (this.state) {

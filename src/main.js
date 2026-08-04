@@ -339,30 +339,33 @@ async function boot() {
   }
   if (params.get('nohud') === '1') ctx.hud?.hide?.();
 
-  // Fast-forward advances the whole simulation, not just physics. Stepping
-  // fixedUpdate alone leaves the AI (which thinks in update()) silent, so the
-  // field never leaves the grid and every captured frame is a static start
-  // line. Rendering real frames would be correct but pays for the full post
-  // chain 1200 times, so this drives the systems that actually change the
-  // picture and skips the composer until the capture itself.
+  // Fast-forward advances the whole simulation so the field is spread out and
+  // the effects are alive before a review frame is captured.
+  //
+  // This used to hand-pump a hardcoded list of systems around
+  // `engine.stepFixed?.(fdt)`. Engine has no `stepFixed` — it never has — so
+  // the optional call silently did nothing and all 31 registered systems,
+  // physics included, sat still through every capture. The hand-pumped list
+  // was me patching the symptom: it moved the cars, but with no physics step
+  // behind it the field crawled roughly an eighth of the expected distance,
+  // and Race.fixedUpdate never ran, so the clock and the lap counter stayed
+  // at zero in every fast-forwarded shot.
+  //
+  // `stepOnce()` is the real entry point: correct time bookkeeping, all
+  // systems, right phase order, bus flushed. It also renders, which is the one
+  // thing we cannot afford 1920 times, so suppress just that for the burst.
   const ff = Number(params.get('t') ?? 0);
   if (ff > 0) {
     const fdt = ctx.time.fixedDt;
     const steps = Math.min(Math.round(ff / fdt), 60 * 120);
-    for (let i = 0; i < steps; i++) {
-      ctx.time.dt = fdt;
-      ctx.time.elapsed += fdt;
-      ctx.time.frame++;
-      for (const d of ctx.drivers) d.update?.(fdt, ctx);
-      engine.stepFixed?.(fdt);
-      ctx.race?.update?.(fdt, ctx);
-      ctx.fx.particles?.update?.(fdt, ctx);
-      ctx.fx.trails?.update?.(fdt, ctx);
-      ctx.decals?.update?.(fdt, ctx);
-      for (const v of ctx.vehicles) v.update?.(fdt, ctx);
+    const realRender = engine.renderFrame;
+    engine.renderFrame = () => {};        // own property shadows the prototype
+    try {
+      for (let i = 0; i < steps; i++) engine.stepOnce();
+    } finally {
+      delete engine.renderFrame;
+      if (engine.renderFrame !== realRender) engine.renderFrame = realRender;
     }
-    ctx.director?.lateUpdate?.(fdt, ctx);
-    ctx.hud?.lateUpdate?.(fdt, ctx);
     window.MG.fastForwarded = { seconds: ff, steps };
   }
 
