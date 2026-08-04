@@ -28,7 +28,11 @@
 //           then on the brake — with pressure bled off as steering lock goes on,
 //           because the friction ellipse says the front tyres cannot do both.
 //           That bleed is trail braking, and it falls out of the physics rather
-//           than being animated.
+//           than being animated. Through the corner itself there is no phase at
+//           all, only a speed controller holding the grip limit: the pedal that
+//           maintains a speed is a known quantity (drag balances thrust at top
+//           speed, and scales from there), so the driver feeds in exactly that
+//           and the friction ellipse decides how much more he may add on exit.
 //
 // MISTAKES  Believable means *caused*. A driver who out-brakes himself does not
 //           twitch the wheel: he arrives at the apex 4 u/s too fast, the car
@@ -641,8 +645,8 @@ export class Driver {
    *
    *   vLimit   the fastest this car may legitimately be going *right now*,
    *            including the corner it is already in.
-   *   toBrake  metres of road left before the brakes have to come on for a
-   *            corner still AHEAD. Infinity when there is no such corner.
+   *   toBrake  world units of road left before the brakes have to come on for
+   *            a corner still AHEAD. Infinity when there is no such corner.
    *
    * Folding the corner underneath the car into `toBrake` is the classic way to
    * end up with an AI that coasts through every corner: at the limit there is
@@ -829,8 +833,8 @@ export class Driver {
 
     // A mistake is added OUTSIDE the corridor clamp, because a run wide that
     // politely stops at the white line is not a mistake. Bounded at a little
-    // over two metres of kerb so it costs a bobble and some time, never a
-    // barrier strike or a car launched into the scenery.
+    // over half a car width of kerb, so it costs a bobble and some time, never
+    // a barrier strike or a car launched into the scenery.
     if (this.mistakeOffset !== 0 && this.state === 'race') {
       this.offsetTarget = clamp(this.offsetTarget + this.mistakeOffset, lo - 2.6, hi + 2.6);
     }
