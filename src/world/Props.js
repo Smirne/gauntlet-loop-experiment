@@ -23,9 +23,16 @@
 //    the same place. The same seed also jitters roughness a few percent.
 //
 // 3. CONTACT. A prop with a shadow-mapped shadow but no contact darkening reads
-//    as floating; it is the single most common amateur tell. Every placed prop
-//    gets a slot in one instanced, multiply-blended blob laid on the ground and
-//    oriented to the surface normal. One extra draw call for the whole scene.
+//    as floating; it is the single most common amateur tell. This file does not
+//    implement that darkening — render/Lighting.js owns the one contact-shadow
+//    system in the project and every prop registers with it through
+//    addContactShadow(). An earlier version of this file grew its own rig, and
+//    two of its choices (sRGB texture, MultiplyBlending without
+//    premultipliedAlpha) combined into a blob that rendered as an opaque *pale*
+//    card: every prop in the establishing shot stood on a rectangle brighter
+//    than the table. There is now exactly one implementation, and its shader can
+//    only ever darken. The local fallback below is for the case where there is
+//    no lighting system at all, and it darkens too.
 //
 // 4. COLLISION IS DATA, NOT MESHES. Each model declares a proxy shape (box,
 //    cylinder or sphere) derived from its own bounds. Proxies are published to
@@ -61,6 +68,10 @@ const _c1 = new THREE.Color();
 const _box = new THREE.Box3();
 const _sph = new THREE.Sphere();
 const UP = new THREE.Vector3(0, 1, 0);
+// Dedicated to orientedFootprint() so it can never alias a caller's scratch.
+const _fpVec = new THREE.Vector3();
+const _fpQuat = new THREE.Quaternion();
+const _fpOut = { w: 0, l: 0, h: 0, baseY: 0 };
 
 /* ============================================================ geometry kit */
 
@@ -1136,29 +1147,44 @@ export const PROP_MODELS = {
 
 export const MODEL_NAMES = Object.keys(PROP_MODELS);
 
-/* ================================================== contact shadow texture */
+/* ================================================== contact shadow fallback */
 
-/** Soft elliptical falloff, drawn once and shared by every prop. */
+/**
+ * Soft elliptical falloff for the fallback blob, drawn once and shared.
+ *
+ * The falloff lives entirely in ALPHA and the RGB is flat white, so the
+ * material's own dark tint is what reaches the frame buffer and a plain
+ * source-over blend can only ever darken. The previous version of this texture
+ * put the falloff in RGB over an opaque white background and relied on
+ * MultiplyBlending — which r180's WebGLState silently declines to configure
+ * unless the material is premultiplied — so it painted a bright card instead.
+ */
 function makeBlobTexture(size = 128) {
   const cv = document.createElement('canvas');
   cv.width = cv.height = size;
   const g = cv.getContext('2d');
-  g.fillStyle = '#ffffff';
-  g.fillRect(0, 0, size, size);
-  const grd = g.createRadialGradient(size / 2, size / 2, size * 0.04, size / 2, size / 2, size * 0.5);
-  // Three stops, not two: a linear ramp reads as a hard-edged airbrush circle,
-  // where a real contact shadow is dense in a tight core and long in the tail.
-  grd.addColorStop(0.0, 'rgba(0,0,0,1)');
-  grd.addColorStop(0.34, 'rgba(0,0,0,0.62)');
-  grd.addColorStop(0.68, 'rgba(0,0,0,0.16)');
-  grd.addColorStop(1.0, 'rgba(0,0,0,0)');
-  g.globalCompositeOperation = 'source-over';
-  g.fillStyle = grd;
-  g.beginPath();
-  g.arc(size / 2, size / 2, size * 0.5, 0, TAU);
-  g.fill();
+  const img = g.createImageData(size, size);
+  const half = (size - 1) * 0.5;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (x - half) / half;
+      const dy = (y - half) / half;
+      const d = Math.min(1, Math.hypot(dx, dy));
+      const t = 1 - d;
+      // Dense core plus a long thin skirt. A linear ramp reads as an airbrushed
+      // disc; occlusion is concentrated where the object meets the surface.
+      const a = clamp(t * t * (0.60 + 0.40 * t * t * t * t), 0, 1);
+      const i = (y * size + x) * 4;
+      img.data[i] = 255;
+      img.data[i + 1] = 255;
+      img.data[i + 2] = 255;
+      img.data[i + 3] = Math.round(a * 255);
+    }
+  }
+  g.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
+  // No transfer function to undo: this is a mask, not a colour.
+  tex.colorSpace = THREE.NoColorSpace;
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.needsUpdate = true;
   return tex;
@@ -1229,7 +1255,17 @@ class Grid {
 /* ============================================================ the system */
 
 const KNOCK_MAX = 48;
-const CONTACT_MAX = 1400;
+
+// render/Lighting.js draws every contact blob in the game — cars included —
+// from one instance pool that tops out in the low hundreds. Scenery therefore
+// gets a budget rather than a slot per placement, and candidates are sorted by
+// footprint before it is applied: a 30 cm cereal box needs grounding, a 1.7 cm
+// sugar cube reads as grounded from its own cast shadow alone.
+const CONTACT_BUDGET = 256;
+
+// Anything shorter than this casts no meaningful occlusion of its own — a leaf,
+// a sheet of sandpaper, a coin. A blob under it would be bigger than the object.
+const CONTACT_MIN_HEIGHT = 0.6;
 
 export class Props {
   name = 'props';
@@ -1251,7 +1287,8 @@ export class Props {
     this.density = (this.ctx.settings ?? Settings)?.world?.propDensity ?? 1;
     this._geoCache = new Map();
     this._blobTex = null;
-    this._contact = null;
+    this._contact = null;          // fallback blob mesh, only when there is no Lighting
+    this._contactEntries = [];     // handles returned by Lighting.addContactShadow
     this._time = 0;
   }
 
@@ -1319,7 +1356,7 @@ export class Props {
     this.pending.length = 0;
 
     this._buildMeshes(placements, rng);
-    this._buildContactShadows(placements);
+    this._registerContactShadows(placements);
     this._publishColliders();
 
     this.ctx.bus?.emit?.('props:ready', this.stats);
@@ -1341,7 +1378,7 @@ export class Props {
     this._teardownMeshes();
     this._allPlacements = (this._allPlacements || []).concat(extra);
     this._buildMeshes(this._allPlacements, rng);
-    this._buildContactShadows(this._allPlacements);
+    this._registerContactShadows(this._allPlacements);
     this._publishColliders();
   }
 
@@ -1637,7 +1674,7 @@ export class Props {
           const p = list[i];
           if (!p.knockable) continue;
           this.dynamics.push({
-            model, index: i, meshes: built,
+            model, index: i, meshes: built, placement: p,
             pos: new THREE.Vector3(p.x, p.y, p.z),
             rest: new THREE.Vector3(p.x, p.y, p.z),
             vel: new THREE.Vector3(),
@@ -1669,55 +1706,122 @@ export class Props {
     }
   }
 
-  _buildContactShadows(placements) {
-    const usable = placements.filter((p) => {
+  /**
+   * Ground every prop that is tall enough to occlude anything.
+   *
+   * The blobs themselves belong to render/Lighting.js: one instanced,
+   * correctly-blended pool shared with the cars, whose shader is structurally
+   * incapable of brightening the frame. All this does is describe each prop to
+   * it — footprint, contact plane, surface normal — and keep the handles so
+   * they can be released on teardown.
+   *
+   * @param {object[]} placements every placement in the scene
+   */
+  _registerContactShadows(placements) {
+    const candidates = [];
+    for (const p of placements) {
       const def = PROP_MODELS[p.model];
-      return def && def.contact !== false && (def.size ? def.size.y > 0.6 : true);
-    }).slice(0, CONTACT_MAX);
-    if (!usable.length) return;
+      if (!def || def.contact === false) continue;
+      const fit = orientedFootprint(this._geoCache.get(p.model)?.bounds, p, def.size);
+      if (!(fit.h > CONTACT_MIN_HEIGHT)) continue;
+      if (!Number.isFinite(fit.w) || !Number.isFinite(fit.l) || !Number.isFinite(fit.baseY)) continue;
+      candidates.push({ p, w: fit.w, l: fit.l, h: fit.h, baseY: fit.baseY, area: fit.w * fit.l });
+    }
+    if (!candidates.length) return;
+    // Biggest footprint first, so if the pool runs out it is the sugar cubes
+    // that go without and never the cereal boxes.
+    candidates.sort((a, b) => b.area - a.area);
+    if (candidates.length > CONTACT_BUDGET) candidates.length = CONTACT_BUDGET;
 
+    // A knocked prop's blob has to travel with it, so those register against the
+    // live dynamics record instead of a frozen transform.
+    const dynByPlacement = new Map();
+    for (const d of this.dynamics) if (d.placement) dynByPlacement.set(d.placement, d);
+
+    const lighting = this.ctx.lighting;
+    if (typeof lighting?.addContactShadow === 'function') {
+      for (const c of candidates) {
+        const entry = this._registerOne(lighting, c, dynByPlacement.get(c.p));
+        // If the very first one comes back empty the pool never built, so stop
+        // asking and take the fallback rather than logging it 256 times.
+        if (!entry && !this._contactEntries.length) break;
+        if (entry) this._contactEntries.push(entry);
+      }
+      if (this._contactEntries.length) return;
+    }
+    this._buildFallbackContact(candidates);
+  }
+
+  /** One registration. Never throws: a peer mid-edit must not cost us the scene. */
+  _registerOne(lighting, c, dyn) {
+    const p = c.p;
+    const opts = contactOptsFor(c);
+    // Lighting measures a target's height above the surface from its origin, so
+    // it has to be told how far the origin sits above the face that touches the
+    // ground. Zero for the upright majority; 4.6 u for the milk carton lying on
+    // its side, whose blob would otherwise fade to a fifth and lean away from
+    // the key as though it were airborne.
+    opts.baseOffset = Math.max(0, p.y - c.baseY);
+    if (dyn) {
+      // Falls and rolls: let Lighting query the ground and fade the blob out as
+      // the prop leaves it.
+      opts.static = false;
+      opts.maxHeight = Math.max(4, c.h * 1.5);
+      return safeAddContact(lighting, { position: dyn.pos, quaternion: dyn.quat }, opts);
+    }
+    // A resting prop's own lowest point *is* the plane it stands on — exact on a
+    // bank, a ramp or on top of another prop, where a terrain query is not, and
+    // it costs nothing per frame.
+    opts.static = true;
+    opts.grounded = true;
+    opts.groundY = c.baseY;
+    this._normalAt(p.x, p.z, _v1);
+    opts.normal = [_v1.x, _v1.y, _v1.z];
+    return safeAddContact(lighting, { position: new THREE.Vector3(p.x, p.y, p.z), quaternion: p.quaternion }, opts);
+  }
+
+  /**
+   * Grounding of last resort, for a build with no render/Lighting.js at all.
+   * One instanced quad per prop, alpha-blended toward a warm near-black: a plain
+   * source-over blend of a dark colour cannot brighten what is under it whatever
+   * the renderer's blend state happens to be.
+   */
+  _buildFallbackContact(candidates) {
     if (!this._blobTex) {
       try { this._blobTex = makeBlobTexture(128); } catch (err) { this._blobTex = null; }
     }
     if (!this._blobTex) return;
 
-    // Multiply blending against a white-background blob: a white texel is a
-    // no-op and the core darkens whatever ground is under it. Deliberately
-    // unlit and unmapped — a contact shadow must not itself receive light.
     const mat = new THREE.MeshBasicMaterial({
       map: this._blobTex,
-      blending: THREE.MultiplyBlending,
+      color: 0x14110c,
       transparent: true,
+      opacity: 0.62,
+      blending: THREE.NormalBlending,
       depthWrite: false,
       toneMapped: false,
       polygonOffset: true,
-      polygonOffsetFactor: -3,
-      polygonOffsetUnits: -6,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
     });
     const geo = new THREE.PlaneGeometry(1, 1);
     geo.rotateX(-Math.PI / 2);
-    const mesh = new THREE.InstancedMesh(geo, mat, usable.length);
-    mesh.name = 'prop:contact';
+    const mesh = new THREE.InstancedMesh(geo, mat, candidates.length);
+    mesh.name = 'prop:contactFallback';
     mesh.receiveShadow = false;
     mesh.castShadow = false;
-    mesh.renderOrder = 1;
+    mesh.renderOrder = -5; // first thing in the transparent queue, like Lighting's
 
-    for (let i = 0; i < usable.length; i++) {
-      const p = usable[i];
-      const def = PROP_MODELS[p.model];
-      const sx = (def.size ? def.size.x : 4) * p.scale.x;
-      const sz = (def.size ? def.size.z : 4) * p.scale.z;
-      const sy = (def.size ? def.size.y : 4) * p.scale.y;
-      // The blob grows with height: a tall object's occlusion spreads wider than
-      // its own footprint because the key light is not directly overhead.
-      const grow = 1.35 + clamp(sy / 26, 0, 0.7);
-      this._normalAt(p.x, p.z, _v1);
-      _q0.setFromUnitVectors(UP, _v1);
-      _q1.setFromAxisAngle(UP, 0);
+    for (let i = 0; i < candidates.length; i++) {
+      const c = candidates[i];
+      const o = contactOptsFor(c);
+      // Heading only: a blob quad that inherits a prop's lean stands on edge.
+      _v1.set(0, 0, 1).applyQuaternion(c.p.quaternion);
+      _q0.setFromAxisAngle(UP, Math.atan2(_v1.x, _v1.z));
       _m0.compose(
-        _v0.set(p.x, p.y + 0.16, p.z),
-        p.quaternion,
-        _v2.set(sx * grow, 1, sz * grow)
+        _v0.set(c.p.x, c.baseY + o.lift, c.p.z),
+        _q0,
+        _v2.set(o.width, 1, o.length)
       );
       mesh.setMatrixAt(i, _m0);
     }
@@ -1725,6 +1829,15 @@ export class Props {
     mesh.computeBoundingSphere();
     this.group.add(mesh);
     this._contact = mesh;
+  }
+
+  /** Hand every registered blob back to Lighting. Idempotent. */
+  _releaseContactShadows() {
+    const lighting = this.ctx.lighting;
+    for (const entry of this._contactEntries) {
+      try { lighting?.removeContactShadow?.(entry); } catch (err) { /* already gone */ }
+    }
+    this._contactEntries.length = 0;
   }
 
   _publishColliders() {
@@ -1904,6 +2017,7 @@ export class Props {
   setVisible(v) { this.group.visible = !!v; }
 
   _teardownMeshes() {
+    this._releaseContactShadows();
     for (const m of this.meshes) {
       this.group.remove(m);
       m.geometry.dispose();
@@ -1936,6 +2050,96 @@ export class Props {
 }
 
 /* ================================================================ helpers */
+
+/**
+ * Blob shape for one candidate. Shared by the Lighting registration and the
+ * fallback so the two cannot drift apart.
+ *
+ * The quad is sized so its dense core lands on the prop's own footprint — the
+ * falloff reaches zero at the quad's edge, not at its core — and widens with
+ * height, because the occlusion of a tall object spreads further than its base
+ * under anything but a vertical key.
+ * @param {{w:number,l:number,h:number}} c
+ */
+function contactOptsFor(c) {
+  const grow = 1.72 + clamp(c.h / 34, 0, 0.62);
+  return {
+    width: Math.max(0.4, c.w * grow),
+    length: Math.max(0.4, c.l * grow),
+    opacity: clamp(0.72 + c.h * 0.02, 0, 1),
+    softness: clamp(0.34 + c.h / 90, 0.2, 0.62),
+    lift: 0.06,
+    yaw: true,
+    tilt: true,
+  };
+}
+
+/**
+ * Extents of a placed prop measured in its own yaw-local frame, plus the world
+ * height of its lowest point. Fills and returns a shared record — read it out
+ * before the next call.
+ *
+ * Both numbers matter for grounding, and neither is the model's bounding box.
+ * The milk carton in the kitchen definition is authored lying on its side and
+ * raised 4.6 u: its footprint is nothing like its upright box, and its origin is
+ * several centimetres above the table it is resting on. Take the placement's y
+ * as the contact plane and its blob hangs in mid-air over the spill.
+ *
+ * @param {?THREE.Box3} bounds model-local bounds, before scale
+ * @param {object} p placement
+ * @param {?THREE.Vector3} size fallback model size when bounds are unavailable
+ */
+function orientedFootprint(bounds, p, size) {
+  const out = _fpOut;
+  if (!bounds || bounds.isEmpty()) {
+    out.w = (size ? size.x : 4) * p.scale.x;
+    out.l = (size ? size.z : 4) * p.scale.z;
+    out.h = (size ? size.y : 4) * p.scale.y;
+    out.baseY = p.y;
+    return out;
+  }
+  // Undo the heading: Lighting turns the blob quad with the prop, so the extents
+  // it wants are measured along the prop's own axes, not the world's.
+  _fpVec.set(0, 0, 1).applyQuaternion(p.quaternion);
+  _fpQuat.setFromAxisAngle(UP, -Math.atan2(_fpVec.x, _fpVec.z));
+  _fpQuat.multiply(p.quaternion);
+
+  let minX = Infinity; let maxX = -Infinity;
+  let minY = Infinity; let maxY = -Infinity;
+  let minZ = Infinity; let maxZ = -Infinity;
+  for (let i = 0; i < 8; i++) {
+    _fpVec.set(
+      (i & 1 ? bounds.max.x : bounds.min.x) * p.scale.x,
+      (i & 2 ? bounds.max.y : bounds.min.y) * p.scale.y,
+      (i & 4 ? bounds.max.z : bounds.min.z) * p.scale.z
+    ).applyQuaternion(_fpQuat);
+    if (_fpVec.x < minX) minX = _fpVec.x;
+    if (_fpVec.x > maxX) maxX = _fpVec.x;
+    if (_fpVec.y < minY) minY = _fpVec.y;
+    if (_fpVec.y > maxY) maxY = _fpVec.y;
+    if (_fpVec.z < minZ) minZ = _fpVec.z;
+    if (_fpVec.z > maxZ) maxZ = _fpVec.z;
+  }
+  out.w = maxX - minX;
+  out.l = maxZ - minZ;
+  out.h = maxY - minY;
+  out.baseY = p.y + minY;
+  return out;
+}
+
+/**
+ * render/Lighting.js is built by another agent and may be mid-edit; a scene full
+ * of props must not be lost to one bad registration.
+ * @returns {?object} the live handle, or null if nothing was registered
+ */
+function safeAddContact(lighting, target, opts) {
+  try {
+    return lighting.addContactShadow(target, opts) || null;
+  } catch (err) {
+    console.warn('[Props] contact shadow registration failed', err);
+    return null;
+  }
+}
 
 function hashName(str) {
   let h = 0x811c9dc5;

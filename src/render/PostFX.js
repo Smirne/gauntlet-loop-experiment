@@ -17,6 +17,12 @@
 // try/catch, every hand-written pass is compiled once against a 4x4 probe target
 // before it joins the chain, and render() degrades to a plain
 // renderer.render(scene, camera) if the composer ever throws.
+//
+// Two numbers in this file are load-bearing and are documented where they live,
+// because getting either wrong makes the frame look competent instead of made:
+//   - the tilt-shift focus band, whose units are spelled out above TILT_FRAG;
+//   - the bloom gate, solved against exposure in _updateUniforms so it keys off
+//     speculars rather than off whatever the light rig is currently doing.
 
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -71,10 +77,13 @@ const SpecularHighPassShader = {
   name: 'MG.SpecularHighPass',
   uniforms: {
     tDiffuse: { value: null },
-    luminosityThreshold: { value: 1.25 },
-    smoothWidth: { value: 0.45 },
+    // Overwritten every frame from PostFX._updateUniforms: UnrealBloomPass
+    // copies its own `threshold` into this uniform on each render, so the
+    // exposure-solved value has to be written to the pass, not to the uniform.
+    luminosityThreshold: { value: 1.8 },
+    smoothWidth: { value: 0.9 },
     texelSize: { value: new THREE.Vector2(1 / 1920, 1 / 1080) },
-    specularity: { value: 0.85 },
+    specularity: { value: 1.0 },
   },
   vertexShader: POST_VERT,
   fragmentShader: /* glsl */ `
@@ -109,7 +118,20 @@ const SpecularHighPassShader = {
       float mn = min( c.r, min( c.g, c.b ) );
       float sat = ( mx - mn ) / max( mx, 1e-4 );
 
-      float key = mix( 1.0, clamp( pop * 1.9, 0.0, 1.0 ) * ( 1.0 - sat * 0.55 ), specularity );
+      // Two independent ways to be a specular. A small clearcoat glint stands
+      // far proud of its surround but may only just clear the gate; a broad
+      // blown highlight sits well past the gate but has a bright neighbourhood,
+      // so the local-contrast test alone would reject it. Taking the max means
+      // a merely-bright diffuse surface -- a sunlit table, which is most of the
+      // frame -- satisfies neither and contributes nothing.
+      float over = clamp( ( l - luminosityThreshold ) / max( luminosityThreshold, 1e-3 ), 0.0, 1.0 );
+      float spec = max( smoothstep( 0.10, 0.55, pop ), over * over );
+
+      // A specular takes the light's colour and so is less saturated than the
+      // paint under it; saturated brightness is usually just bright pigment.
+      spec *= 1.0 - sat * 0.35;
+
+      float key = mix( 1.0, spec, specularity );
       float gate = smoothstep( luminosityThreshold, luminosityThreshold + smoothWidth, l );
 
       gl_FragColor = vec4( c * gate * key, 1.0 );
@@ -121,19 +143,70 @@ const SpecularHighPassShader = {
 /* 2. Tilt-shift depth of field                                               */
 /* ========================================================================== */
 
+/*
+ * THE UNIT CONTRACT FOR THE FOCUS BAND. Read before touching setFocusBand().
+ *
+ * `uBandWidth` and `uRamp` are distances in *normalised frame height* (uv.y).
+ * `uPower` is a dimensionless exponent. Callers outside this module — Director
+ * and Menu — hand us `Settings.post.params.tiltShiftFalloff`, which that file
+ * documents as "quadratic ramp away from the band", i.e. an exponent, and ships
+ * as 2. An earlier revision wrote that 2 straight into the ramp *distance*,
+ * which is authored at 0.20 uv. The effect died silently and completely:
+ *
+ *   at uv.y 0.90 with the band on 0.52, band 0.22, ramp 2.0
+ *     dist = 0.38, t = (0.38 - 0.22) / 2.0 = 0.080, coc = 0.0064
+ *     radius = 0.0064 * 16.7 px = 0.11 px  ->  under the early-out, no blur
+ *
+ * Nothing anywhere in the frame cleared the early-out, so every pixel took the
+ * passthrough branch and the signature effect was a no-op that still cost a
+ * full-resolution copy. setFocusBand() now owns the conversion and clamps every
+ * value it is handed; the ramp distance is never settable from outside.
+ *
+ * END-TO-END, 1920x1080, ultra, chase camera. Every number below is what the
+ * shader actually sees, traced from the two places they come from:
+ *
+ *   uMaxRadius  Capture.js pins pixelRatio to 1 and setSize(1920,1080), then
+ *               Engine.onResize forwards 1920x1080 to PostFX.onResize (PostFX is
+ *               not a registered system, so it is reached by the explicit tail
+ *               call in Engine.onResize). pr = 1, dh = 1080.
+ *                 uMaxRadius = max( 4, 1080 * 0.0155 ) = 16.74 px
+ *   uBandWidth  Director._feedFocusBand: 0.22 * (1 - 0.22 * speedNorm),
+ *               so 0.172 flat out and 0.22 at rest -> clamped to 0.210.
+ *   uPower      Director passes Settings' 2 -> clamp(2,1,4) = 2, quadratic.
+ *   uRamp       0.200, owned here.
+ *   uFocusCenter  tracks the player; ~0.45 in the reviewed chase frames.
+ *
+ *   coc(y) = clamp( ( ( |y - 0.45| - 0.210 ) / 0.200 )^2, 0, 1 )
+ *
+ *     y      dist    t      coc      radius
+ *     0.66   0.21    0.00   0.000     0.00 px   band edge, fully sharp
+ *     0.70   0.25    0.20   0.040     0.67 px   just past the early-out
+ *     0.75   0.30    0.45   0.203     3.39 px
+ *     0.85   0.40    0.95   0.903    15.11 px
+ *     0.90   0.45    1.00   1.000    16.74 px   <- was 0.11 px, a 150x miss
+ *     0.95   0.50    1.00   1.000    16.74 px   <- the oak grain in crit-1
+ *
+ *   Sharp band solves to y in [0.213, 0.687] — 47% of frame height in focus,
+ *   the rest ramping quadratically to a 16.74 px kernel. 27 taps per direction
+ *   at 16.74 / 13 = 1.29 px spacing, applied separably.
+ */
+
 const TILT_FRAG = /* glsl */ `
 uniform sampler2D tDiffuse;
 uniform vec2  uTexel;
 uniform vec2  uDirection;
 uniform vec2  uBandDir;      // ( sin, cos ) of the band angle
 uniform float uFocusCenter;
-uniform float uBandWidth;
-uniform float uFalloff;
-uniform float uMaxRadius;
+uniform float uBandWidth;    // half-height of the sharp band, in uv.y
+uniform float uRamp;         // uv.y distance over which coc climbs 0 -> 1
+uniform float uPower;        // ramp exponent; 2 = quadratic
+uniform float uMaxRadius;    // blur radius at coc 1, in device pixels
 uniform float uAspect;
 uniform float uHighlight;
+uniform float uHlKnee;
 uniform float uEdge;
 varying vec2 vUv;
+${HASH}
 
 // Circle of confusion from the tilt-shift gradient alone: distance from a tilted
 // in-focus strip, ramped quadratically. This is what sells the miniature — a real
@@ -142,13 +215,16 @@ varying vec2 vUv;
 float mgCoc( vec2 uv ) {
   vec2 d = vec2( ( uv.x - 0.5 ) * uAspect, uv.y - uFocusCenter );
   float dist = abs( d.y * uBandDir.y - d.x * uBandDir.x );
-  float t = max( dist - uBandWidth, 0.0 ) / max( uFalloff, 1e-4 );
-  float coc = clamp( t * t, 0.0, 1.0 );
+  float t = clamp( max( dist - uBandWidth, 0.0 ) / max( uRamp, 1e-3 ), 0.0, 1.0 );
+  // Base is floored off zero: pow( 0.0, x ) is not required to be well defined
+  // and returns NaN on some drivers, and a NaN here would propagate through the
+  // whole kernel weight sum.
+  float coc = clamp( pow( max( t, 1e-5 ), uPower ), 0.0, 1.0 );
 
   // A touch of corner defocus: even inside the strip a fast lens is not sharp
   // right out to the frame edge.
   float r = length( vec2( ( uv.x - 0.5 ) * uAspect, uv.y - 0.5 ) );
-  coc = clamp( coc + uEdge * smoothstep( 0.40, 0.82, r ) * ( 1.0 - coc ), 0.0, 1.0 );
+  coc = clamp( coc + uEdge * smoothstep( 0.42, 0.95, r ) * ( 1.0 - coc ), 0.0, 1.0 );
   return coc;
 }
 
@@ -157,34 +233,48 @@ void main() {
   vec3 centre = texture2D( tDiffuse, vUv ).rgb;
   float radius = coc * uMaxRadius;
 
-  if ( radius < 0.75 ) {
+  // A third of a pixel is the point below which a gather cannot move anything;
+  // it must stay well under one pixel or the band edge becomes a visible seam
+  // where blur switches on.
+  if ( radius < 0.30 ) {
     gl_FragColor = vec4( centre, 1.0 );
     return;
   }
 
-  vec2 stepUv = uDirection * uTexel * ( radius / float( MG_DOF_TAPS ) );
+  float taps = float( MG_DOF_TAPS );
+  vec2 stepUv = uDirection * uTexel * ( radius / taps );
+
+  // Dither the tap phase by up to half a step. At full radius the taps land
+  // ~1.3 px apart, which without this reads as concentric steps inside a bokeh
+  // disc. The hash is spatial only — no time term — so the noise is stable
+  // between frames and a still capture is reproducible.
+  float jitter = mgHash13( vec3( gl_FragCoord.xy, 7.13 ) ) - 0.5;
 
   vec3 sum = vec3( 0.0 );
   float wsum = 0.0;
 
   for ( int i = -MG_DOF_TAPS; i <= MG_DOF_TAPS; i ++ ) {
-    float fi = float( i ) / float( MG_DOF_TAPS );
-    vec2 uv = vUv + stepUv * float( i );
+    float fi = ( float( i ) + jitter ) / taps;
+    vec2 uv = vUv + stepUv * ( float( i ) + jitter );
     vec3 s = texture2D( tDiffuse, uv ).rgb;
 
     // Flat-top kernel with a hard rim. Applied separably this converges on a
     // squircle rather than the pointy Gaussian profile that turns bokeh into
     // mush, so out-of-focus highlights keep a defined edge.
-    float k = 1.0 - smoothstep( 0.86, 1.0, abs( fi ) );
+    float k = 1.0 - smoothstep( 0.82, 1.0, abs( fi ) );
 
     // Scatter-as-gather guard: a sharp pixel must not bleed into a blurred one,
     // only the other way round.
-    k *= clamp( mgCoc( uv ) / max( coc, 1e-3 ), 0.12, 1.0 );
+    k *= clamp( mgCoc( uv ) / max( coc, 1e-3 ), 0.10, 1.0 );
 
     // Weight highlights up before averaging so they resolve as bright discs
-    // instead of being diluted by their dark surround.
+    // instead of being diluted by their dark surround. This buffer is linear
+    // HDR, where a clearcoat glint can be fifty times diffuse white, so the
+    // weight has to saturate: unbounded, one pixel would own the entire kernel
+    // and erase everything around it instead of forming a disc inside it.
     float lum = max( max( s.r, s.g ), s.b );
-    float hw = 1.0 + uHighlight * max( lum - 0.80, 0.0 );
+    float hl = max( lum - uHlKnee, 0.0 );
+    float hw = 1.0 + uHighlight * ( hl / ( hl + 1.0 ) );
 
     float w = k * hw;
     sum += s * w;
@@ -194,6 +284,12 @@ void main() {
   gl_FragColor = vec4( sum / max( wsum, 1e-4 ), 1.0 );
 }
 `;
+
+/** Half-height of the sharp band, in uv.y. Clamps whatever a peer hands us. */
+const BAND_MIN = 0.040;
+const BAND_MAX = 0.210;
+/** uv.y distance over which coc climbs 0 -> 1. Owned here; art direction. */
+const DOF_RAMP = 0.200;
 
 /**
  * Separable two-pass tilt-shift DOF. Owns its own intermediate target because a
@@ -212,12 +308,14 @@ class TiltShiftPass extends Pass {
       uDirection: { value: new THREE.Vector2(1, 0) },
       uBandDir: { value: new THREE.Vector2(0, 1) },
       uFocusCenter: { value: 0.52 },
-      uBandWidth: { value: 0.11 },
-      uFalloff: { value: 0.30 },
-      uMaxRadius: { value: 13 },
+      uBandWidth: { value: 0.130 },
+      uRamp: { value: DOF_RAMP },
+      uPower: { value: 2.0 },
+      uMaxRadius: { value: 16 },
       uAspect: { value: width / Math.max(1, height) },
-      uHighlight: { value: 2.6 },
-      uEdge: { value: 0.18 },
+      uHighlight: { value: 2.2 },
+      uHlKnee: { value: 0.85 },
+      uEdge: { value: 0.16 },
     };
 
     const make = (dir) => {
@@ -293,7 +391,11 @@ class TiltShiftPass extends Pass {
     this.rt.dispose();
     this.materialH.dispose();
     this.materialV.dispose();
-    this._quad.dispose();
+    // Deliberately not this._quad.dispose(): FullScreenQuad.dispose() frees the
+    // module-level fullscreen triangle that every pass in the addon shares, so
+    // one pass tearing down pulls the geometry out from under the rest of the
+    // chain. three re-uploads it lazily, but only after the buffers have been
+    // deleted and recreated once per disposed pass.
   }
 }
 
@@ -382,6 +484,8 @@ const GradeShader = {
     uLutSize: { value: 32 },
     uLutAmount: { value: 1.0 },
     uExposure: { value: 1.0 },
+    uLookExposure: { value: 1.0 },
+    uToe: { value: new THREE.Vector3(0.016, 0.018, 0.024) },
     uLift: { value: new THREE.Vector3(0, 0, 0) },
     uGamma: { value: new THREE.Vector3(1, 1, 1) },
     uGain: { value: new THREE.Vector3(1, 1, 1) },
@@ -399,6 +503,8 @@ const GradeShader = {
     uniform float uLutSize;
     uniform float uLutAmount;
     uniform float uExposure;
+    uniform float uLookExposure;
+    uniform vec3  uToe;
     uniform vec3  uLift;
     uniform vec3  uGamma;
     uniform vec3  uGain;
@@ -465,7 +571,10 @@ const GradeShader = {
       vec3 c = max( texture2D( tDiffuse, vUv ).rgb, vec3( 0.0 ) );
 
       // --- scene-referred ---------------------------------------------------
-      c *= uExposure / 0.6;
+      // uLookExposure is the per-preset key trim (0.96 at noon, 1.04 under
+      // overcast): the frame is keyed on purpose rather than by whatever the
+      // light rig happened to leave toneMappingExposure at.
+      c *= ( uExposure * uLookExposure ) / 0.6;
       // White balance: cheap channel scaling is enough at this magnitude and
       // avoids two matrix multiplies per pixel.
       c *= vec3( 1.0 + uBalance.x * 0.14, 1.0 + uBalance.y * 0.07, 1.0 - uBalance.x * 0.14 );
@@ -476,6 +585,13 @@ const GradeShader = {
       c = clamp( c * uGain + uLift, 0.0, 1.0 );
       c = pow( c, 1.0 / max( uGamma, vec3( 1e-3 ) ) );
       c = clamp( ( c - 0.435 ) * uContrast + 0.435, 0.0, 1.0 );
+
+      // Film has no true black: a projected frame sits around 2% and the shadow
+      // keeps the colour of whatever is filling it. Lifting the toe here — after
+      // contrast, so nothing downstream can pull it back to zero — is the
+      // difference between a shadow and a hole, and the tint is the single
+      // strongest cue that five differently-lit tracks are one product.
+      c = uToe + c * ( 1.0 - uToe );
 
       float l = mgLuma( c );
       float wS = 1.0 - smoothstep( 0.0, 0.44, l );
@@ -536,12 +652,17 @@ const VignetteShader = {
   name: 'MG.Vignette',
   uniforms: {
     tDiffuse: { value: null },
-    uAmount: { value: 0.38 },
-    uInner: { value: 0.30 },
-    uOuter: { value: 0.88 },
+    // Lighter than a stills vignette on purpose. The toe lift in the grade is
+    // what keeps shadows readable, and a heavy corner falloff on top of it just
+    // eats the environment the frame is meant to be showing. At 16:9 the corner
+    // lands at d = 0.90, which smoothsteps to 0.91 of full effect: corners sit
+    // at 73% luma, dark enough to hold the eye centre, light enough to read.
+    uAmount: { value: 0.30 },
+    uInner: { value: 0.36 },
+    uOuter: { value: 1.02 },
     uRoundness: { value: 0.35 },
     uAspect: { value: 16 / 9 },
-    uDesat: { value: 0.30 },
+    uDesat: { value: 0.24 },
   },
   vertexShader: POST_VERT,
   fragmentShader: /* glsl */ `
@@ -668,79 +789,109 @@ const CrtShader = {
 /**
  * One entry per lighting preset. `cdl` drives the analytic part of the grade
  * (uniforms, cheap to animate); `lut` drives the baked 3D table (expressive,
- * regenerated only when the look changes).
+ * regenerated only when the look changes); `toe`, `exposure` and `bloomKnee`
+ * are the three levers that give a preset an actual point of view.
+ *
+ * The house signature, held constant across all seven so that five tracks read
+ * as one art-directed product rather than five demos:
+ *
+ *   - The toe is always lifted and always cooler than the midtones. Nothing in
+ *     this game is allowed to fall into a black hole; a shadow is air, and air
+ *     here is blue. `crush` is zero everywhere — it was the wrong tool.
+ *   - Highlights always run warmer than the midtones and always bleach toward
+ *     white in the top quarter, so a specular reads as light rather than as
+ *     tinted paper.
+ *   - Contrast never sits below 1.10. The earlier tables ran 1.02–1.16, which
+ *     is inside the noise floor of the tone curve and is exactly why a reviewer
+ *     called the grade intentionless.
+ *   - `exposure` is a per-preset key trim on top of whatever Lighting sets, so
+ *     the brightest presets are pulled back deliberately instead of blowing.
+ *   - `bloomKnee` is in *graded-linear* units (see _updateUniforms): the value
+ *     a pixel must reach after exposure and before ACES to start blooming.
+ *     3.1 tonemaps to ~0.90 display, i.e. only the top of the curve.
  */
 export const GRADE_LOOKS = {
   neutral: {
-    cdl: { lift: [0, 0, 0], gamma: [1, 1, 1], gain: [1, 1, 1], contrast: 1.0, saturation: 1.0, balance: [0, 0] },
-    lut: { shadow: [1, 1, 1], mid: [1, 1, 1], high: [1, 1, 1], sat: 1.0, contrast: 1.0, crush: 0.0, bleach: 0.0 },
-    bloom: 0.5,
+    cdl: { lift: [0, 0, 0], gamma: [1, 1, 1], gain: [1, 1, 1], contrast: 1.06, saturation: 1.04, balance: [0, 0] },
+    lut: {
+      shadow: [0.96, 0.99, 1.06], mid: [1, 1, 1], high: [1.02, 1.01, 0.99],
+      sat: 1.04, contrast: 1.06, crush: 0.0, bleach: 0.10,
+    },
+    toe: [0.016, 0.018, 0.024], exposure: 1.00, bloom: 0.45, bloomKnee: 3.1,
   },
+  // Low warm window light raking across the table, cool skylight in the shade.
   morning: {
     cdl: {
-      lift: [-0.006, -0.002, 0.010], gamma: [1.0, 1.0, 1.02], gain: [1.035, 1.005, 0.965],
-      contrast: 1.07, saturation: 1.07, balance: [0.10, -0.02],
+      lift: [-0.004, -0.001, 0.008], gamma: [1.0, 1.0, 1.02], gain: [1.050, 1.005, 0.950],
+      contrast: 1.13, saturation: 1.12, balance: [0.13, -0.02],
     },
     lut: {
-      shadow: [0.93, 0.98, 1.13], mid: [1.02, 1.0, 0.975], high: [1.06, 1.015, 0.925],
-      sat: 1.05, contrast: 1.07, crush: 0.010, bleach: 0.12,
+      shadow: [0.86, 0.94, 1.20], mid: [1.03, 1.0, 0.965], high: [1.09, 1.02, 0.900],
+      sat: 1.10, contrast: 1.12, crush: 0.0, bleach: 0.16,
     },
-    bloom: 0.55,
+    toe: [0.018, 0.021, 0.032], exposure: 1.00, bloom: 0.45, bloomKnee: 3.1,
   },
+  // Hard overhead sun. Whites stay white, shade goes properly blue, and the key
+  // trim pulls the brightest preset back rather than letting it blow.
   noon: {
     cdl: {
-      lift: [-0.004, -0.002, 0.006], gamma: [1, 1, 1], gain: [1.01, 1.005, 1.0],
-      contrast: 1.10, saturation: 1.10, balance: [0.02, 0.0],
+      lift: [-0.002, -0.001, 0.006], gamma: [1, 1, 1], gain: [1.015, 1.005, 0.995],
+      contrast: 1.16, saturation: 1.10, balance: [0.03, 0.0],
     },
     lut: {
-      shadow: [0.95, 0.99, 1.10], mid: [1.0, 1.0, 1.0], high: [1.02, 1.01, 0.99],
-      sat: 1.08, contrast: 1.10, crush: 0.014, bleach: 0.10,
+      shadow: [0.90, 0.96, 1.16], mid: [1.0, 1.0, 1.0], high: [1.03, 1.015, 0.980],
+      sat: 1.08, contrast: 1.14, crush: 0.0, bleach: 0.14,
     },
-    bloom: 0.62,
+    toe: [0.014, 0.017, 0.028], exposure: 0.96, bloom: 0.50, bloomKnee: 3.4,
   },
+  // Heavy amber key, violet shade. The most opinionated look in the set.
   goldenHour: {
     cdl: {
-      lift: [0.004, -0.004, 0.014], gamma: [0.99, 1.0, 1.05], gain: [1.07, 1.005, 0.915],
-      contrast: 1.06, saturation: 1.10, balance: [0.22, -0.04],
+      lift: [0.006, -0.003, 0.012], gamma: [0.985, 1.0, 1.06], gain: [1.075, 1.005, 0.905],
+      contrast: 1.12, saturation: 1.16, balance: [0.26, -0.05],
     },
     lut: {
-      shadow: [0.88, 0.94, 1.20], mid: [1.05, 1.0, 0.93], high: [1.10, 1.02, 0.86],
-      sat: 1.10, contrast: 1.05, crush: 0.008, bleach: 0.18,
+      shadow: [0.80, 0.90, 1.26], mid: [1.07, 1.0, 0.900], high: [1.10, 1.02, 0.860],
+      sat: 1.14, contrast: 1.10, crush: 0.0, bleach: 0.22,
     },
-    bloom: 0.78,
+    toe: [0.024, 0.020, 0.038], exposure: 0.98, bloom: 0.70, bloomKnee: 2.6,
   },
+  // A flat sky gives the frame nothing, so the grade supplies the contrast the
+  // light will not, and desaturates rather than pretending there is colour.
   overcast: {
     cdl: {
-      lift: [0.012, 0.013, 0.018], gamma: [1.01, 1.0, 1.0], gain: [0.985, 0.995, 1.015],
-      contrast: 1.02, saturation: 0.88, balance: [-0.06, 0.02],
+      lift: [0.008, 0.009, 0.014], gamma: [1.01, 1.0, 0.995], gain: [0.985, 0.995, 1.020],
+      contrast: 1.14, saturation: 0.92, balance: [-0.07, 0.02],
     },
     lut: {
-      shadow: [0.99, 1.01, 1.07], mid: [0.99, 1.0, 1.02], high: [0.99, 1.0, 1.03],
-      sat: 0.88, contrast: 1.02, crush: 0.0, bleach: 0.06,
+      shadow: [0.97, 1.00, 1.10], mid: [0.99, 1.0, 1.02], high: [0.99, 1.00, 1.040],
+      sat: 0.92, contrast: 1.10, crush: 0.0, bleach: 0.08,
     },
-    bloom: 0.38,
+    toe: [0.022, 0.024, 0.032], exposure: 1.04, bloom: 0.32, bloomKnee: 3.6,
   },
+  // Cyan-violet ambient, warm practicals. Highest contrast of the daylight set.
   dusk: {
     cdl: {
-      lift: [0.004, -0.002, 0.020], gamma: [1.0, 1.01, 1.06], gain: [1.05, 0.975, 1.02],
-      contrast: 1.12, saturation: 1.06, balance: [0.08, -0.06],
+      lift: [0.004, -0.002, 0.018], gamma: [1.0, 1.01, 1.07], gain: [1.060, 0.970, 1.030],
+      contrast: 1.20, saturation: 1.12, balance: [0.08, -0.07],
     },
     lut: {
-      shadow: [0.84, 0.90, 1.28], mid: [1.06, 0.98, 1.04], high: [1.10, 0.99, 0.94],
-      sat: 1.05, contrast: 1.12, crush: 0.016, bleach: 0.15,
+      shadow: [0.74, 0.86, 1.34], mid: [1.07, 0.97, 1.06], high: [1.12, 0.99, 0.920],
+      sat: 1.10, contrast: 1.16, crush: 0.0, bleach: 0.20,
     },
-    bloom: 0.85,
+    toe: [0.020, 0.020, 0.044], exposure: 0.97, bloom: 0.85, bloomKnee: 2.1,
   },
+  // One tungsten source; everything it does not reach falls into blue.
   nightLamp: {
     cdl: {
-      lift: [-0.002, 0.000, 0.014], gamma: [1.0, 1.0, 1.05], gain: [1.06, 0.99, 0.96],
-      contrast: 1.16, saturation: 1.02, balance: [0.14, -0.05],
+      lift: [-0.001, 0.001, 0.012], gamma: [1.0, 1.0, 1.06], gain: [1.090, 0.985, 0.940],
+      contrast: 1.24, saturation: 1.08, balance: [0.18, -0.06],
     },
     lut: {
-      shadow: [0.80, 0.92, 1.34], mid: [1.06, 0.99, 0.96], high: [1.10, 1.01, 0.90],
-      sat: 1.02, contrast: 1.16, crush: 0.020, bleach: 0.20,
+      shadow: [0.70, 0.85, 1.40], mid: [1.07, 0.99, 0.94], high: [1.13, 1.01, 0.860],
+      sat: 1.06, contrast: 1.20, crush: 0.0, bleach: 0.24,
     },
-    bloom: 1.00,
+    toe: [0.014, 0.016, 0.040], exposure: 1.02, bloom: 1.00, bloomKnee: 1.7,
   },
 };
 
@@ -832,26 +983,42 @@ export function buildLutTexture(look, size = LUT_SIZE) {
 /* Quality tiers                                                              */
 /* ========================================================================== */
 
+/*
+ * `dofRadius` is a fraction of the *drawing buffer height in device pixels*,
+ * not of anything normalised. uMaxRadius = max(4, dh * dofRadius).
+ *
+ * At 1920x1080 (Capture.js pins pixelRatio to 1 and Engine.onResize forwards the
+ * capture size straight to PostFX.onResize, so dh is exactly 1080):
+ *
+ *   low     1080 * 0.0090 =  9.7 px over  5 taps -> 1.94 px per tap
+ *   medium  1080 * 0.0115 = 12.4 px over  8 taps -> 1.55 px
+ *   high    1080 * 0.0135 = 14.6 px over 11 taps -> 1.33 px
+ *   ultra   1080 * 0.0155 = 16.7 px over 13 taps -> 1.29 px
+ *
+ * Tap spacing is what governs whether a bokeh disc looks solid or ringed, so
+ * dofTaps has to move with dofRadius. Cost at ultra is 27 taps in each of two
+ * separable directions over 2.07 Mpx, and only outside the sharp band.
+ */
 const POST_TIERS = {
   low: {
-    ao: 'none', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 4, motion: false,
+    ao: 'none', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 5, motion: false,
     mbTaps: 5, grade: true, lut: true, chromatic: false, vignette: true,
-    grain: 0.0, smaa: false, dofRadius: 0.0085, edgeDefocus: 0.10,
+    grain: 0.0, smaa: false, dofRadius: 0.0090, edgeDefocus: 0.10,
   },
   medium: {
-    ao: 'ssao', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 6, motion: true,
+    ao: 'ssao', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 8, motion: true,
     mbTaps: 7, grade: true, lut: true, chromatic: true, vignette: true,
-    grain: 0.022, smaa: true, dofRadius: 0.0100, edgeDefocus: 0.13,
+    grain: 0.022, smaa: true, dofRadius: 0.0115, edgeDefocus: 0.13,
   },
   high: {
-    ao: 'gtao', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 8, motion: true,
+    ao: 'gtao', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 11, motion: true,
     mbTaps: 9, grade: true, lut: true, chromatic: true, vignette: true,
-    grain: 0.028, smaa: true, dofRadius: 0.0115, edgeDefocus: 0.16,
+    grain: 0.028, smaa: true, dofRadius: 0.0135, edgeDefocus: 0.15,
   },
   ultra: {
-    ao: 'gtao', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 10, motion: true,
+    ao: 'gtao', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 13, motion: true,
     mbTaps: 12, grade: true, lut: true, chromatic: true, vignette: true,
-    grain: 0.034, smaa: true, dofRadius: 0.0130, edgeDefocus: 0.18,
+    grain: 0.034, smaa: true, dofRadius: 0.0155, edgeDefocus: 0.16,
   },
 };
 
@@ -862,6 +1029,16 @@ const POST_TIERS = {
 const _size = new THREE.Vector2();
 const _vp = new THREE.Matrix4();
 const _proj = new THREE.Vector3();
+
+/** Finite-or-default. Every number a peer hands us goes through this first —
+ *  a NaN reaching a uniform is invisible until the whole pass renders black. */
+function num(v, fallback) {
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+function clampNum(v, lo, hi) {
+  return v < lo ? lo : v > hi ? hi : v;
+}
 
 /** Shallow clone of a shader descriptor so per-instance defines do not leak. */
 function shaderCopy(shader, defines) {
@@ -901,6 +1078,10 @@ export class PostFX {
     this._focus = 0.52;
     this._focusOverride = null;
     this._focusTau = 0.13;
+    /** Extra multiplier on uMaxRadius, from post.params.tiltShiftAmount. */
+    this._dofAmount = 1;
+    this._lookExposure = 1;
+    this._bloomKnee = 3.1;
     this._prevVP = new THREE.Matrix4();
     this._time = 0;
     this._failures = 0;
@@ -1032,7 +1213,10 @@ export class PostFX {
     if (want.bloom !== false && tier.bloom) {
       const bloom = this._safe('bloom', () => {
         const res = new THREE.Vector2(Math.round(dw * tier.bloomRes), Math.round(dh * tier.bloomRes));
-        const p = new UnrealBloomPass(res, 0.55, 0.62, 1.25);
+        // Strength and threshold are both overwritten before the first frame —
+        // strength by setLook, threshold by _updateUniforms. Radius stays tight:
+        // a specular halo is a halo, and a wide one is just a milky wash.
+        const p = new UnrealBloomPass(res, 0.28, 0.42, 1.8);
 
         // Swap the addon's luminance threshold for the specular key. The addon
         // writes tDiffuse and luminosityThreshold into highPassUniforms every
@@ -1058,12 +1242,14 @@ export class PostFX {
     if (want.tiltShift !== false && tier.tilt) {
       const tilt = this._safe('tiltShift', () => new TiltShiftPass(dw, dh, tier.dofTaps));
       if (tilt && this._validate(tilt, 'tiltShift')) {
-        tilt.uniforms.uMaxRadius.value = Math.max(4, dh * tier.dofRadius);
         tilt.uniforms.uEdge.value = tier.edgeDefocus;
         this.passes.tiltShift = tilt;
         composer.addPass(tilt);
       } else if (tilt) {
         tilt.dispose();
+        // This is the signature effect; losing it silently is how the frame ends
+        // up uniformly sharp and nobody notices until a review.
+        console.error('[MICRO GAUNTLET] postfx: tilt-shift unavailable — the miniature look is off.');
       }
     }
 
@@ -1250,11 +1436,16 @@ export class PostFX {
   setLook(name) {
     const look = GRADE_LOOKS[name] || GRADE_LOOKS.neutral;
     this.lookName = GRADE_LOOKS[name] ? name : 'neutral';
+    this._lookExposure = num(look.exposure, 1);
+    this._bloomKnee = num(look.bloomKnee, 3.1);
 
     const grade = this.passes.grade;
     if (grade) {
       const c = look.cdl;
       const u = grade.uniforms;
+      const toe = look.toe || GRADE_LOOKS.neutral.toe;
+      u.uToe.value.set(toe[0], toe[1], toe[2]);
+      u.uLookExposure.value = this._lookExposure;
       u.uLift.value.set(c.lift[0], c.lift[1], c.lift[2]);
       u.uGamma.value.set(c.gamma[0], c.gamma[1], c.gamma[2]);
       u.uGain.value.set(c.gain[0], c.gain[1], c.gain[2]);
@@ -1277,7 +1468,35 @@ export class PostFX {
     }
 
     const bloom = this.passes.bloom;
-    if (bloom) bloom.strength = 0.42 + (look.bloom != null ? look.bloom : 0.5) * 0.34;
+    if (bloom) {
+      // 0.24 (morning) to 0.36 (a single lamp in the dark). The old range was
+      // 0.55-0.76, which is glow-over-everything territory even with a perfect
+      // high pass in front of it.
+      bloom.strength = 0.14 + num(look.bloom, 0.45) * 0.22;
+      bloom.radius = 0.42;
+    }
+    return this;
+  }
+
+  /**
+   * Honour the handful of Settings.post.params dials this pass can act on
+   * without inheriting their unit confusion. Called by Settings.apply().
+   *
+   * `tiltShiftMaxRadius` is deliberately ignored: it is documented in
+   * core/Settings.js as "px at 1080p" and ships at 3.2, which is a quarter of
+   * what the effect needs to be visible at all. The tier tables own the radius;
+   * `tiltShiftAmount` (0..2, ships at 1) is the sanctioned way to scale it.
+   */
+  applySettings(settings) {
+    const params = settings && settings.post && settings.post.params;
+    if (!params) return this;
+    this._dofAmount = clampNum(num(params.tiltShiftAmount, 1), 0, 2);
+    const t = this.passes.tiltShift;
+    if (t) {
+      const tier = POST_TIERS[this.tier] || POST_TIERS.ultra;
+      const dh = Math.max(1, Math.round(this.height * (this.ctx.renderer?.getPixelRatio?.() || 1)));
+      t.uniforms.uMaxRadius.value = Math.max(4, dh * tier.dofRadius) * this._dofAmount;
+    }
     return this;
   }
 
@@ -1291,15 +1510,39 @@ export class PostFX {
 
   /**
    * Directly steer the tilt-shift band. Without a call it tracks the player car;
-   * cutscenes and the intro orbit may want to pin it.
-   * @param {?number} centre uv.y in [0,1], or null to resume tracking
+   * cutscenes and the intro orbit may want to pin it. Called every frame from
+   * Director.lateUpdate, so it allocates nothing.
+   *
+   * @param {?number} centre  uv.y of the in-focus band, or null to resume
+   *                          tracking the player.
+   * @param {number} [width]  half-height of the sharp band in uv.y. Clamped to
+   *                          [0.040, 0.210]: above that the band swallows the
+   *                          frame and the miniature read goes with it, and the
+   *                          intro deliberately asks for 0.46.
+   * @param {number} [falloff] ramp EXPONENT, matching what
+   *                          Settings.post.params.tiltShiftFalloff documents
+   *                          ("quadratic ramp away from the band", ships as 2).
+   *                          It is not a distance — see the unit contract above
+   *                          TILT_FRAG for what happened when it was treated as
+   *                          one. Clamped to [1, 4]; 2 is quadratic.
    */
   setFocusBand(centre, width, falloff) {
-    this._focusOverride = centre == null ? null : centre;
+    this._focusOverride = Number.isFinite(centre) ? clampNum(centre, 0.06, 0.94) : null;
     const t = this.passes.tiltShift;
-    if (!t) return;
-    if (width != null) t.uniforms.uBandWidth.value = width;
-    if (falloff != null) t.uniforms.uFalloff.value = falloff;
+    if (!t) return this;
+    const u = t.uniforms;
+    if (Number.isFinite(width)) u.uBandWidth.value = clampNum(width, BAND_MIN, BAND_MAX);
+    if (Number.isFinite(falloff)) u.uPower.value = clampNum(falloff, 1, 4);
+    return this;
+  }
+
+  /** Tilt the plane of focus off horizontal. `deg` is the band's screen angle. */
+  setFocusTilt(deg) {
+    const t = this.passes.tiltShift;
+    if (!t) return this;
+    const a = num(deg, 0) * Math.PI / 180;
+    t.uniforms.uBandDir.value.set(Math.sin(a), Math.cos(a));
+    return this;
   }
 
   onResize(w, h) {
@@ -1320,7 +1563,10 @@ export class PostFX {
     }
     if (p.tiltShift) {
       const tier = POST_TIERS[this.tier] || POST_TIERS.ultra;
-      p.tiltShift.uniforms.uMaxRadius.value = Math.max(4, dh * tier.dofRadius);
+      // dh is the drawing-buffer height in device pixels, so the blur is the
+      // same fraction of the frame at every resolution: 16.7 px at 1080p ultra,
+      // 11.2 px at 720p, 33.5 px at 2160p.
+      p.tiltShift.uniforms.uMaxRadius.value = Math.max(4, dh * tier.dofRadius) * this._dofAmount;
       p.tiltShift.uniforms.uAspect.value = dw / dh;
     }
     if (p.chromatic) p.chromatic.uniforms.uTexel.value.set(1 / dw, 1 / dh);
@@ -1400,7 +1646,30 @@ export class PostFX {
     const p = this.passes;
     this._time += dt;
 
-    if (p.grade) p.grade.uniforms.uExposure.value = renderer.toneMappingExposure;
+    const exposure = num(renderer && renderer.toneMappingExposure, 1);
+    if (p.grade) p.grade.uniforms.uExposure.value = exposure;
+
+    /* bloom gate ------------------------------------------------------------ */
+    if (p.bloom) {
+      // The high pass runs on scene radiance, but what the eye judges as "blown"
+      // is what comes out of the tone curve, and the grade does
+      //   graded = scene * exposure * lookExposure / 0.6
+      // before ACES. A fixed scene-space threshold therefore drifts with the
+      // light rig: key up by a stop and the whole table crosses it, which is
+      // precisely the milky wash we are trying not to have. Solving for the
+      // graded-linear knee instead pins the gate to speculars at every preset.
+      //   knee 3.1 -> ACES ~0.90 display; at exposure 1.05 the scene-space
+      //   threshold is 3.1 * 0.6 / 1.05 = 1.77, comfortably above sunlit
+      //   diffuse white (~1.0-1.5) and far below a clearcoat glint (5-100).
+      const e = Math.max(0.05, exposure * this._lookExposure);
+      const th = (this._bloomKnee * 0.6) / e;
+      p.bloom.threshold = th;
+      const hp = p.bloom.highPassUniforms;
+      // UnrealBloomPass republishes tDiffuse and luminosityThreshold itself but
+      // never smoothWidth, so the soft edge of the gate has to track it here or
+      // it stays at whatever the clone was built with.
+      if (hp && hp.smoothWidth) hp.smoothWidth.value = th * 0.5;
+    }
 
     // The renderer refreshes matrixWorldInverse inside render(), which is after
     // this runs, so both the screen-space focus projection and the motion-blur
@@ -1426,12 +1695,16 @@ export class PostFX {
           }
         }
       }
-      if (target != null) {
+      if (Number.isFinite(target)) {
         // Critically damped, frame-rate independent: the band must never
         // overshoot or the whole frame breathes.
         const k = 1 - Math.exp(-dt / this._focusTau);
         this._focus += (target - this._focus) * k;
       }
+      // One NaN reaching uFocusCenter would make every mgCoc() call NaN, every
+      // kernel weight NaN, and the whole pass output NaN — which composites as
+      // black, not as an error.
+      if (!Number.isFinite(this._focus)) this._focus = 0.52;
       p.tiltShift.uniforms.uFocusCenter.value = this._focus;
     }
 

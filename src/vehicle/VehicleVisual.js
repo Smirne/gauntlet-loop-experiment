@@ -302,7 +302,8 @@ export class VehicleVisual {
     this.arms = [];
     this.axles = [];
     this.spots = [];
-    this.contact = null;
+    this.contact = null;   // fallback blob mesh, only when there is no Lighting
+    this._csEntry = null;  // handle from Lighting.addContactShadow
     this._ownGeoms = [];   // geometry this car minted rather than shared
 
     /* --- animation state ------------------------------------------------- */
@@ -444,11 +445,23 @@ export class VehicleVisual {
     });
     M.tyre.name = 'tyre';
     if (M.tyre.normalScale) M.tyre.normalScale.set(1.1, 1.1);
+    // The tyre is the only part of the car that actually touches the ground, and
+    // three's default depth pass renders the *back* faces of a FrontSide
+    // material (shadowSide table in WebGLShadowMap). For a 2.3 u wheel that puts
+    // the occluder recorded in the shadow map a wheel-diameter behind the rubber
+    // that is really blocking the light, so the cast shadow starts short of the
+    // contact patch and the tyre peter-pans. Recording the near surface instead
+    // puts the occluder where it is. Only the tyres get this: on a thin, dark,
+    // rough surface the self-shadow acne that front-face depth risks is
+    // invisible, where on the paint it would not be — and the paint is 20 u
+    // thick, so it has nothing to gain here anyway.
+    M.tyre.shadowSide = THREE.FrontSide;
     if (wr !== wf) {
       const t2 = wheelTexture(wr, { size: this.ctx?.settings?.quality === 'low' ? 512 : 1024 });
       M.tyreRear = M.tyre.clone();
       M.tyreRear.map = t2.map || null;
       M.tyreRear.normalMap = t2.normalMap || null;
+      M.tyreRear.shadowSide = THREE.FrontSide;
       M.tyreRear.needsUpdate = true;
     } else {
       M.tyreRear = M.tyre;
@@ -600,16 +613,50 @@ export class VehicleVisual {
   }
 
   /**
-   * Fallback grounding shadow.
+   * Grounding.
    *
-   * render/Lighting.js already drops an instanced blob under every vehicle and
-   * reads vehicle.footprint to size it, so normally this stays unbuilt. It
-   * exists because a floating car is an automatic fail and that must not be
-   * contingent on another module being present.
+   * render/Lighting.js owns the contact-shadow pool for the whole game, so the
+   * car registers with it rather than drawing its own quad: one instanced draw
+   * for every blob in the scene, and a blob that knows the car's real wheel
+   * contact normals so it lies in the surface plane on a bank or a ramp.
+   *
+   * This used to *detect* that API and then return without building anything,
+   * on the assumption that something else was calling it. Nothing was, so every
+   * car in the game had no contact shadow at all — which the contract calls an
+   * automatic fail. Detecting the API is now the trigger to use it.
    */
   _buildContactShadow() {
     const lighting = this.ctx?.lighting;
-    if (lighting && lighting.contact && typeof lighting.addContactShadow === 'function') return;
+    const v = this.vehicle;
+    if (lighting && typeof lighting.addContactShadow === 'function') {
+      const fp = this.chassis.footprint;
+      try {
+        // The vehicle field claims the car, so Lighting suppresses its own
+        // automatic blob and this one cannot double up on it. Without a Vehicle (the
+        // car-select turntable) the visual root is the target and its own base
+        // is the ground.
+        this._csEntry = lighting.addContactShadow(v || this.root, {
+          vehicle: v || null,
+          // The occlusion under a car is wider than the car: it takes in both
+          // tyre contact patches and the shadowed air under the sills.
+          length: fp.length * 1.28,
+          width: fp.width * 1.68,
+          opacity: 1,
+          maxHeight: 9,
+          softness: 0.38,
+          // Vehicle.position is the centre of mass; the contact patch is
+          // cgHeight below it. Measuring from the origin fades a resting car's
+          // blob to half strength.
+          baseOffset: v ? (v.tuning?.cgHeight ?? 1.25) : 0,
+          grounded: !v,
+          lift: 0.05,
+        }) || null;
+      } catch (err) {
+        console.warn('[VehicleVisual] contact shadow registration failed', err);
+        this._csEntry = null;
+      }
+      if (this._csEntry) return;
+    }
     const tex = contactShadowTexture();
     if (!tex || !this.ctx?.scene) return;
     const fp = this.chassis.footprint;
@@ -921,6 +968,11 @@ export class VehicleVisual {
     _spotsUsed = Math.max(0, _spotsUsed - this.spots.length);
     this.spots.length = 0;
 
+    if (this._csEntry) {
+      // Hand the pool slot back, or a restarted race leaks a blob per car.
+      try { this.ctx?.lighting?.removeContactShadow?.(this._csEntry); } catch (_) { /* already gone */ }
+      this._csEntry = null;
+    }
     if (this.contact) {
       this.contact.mesh.parent?.remove(this.contact.mesh);
       this.contact.geo.dispose();

@@ -62,6 +62,17 @@ const BASE = {
     metalness: 0,
     roughness: 1,
     envMapIntensity: 1,
+    // Geometric specular antialiasing, consumed by render/Materials.js.
+    // `saaVariance` is the assumed screen-space variance of the pixel filter;
+    // `saaMax` caps how much GGX width one pixel of normal sweep may add, so a
+    // silhouette or a crease can never dissolve the material into grey.
+    saaVariance: 0.25,
+    saaMax: 0.18,
+    // How much of the base roughness map bleeds into the clearcoat lobe. A
+    // real coat is not a separate perfect sheet: where the surface underneath
+    // is scuffed, dusty or open-grained, the film over it scatters too. Zero
+    // means a laboratory-clean coat.
+    ccFromRough: 0,
   },
   // Large-scale variation injected by Materials to break up tiling. Soft
   // organic surfaces can take a lot of it; a manufactured tile cannot.
@@ -111,6 +122,17 @@ export const SURFACE_DEFS = {
 
   // Polished varnish is genuinely slippery — a rubber tyre on a hard, smooth,
   // sealed film has far less to key into than on open grain.
+  //
+  // Visually this is the most dangerous material in the game: it is the surface
+  // the race is actually run on, it covers most of the frame, and it is seen
+  // almost entirely at grazing angles. At clearcoat 1.0 / roughness 0.055 it
+  // was a mirror, and a mirror at a grazing angle sweeps the whole environment
+  // across a handful of pixels — which is precisely how the sky's zenith and a
+  // window key end up as red and blue combing over the wood instead of as a
+  // highlight. A satin wiping varnish is both the honest reading of a kitchen
+  // table and a lobe wide enough to be resolvable: partial coat, an order of
+  // magnitude more coat roughness, and the coat allowed to pick up the scuffs
+  // and dust in the base roughness map.
   varnishedWood: def('varnishedWood', {
     label: 'Varnished top',
     category: 'wood',
@@ -119,7 +141,9 @@ export const SURFACE_DEFS = {
     audio: { timbre: 'polished', rollGain: 0.42, rollFilter: 0.78, rollGrain: 0.06, skidGain: 1.05, skidFilter: 0.86, impact: 'knock' },
     material: {
       type: 'physical',
-      clearcoat: 1, clearcoatRoughness: 0.055, ior: 1.52, envMapIntensity: 1.15,
+      clearcoat: 0.55, clearcoatRoughness: 0.16, ccFromRough: 0.62,
+      ior: 1.52, envMapIntensity: 0.95,
+      saaVariance: 0.28, saaMax: 0.26,
     },
     macro: { colorAmount: 0.05, roughAmount: 0.16, scale: 0.0032 },
   }),
@@ -130,7 +154,11 @@ export const SURFACE_DEFS = {
     grip: 1.0, rollDrag: 0.009,
     particleColor: 0xcba372,
     audio: { timbre: 'laminate', rollGain: 0.60, rollFilter: 0.70, rollGrain: 0.10, skidGain: 0.95, skidFilter: 0.78, impact: 'knock' },
-    material: { type: 'physical', clearcoat: 0.45, clearcoatRoughness: 0.24, ior: 1.5 },
+    material: {
+      type: 'physical',
+      clearcoat: 0.45, clearcoatRoughness: 0.24, ccFromRough: 0.45, ior: 1.5,
+      saaMax: 0.22,
+    },
     macro: { colorAmount: 0.04, roughAmount: 0.08, scale: 0.0026 },
   }),
 
@@ -237,7 +265,11 @@ export const SURFACE_DEFS = {
     grip: 0.94, rollDrag: 0.008,
     particleColor: 0xe8e3d6,
     audio: { timbre: 'tile', rollGain: 0.50, rollFilter: 0.88, rollGrain: 0.30, skidGain: 1.1, skidFilter: 0.92, impact: 'chink' },
-    material: { type: 'physical', clearcoat: 0.7, clearcoatRoughness: 0.10, ior: 1.55, envMapIntensity: 1.2 },
+    material: {
+      type: 'physical',
+      clearcoat: 0.7, clearcoatRoughness: 0.11, ccFromRough: 0.40,
+      ior: 1.55, envMapIntensity: 1.1, saaMax: 0.26,
+    },
     macro: { colorAmount: 0.03, roughAmount: 0.06, scale: 0.0022 },
   }),
 
@@ -247,7 +279,7 @@ export const SURFACE_DEFS = {
     grip: 0.97, rollDrag: 0.009,
     particleColor: 0xb9a37e,
     audio: { timbre: 'lino', rollGain: 0.46, rollFilter: 0.58, rollGrain: 0.08, skidGain: 1.15, skidFilter: 0.66, impact: 'thud' },
-    material: { type: 'physical', clearcoat: 0.35, clearcoatRoughness: 0.30 },
+    material: { type: 'physical', clearcoat: 0.35, clearcoatRoughness: 0.30, ccFromRough: 0.40 },
     macro: { colorAmount: 0.05, roughAmount: 0.10, scale: 0.0030 },
   }),
 
@@ -264,6 +296,9 @@ export const SURFACE_DEFS = {
       metalness: 1, roughness: 1,
       anisotropy: 0.85, anisotropyRotation: Math.PI * 0.5,
       envMapIntensity: 1.25,
+      // A metal has no diffuse term to hide behind, so all of its aliasing is
+      // specular and it needs the widest antialiasing ceiling in the library.
+      saaMax: 0.26,
     },
     macro: { colorAmount: 0.03, roughAmount: 0.10, scale: 0.0026 },
   }),
@@ -274,7 +309,7 @@ export const SURFACE_DEFS = {
     grip: 0.84, rollDrag: 0.008,
     particle: 'sparks', particleColor: 0xb6bcc0, particleRate: 1.4,
     audio: { timbre: 'metal', rollGain: 0.56, rollFilter: 0.86, rollGrain: 0.14, skidGain: 1.05, skidFilter: 0.9, impact: 'clang' },
-    material: { type: 'physical', metalness: 1, roughness: 1, envMapIntensity: 1.2 },
+    material: { type: 'physical', metalness: 1, roughness: 1, envMapIntensity: 1.2, saaMax: 0.24 },
     macro: { colorAmount: 0.04, roughAmount: 0.12, scale: 0.0030 },
   }),
 
@@ -284,7 +319,7 @@ export const SURFACE_DEFS = {
     grip: 0.78, rollDrag: 0.007,
     particle: 'sparks', particleColor: 0xf2f3f4, particleRate: 1.6,
     audio: { timbre: 'metal', rollGain: 0.44, rollFilter: 0.96, rollGrain: 0.03, skidGain: 1.2, skidFilter: 0.98, impact: 'clang' },
-    material: { type: 'physical', metalness: 1, roughness: 1, envMapIntensity: 1.6 },
+    material: { type: 'physical', metalness: 1, roughness: 1, envMapIntensity: 1.6, saaMax: 0.28 },
     macro: { colorAmount: 0.015, roughAmount: 0.05, scale: 0.0018 },
   }),
 
@@ -305,7 +340,11 @@ export const SURFACE_DEFS = {
     grip: 0.88, rollDrag: 0.008,
     particleColor: 0xe2e2e0,
     audio: { timbre: 'plastic', rollGain: 0.44, rollFilter: 0.82, rollGrain: 0.05, skidGain: 1.0, skidFilter: 0.86, impact: 'tick' },
-    material: { type: 'physical', clearcoat: 0.9, clearcoatRoughness: 0.07, ior: 1.5, envMapIntensity: 1.15 },
+    material: {
+      type: 'physical',
+      clearcoat: 0.9, clearcoatRoughness: 0.085, ccFromRough: 0.30,
+      ior: 1.5, envMapIntensity: 1.15, saaMax: 0.24,
+    },
     macro: { colorAmount: 0.02, roughAmount: 0.06, scale: 0.0018 },
   }),
 
@@ -460,11 +499,17 @@ let _ctx = null;
 let _anisotropy = 8;
 let _bytes = 0;
 
-// A draft is a complete, correct bake at a quarter of the linear resolution —
-// about a sixteenth of the cost. It is on screen for a few hundred milliseconds
-// at most, and because the layer machinery band-limits anything finer than the
-// grid it reads as a slightly soft version of the material rather than as a
-// broken one.
+// A draft is a complete, correct bake evaluated at a fraction of the linear
+// resolution — about a sixteenth of the cost — and magnified to the set's final
+// pixel dimensions. It is on screen for a few hundred milliseconds at most, and
+// because the layer machinery band-limits anything finer than the grid it reads
+// as a slightly soft version of the material rather than as a broken one.
+//
+// It is only the *generator* that runs small. The textures themselves are
+// allocated at their final size from the first upload, because three hands a
+// DataTexture to `texStorage2D`, whose allocation is immutable: re-uploading a
+// larger image into it later is silently dropped by the driver and the surface
+// would stay a blur for the rest of the session.
 const DRAFT_SIZE = 256;
 
 function budgetBytes() {
@@ -472,8 +517,10 @@ function budgetBytes() {
   return mb * 1024 * 1024;
 }
 
-/** Full-resolution target for a kind, trimmed if the cache is already full.
- *  Never evicts: a set in use by a live material must not vanish underneath it. */
+/** The size a kind's textures are *allocated* at, trimmed if the cache is
+ *  already full. Chosen once, at the first request, and never revisited: the
+ *  draft and the sharp bake that replaces it must agree on it. Never evicts —
+ *  a set in use by a live material must not vanish underneath it. */
 function targetSize(kind) {
   const cfg = Settings.textures ?? {};
   let s = cfg.resolution ?? 1024;
@@ -503,10 +550,10 @@ function scheduleIdle() {
 function upgradeNow(kind) {
   const e = _cache.get(kind);
   if (!e || e.level >= 1) return;
-  const target = targetSize(kind);
   try {
     _bytes -= e.set.bytes;
-    e.set.upgrade(target);
+    // Same pixel dimensions, sharper pixels — see DRAFT_SIZE.
+    e.set.upgrade();
     e.level = 1;
     _bytes += e.set.bytes;
     _ctx?.bus?.emit?.('surface:upgraded', { kind, size: e.set.size });
@@ -530,10 +577,16 @@ export function textures(kind, opts = {}) {
   if (cached) return cached.set;
 
   const immediate = opts.immediate === true;
-  const size = immediate ? targetSize(k) : Math.min(DRAFT_SIZE, targetSize(k));
+  const size = targetSize(k);
   let set;
   try {
-    set = PT.makeTextureSet(k, { ...opts, size, seed: opts.seed ?? 0, level: immediate ? 1 : 0 });
+    set = PT.makeTextureSet(k, {
+      ...opts,
+      size,
+      seed: opts.seed ?? 0,
+      draft: !immediate,
+      draftSize: DRAFT_SIZE,
+    });
   } catch (err) {
     // A generator throwing must not take the frame down; fall back to a kind
     // that is known to bake, so the mesh still gets real material data.
@@ -542,7 +595,7 @@ export function textures(kind, opts = {}) {
     throw err;
   }
 
-  const entry = { kind: k, set, level: immediate ? 1 : 0 };
+  const entry = { kind: k, set, level: set.level ?? (immediate ? 1 : 0) };
   _cache.set(k, entry);
   _bytes += set.bytes;
   if (!immediate) {
@@ -636,6 +689,10 @@ export const Surfaces = {
   textureSet: textures,
   warm,
 
+  /** Tell the foundry about a repeat-adjusted clone of one of its textures, so
+   *  the idle re-bake reaches it as well as the original. See ProcTex. */
+  linkDerived(base, derived) { return PT.linkDerived?.(base, derived) ?? derived; },
+
   /** Force one surface to full resolution right now (blocking). */
   ensure(kind) { return textures(kind, { immediate: true }); },
 
@@ -654,7 +711,11 @@ export const Surfaces = {
       pending: _pending.length,
       megabytes: +(_bytes / 1048576).toFixed(1),
       budgetMB: Settings.textures?.cacheBudgetMB ?? 256,
-      sets: [..._cache.values()].map((e) => ({ kind: e.kind, size: e.set.size, level: e.level })),
+      // `generatedAt` is where the generator actually ran; `size` is the upload.
+      // They differ only while a draft is still waiting for its idle re-bake.
+      sets: [..._cache.values()].map((e) => ({
+        kind: e.kind, size: e.set.size, generatedAt: e.set.genSize, level: e.level,
+      })),
     };
   },
 

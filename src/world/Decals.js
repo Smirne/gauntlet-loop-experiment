@@ -8,14 +8,30 @@
 //    path, sampled at the physics rate from vehicle.wheels[i].contactX/Y/Z. Not
 //    a trail behind the car's centre — behind each individual wheel, which is
 //    why a drifting car leaves four separate arcs that splay apart through the
-//    corner instead of one fat ribbon. Width comes from vertical load, opacity
-//    from slip, and a locked wheel under braking lays down a darker, wider mark
-//    than a spinning one, because that is what a locked wheel does.
+//    corner instead of one fat ribbon. Each quad is one tyre wide (~0.9 u on a
+//    9 u car), width comes from vertical load, opacity from slip, and a locked
+//    wheel under braking lays down a darker mark than a spinning one, because
+//    that is what a locked wheel does.
 //
 //    Consecutive segments share the previous segment's leading edge exactly, so
-//    the strip never overlaps itself. That matters more than it sounds: these
-//    are multiply-blended, and any overlap would double-darken into a visible
-//    bead at every joint.
+//    the strip never overlaps itself — and a strip is *broken* the moment the
+//    wheel stops laying rubber, reverses, or is teleported. Stitching a live
+//    vertex to a stale one is what produced the long wedges fanning off the
+//    racing line in review; the invariant now is that `hasEdge` is cleared on
+//    every path that advances the wheel anchor without emitting a quad.
+//
+//    These are NOT multiply-blended. They used to be, and it cost the whole
+//    frame: THREE.MultiplyBlending is only defined for premultipliedAlpha
+//    materials in r180 (three logs an error and leaves the previous draw's
+//    blend func in place otherwise), and even when it does multiply, N
+//    overlapping quads darken by tint^N — which reaches exactly RGB(0,0,0) in
+//    about nine layers with no floor to stop it. A tyre mark is instead what it
+//    is physically: a *partial deposit of rubber*, alpha-blended over the road
+//    with a coverage that caps below 1 and a deposit albedo that is floored
+//    well above black. The layer therefore cannot drive any pixel below the
+//    deposit's own lit value no matter how many marks stack, and because the
+//    deposit runs through a real MeshStandardMaterial it is lit and shadowed by
+//    the same key light as the road instead of punching a flat hole in it.
 //
 // 2. SCENERY STAINS. Instanced quads carrying an atlas of sixteen procedurally
 //    drawn spills — milk, juice, oil, water, coffee rings, chalk dust, sawdust,
@@ -51,20 +67,49 @@ const UP = new THREE.Vector3(0, 1, 0);
 
 /* ================================================================ tuning */
 
-// Longitudinal pitch of one mark quad. A 9 u car at 90 u/s covers 2.4 u per
-// physics tick, so this lays roughly one quad per tick at racing speed and
-// degrades gracefully to one per several ticks in the slow corners.
-const SEG_STEP = 2.4;
+// Longitudinal pitch of one mark quad. A 9 u car at 90 u/s covers 0.75 u per
+// physics tick, so this lays one quad every three ticks at racing speed: fine
+// enough that a hairpin arc reads as a curve rather than a polygon, coarse
+// enough that the ring still holds several seconds of history for a full grid.
+const SEG_STEP = 2.0;
 const SEG_STEP_MIN2 = SEG_STEP * SEG_STEP;
 // Beyond this the wheel has been picked up and put down somewhere else (a
 // respawn, a big jump) and the strip must be broken rather than stretched.
 const SEG_BREAK2 = 46 * 46;
+// A segment may only be stitched to the previous trailing edge while that edge
+// still faces the same way. Through a spin or a reversal the lateral basis
+// flips, and a quad built across the flip is a bowtie: two triangles crossing
+// at a point, which is exactly the "wedge converging off-frame" artefact.
+const SEG_ALIGN_MIN = 0.25;
 
-const TYRE_HALF = 0.74;         // half the contact patch width at nominal load
+// Half the contact patch at nominal load. The tyres are ~0.9 u wide on a 9 u
+// car; a mark wider than its own tyre is the loudest possible tell that the
+// strip is being built from the wrong basis, so the load term only moves this
+// between 0.83 u and 1.2 u of total width.
+const TYRE_HALF = 0.46;
 const MARK_LIFT = 0.06;         // along the surface normal
-const MARK_MIN = 0.055;         // below this the mark is not worth a quad
-const MARK_DARK = 0.82;         // how far towards the surface tint a full mark goes
-const MARK_LIFE = 42;           // seconds; the last third of it is the fade
+// Slip gate. Tires.js sets markIntensity = squeal * hardness^2 and squeal only
+// starts at 7 u/s of scrub, so 0.10 puts the first rubber down at about 11 u/s:
+// a tyre that is genuinely sliding, not one merely loaded up in a fast corner.
+const MARK_MIN = 0.10;
+const MARK_FULL = 0.62;         // slip at which the deposit is at full opacity
+const MARK_CUT = 0.06;          // below this final strength a quad is not worth laying
+const MARK_LIFE = 30;           // seconds; the last third of it is the fade
+const MARK_V_SCALE = 1 / 4.0;   // texture repeats per world unit along the strip
+
+// Coverage cap. A mark is a partial deposit: at the cap the road still shows
+// through an eighth of its own albedo, and stacked marks converge on the
+// deposit colour rather than on black. At 0.88 over oak a single full-strength
+// mark lands at roughly half the underlying luminance, which is what rubber on
+// varnished wood actually looks like.
+const MARK_MAX_COVER = 0.88;
+// Darkest deposit albedo, linear. Real rubber is around 0.04. Going below this
+// is what turned the table black in review — a mark must darken the surface,
+// never annihilate it — so every surface tint is clamped into this band.
+const MARK_FLOOR_R = 0.032;
+const MARK_FLOOR_G = 0.030;
+const MARK_FLOOR_B = 0.029;
+const MARK_ALBEDO_MAX = 0.55;
 
 const STAIN_LIFT = 0.10;
 const MAX_STAINS = 320;
@@ -572,38 +617,41 @@ function buildMarkTexture(w, h, seed) {
 
 /* -------------------------------------------------------------- shaders */
 
-const MARK_VERT = /* glsl */`
+/* The mark material is a stock MeshStandardMaterial with four small injections,
+ * so the deposit is lit, shadowed and fogged exactly like the road it sits on.
+ * The deposit colour rides in on the standard `color` attribute (vertexColors)
+ * and the tread shape on `alphaMap`; only the age fade needs custom plumbing.
+ *
+ * Anchors used below (`common`, `begin_vertex`, `alphamap_fragment`) are all
+ * present in r180's meshphysical shaders, and the fragment injection lands
+ * after `alphamap_fragment` and before `alphatest_fragment`, which is where
+ * diffuseColor.a is still the raw coverage. */
+
+const MARK_VERT_HEAD = /* glsl */`
 attribute vec2 aMark;      // x = birth time, y = strength
-attribute vec3 aColor;
-varying vec2 vUv;
-varying vec3 vColor;
-varying float vFade;
+varying float vMarkFade;
 uniform float uTime;
 uniform float uLife;
-void main() {
-  vUv = uv;
-  vColor = aColor;
-  float age = uTime - aMark.x;
-  // Full strength for the first two thirds of its life, then out. Fading from
-  // birth would make a fresh mark look like a stale one.
-  float k = 1.0 - clamp( ( age - uLife * 0.66 ) / ( uLife * 0.34 ), 0.0, 1.0 );
-  vFade = aMark.y * k * step( 0.0, age );
-  gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
-}
 `;
 
-const MARK_FRAG = /* glsl */`
-uniform sampler2D uMap;
-varying vec2 vUv;
-varying vec3 vColor;
-varying float vFade;
-void main() {
-  float m = texture2D( uMap, vUv ).r;
-  float a = clamp( vFade * m, 0.0, 1.0 );
-  // Multiply blending: white is a no-op, so the mark is expressed entirely as
-  // how far towards its tint it drags whatever the road already put there.
-  gl_FragColor = vec4( mix( vec3( 1.0 ), vColor, a ), 1.0 );
-}
+const MARK_VERT_BODY = /* glsl */`
+  float markAge = uTime - aMark.x;
+  // Full strength for the first two thirds of its life, then out. Fading from
+  // birth would make a fresh mark look like a stale one.
+  float markK = 1.0 - clamp( ( markAge - uLife * 0.66 ) / max( 1e-4, uLife * 0.34 ), 0.0, 1.0 );
+  vMarkFade = aMark.y * markK * step( 0.0, markAge );
+`;
+
+const MARK_FRAG_HEAD = /* glsl */`
+varying float vMarkFade;
+uniform float uMaxCover;
+`;
+
+const MARK_FRAG_BODY = /* glsl */`
+  // Coverage, not opacity: how much of this pixel the rubber has taken over.
+  // The cap is the whole safety argument. The road always keeps a share, so
+  // stacked marks converge on the deposit colour instead of on zero.
+  diffuseColor.a = clamp( diffuseColor.a * vMarkFade, 0.0, uMaxCover );
 `;
 
 /* ============================================================ the system */
@@ -636,6 +684,13 @@ export class Decals {
     this.markGeo = null;
     this.markMat = null;
     this.markTex = null;
+    // Shared uniform objects: onBeforeCompile hands these straight to the
+    // program, so writing .value here reaches the shader without a rebuild.
+    this._markUniforms = {
+      uTime: { value: 0 },
+      uLife: { value: MARK_LIFE },
+      uMaxCover: { value: MARK_MAX_COVER },
+    };
 
     this.stainMesh = null;
     this.stainMat = null;
@@ -690,6 +745,7 @@ export class Decals {
     const n = this.maxSegments;
     const verts = n * 4;
     const pos = new Float32Array(verts * 3);
+    const nrm = new Float32Array(verts * 3);
     const uv = new Float32Array(verts * 2);
     const mark = new Float32Array(verts * 2);
     const col = new Float32Array(verts * 3);
@@ -697,46 +753,79 @@ export class Decals {
     for (let i = 0; i < n; i++) {
       const v = i * 4;
       const o = i * 6;
+      // Two triangles over the four corners of one slot, and only ever over
+      // that slot: no index ever reaches into a neighbour, so the ring can wrap
+      // mid-strip without connecting the newest vertex to the oldest one.
       idx[o] = v; idx[o + 1] = v + 2; idx[o + 2] = v + 1;
       idx[o + 3] = v; idx[o + 4] = v + 3; idx[o + 5] = v + 2;
-      // Unused slots collapse to a point, so they rasterise nothing at all.
-      for (let k = 0; k < 4; k++) mark[(v + k) * 2 + 1] = 0;
+      for (let k = 0; k < 4; k++) {
+        // Unused slots collapse to a point, so they rasterise nothing at all —
+        // but the normal still has to be unit length, because a lit material
+        // hands a zero normal straight to the BRDF and gets NaN back.
+        nrm[(v + k) * 3 + 1] = 1;
+        mark[(v + k) * 2 + 1] = 0;
+      }
     }
 
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    geo.setAttribute('aMark', new THREE.BufferAttribute(mark, 2));
-    geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+    const dyn = (arr, size) => {
+      const a = new THREE.BufferAttribute(arr, size);
+      a.setUsage(THREE.DynamicDrawUsage);
+      return a;
+    };
+    geo.setAttribute('position', dyn(pos, 3));
+    geo.setAttribute('normal', dyn(nrm, 3));
+    geo.setAttribute('uv', dyn(uv, 2));
+    geo.setAttribute('aMark', dyn(mark, 2));
+    geo.setAttribute('color', dyn(col, 3));
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
     geo.setDrawRange(0, 0);
     // The buffer is written in ring order all over the playfield, so a bounding
     // sphere would be wrong within a frame of being computed. Cull manually.
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
 
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uMap: { value: this.markTex },
-        uTime: { value: 0 },
-        uLife: { value: MARK_LIFE },
-      },
-      vertexShader: MARK_VERT,
-      fragmentShader: MARK_FRAG,
+    // A lit deposit, not a painted-on sticker. Roughness is near the top of the
+    // range because scrubbed rubber is matte, and envMapIntensity is pulled
+    // down so the mark does not pick up more sky than the road under it.
+    const mat = new THREE.MeshStandardMaterial({
+      name: 'decals:tyreMarks',
+      color: 0xffffff,
+      vertexColors: true,
+      alphaMap: this.markTex,
+      roughness: 0.93,
+      metalness: 0,
+      envMapIntensity: 0.6,
       transparent: true,
-      blending: THREE.MultiplyBlending,
       depthWrite: false,
       depthTest: true,
       side: THREE.DoubleSide,
+      alphaTest: 0.006,
       polygonOffset: true,
       polygonOffsetFactor: -6,
       polygonOffsetUnits: -12,
     });
 
+    const u = this._markUniforms;
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = u.uTime;
+      shader.uniforms.uLife = u.uLife;
+      shader.uniforms.uMaxCover = u.uMaxCover;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>\n${MARK_VERT_HEAD}`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${MARK_VERT_BODY}`);
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>\n${MARK_FRAG_HEAD}`)
+        .replace('#include <alphamap_fragment>', `#include <alphamap_fragment>\n${MARK_FRAG_BODY}`);
+    };
+    mat.customProgramCacheKey = () => 'mg:tyremark';
+
     const mesh = new THREE.Mesh(geo, mat);
     mesh.name = 'decals:tyreMarks';
     mesh.frustumCulled = false;
     mesh.castShadow = false;
-    mesh.receiveShadow = false;
+    // Marks go dark under the car and under the props for free, which is the
+    // whole reason the layer is lit rather than blended flat over the road.
+    mesh.receiveShadow = true;
     mesh.renderOrder = 6;
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
@@ -969,9 +1058,14 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
     const mark = this.markGeo.getAttribute('aMark');
     const arr = mark.array;
     for (let i = 1; i < arr.length; i += 2) arr[i] = 0;
+    // A pending partial range from the last _flush would upload only its own
+    // slice and leave the rest of the buffer holding live strengths.
+    mark.clearUpdateRanges?.();
     mark.needsUpdate = true;
     this.head = 0;
     this.filled = 0;
+    this._dirtyLo = Infinity;
+    this._dirtyHi = -Infinity;
     this.markGeo.setDrawRange(0, 0);
     this._wheels.clear();
     return this;
@@ -1020,22 +1114,26 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
     return out;
   }
 
-  /** Surface-specific mark colour, pre-mixed towards white so a full-strength
-   *  mark darkens the road rather than erasing it. Cached per surface name. */
-  _tintFor(surface) {
+  /**
+   * Surface-specific deposit albedo, linear, clamped into a band that a real
+   * rubber (or sand, or chalk) deposit could actually have. The floor is the
+   * load-bearing part: it is what guarantees this layer can never drive a pixel
+   * to black however many marks are stacked on it. Cached per surface name.
+   */
+  _depositFor(surface) {
     const key = surface || 'default';
     const hit = this._tintCache.get(key);
     if (hit) return hit;
     let hex = 0x1a1a1a;
     try {
       const v = Surfaces?.skidTint?.(key);
-      if (typeof v === 'number') hex = v;
+      if (typeof v === 'number' && Number.isFinite(v)) hex = v;
     } catch (err) { /* the default tint is a fine answer */ }
     _c1.set(hex);                                   // -> linear working space
     const c = {
-      r: 1 - (1 - _c1.r) * MARK_DARK,
-      g: 1 - (1 - _c1.g) * MARK_DARK,
-      b: 1 - (1 - _c1.b) * MARK_DARK,
+      r: clamp(_c1.r, MARK_FLOOR_R, MARK_ALBEDO_MAX),
+      g: clamp(_c1.g, MARK_FLOOR_G, MARK_ALBEDO_MAX),
+      b: clamp(_c1.b, MARK_FLOOR_B, MARK_ALBEDO_MAX),
     };
     this._tintCache.set(key, c);
     return c;
@@ -1048,10 +1146,19 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
       for (let i = 0; i < 4; i++) {
         recs.push({
           active: false, hasEdge: false,
-          x: 0, y: 0, z: 0,
-          lx: 0, ly: 0, lz: 0,   // trailing edge, left of travel
-          rx: 0, ry: 0, rz: 0,   // trailing edge, right of travel
-          v: 0,                   // accumulated distance, for the texture
+          x: 0, y: 0, z: 0,        // wheel anchor: where the last quad ended
+          // Trailing edge of the strip: p = the one already written, n = the
+          // one just computed. Keeping both on the record is what stops a
+          // caller from ever handing _pushSegment a stale corner.
+          plx: 0, ply: 0, plz: 0,
+          prx: 0, pry: 0, prz: 0,
+          pnx: 0, pny: 1, pnz: 0,  // surface normal at that edge
+          psx: 1, psy: 0, psz: 0,  // lateral basis at that edge
+          nlx: 0, nly: 0, nlz: 0,
+          nrx: 0, nry: 0, nrz: 0,
+          nnx: 0, nny: 1, nnz: 0,
+          nsx: 1, nsy: 0, nsz: 0,
+          v: 0,                    // rolled distance, for the tread texture
         });
       }
       this._wheels.set(vehicle, recs);
@@ -1060,10 +1167,13 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
   }
 
   /**
-   * One quad from the previous trailing edge to the new one. Sharing the edge
-   * is what keeps a continuous strip from double-darkening at its joints.
+   * One quad from the strip's previous trailing edge (rec.p*) to the edge just
+   * computed into rec.n*, then promote new to previous. Both edges live on the
+   * record and the promotion happens here, so there is exactly one place where
+   * a live vertex could ever be paired with a stale one — and it cannot,
+   * because the caller clears `hasEdge` on every path that skips a quad.
    */
-  _pushSegment(rec, lx, ly, lz, rx, ry, rz, strength, tint, dv) {
+  _pushSegment(rec, strength, dep, dv) {
     const geo = this.markGeo;
     if (!geo) return;
     const slot = this.head;
@@ -1071,17 +1181,23 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
     if (this.filled < this.maxSegments) this.filled++;
 
     const pos = geo.getAttribute('position').array;
+    const nrm = geo.getAttribute('normal').array;
     const uvA = geo.getAttribute('uv').array;
     const mk = geo.getAttribute('aMark').array;
-    const cl = geo.getAttribute('aColor').array;
+    const cl = geo.getAttribute('color').array;
 
     const v = slot * 4;
     const p = v * 3;
     // 0: previous left, 1: previous right, 2: new right, 3: new left
-    pos[p] = rec.lx; pos[p + 1] = rec.ly; pos[p + 2] = rec.lz;
-    pos[p + 3] = rec.rx; pos[p + 4] = rec.ry; pos[p + 5] = rec.rz;
-    pos[p + 6] = rx; pos[p + 7] = ry; pos[p + 8] = rz;
-    pos[p + 9] = lx; pos[p + 10] = ly; pos[p + 11] = lz;
+    pos[p] = rec.plx; pos[p + 1] = rec.ply; pos[p + 2] = rec.plz;
+    pos[p + 3] = rec.prx; pos[p + 4] = rec.pry; pos[p + 5] = rec.prz;
+    pos[p + 6] = rec.nrx; pos[p + 7] = rec.nry; pos[p + 8] = rec.nrz;
+    pos[p + 9] = rec.nlx; pos[p + 10] = rec.nly; pos[p + 11] = rec.nlz;
+
+    nrm[p] = rec.pnx; nrm[p + 1] = rec.pny; nrm[p + 2] = rec.pnz;
+    nrm[p + 3] = rec.pnx; nrm[p + 4] = rec.pny; nrm[p + 5] = rec.pnz;
+    nrm[p + 6] = rec.nnx; nrm[p + 7] = rec.nny; nrm[p + 8] = rec.nnz;
+    nrm[p + 9] = rec.nnx; nrm[p + 10] = rec.nny; nrm[p + 11] = rec.nnz;
 
     const v0 = rec.v;
     const v1 = rec.v + dv;
@@ -1095,10 +1211,18 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
       mk[u + k * 2] = this.clock;
       mk[u + k * 2 + 1] = strength;
       const c = (v + k) * 3;
-      cl[c] = tint.r; cl[c + 1] = tint.g; cl[c + 2] = tint.b;
+      cl[c] = dep.r; cl[c + 1] = dep.g; cl[c + 2] = dep.b;
     }
 
-    rec.v = v1;
+    // The tread texture repeats along v, so keeping only the fraction is free
+    // and stops a long session from grinding the float into a visible staircase.
+    rec.v = v1 - Math.floor(v1);
+
+    rec.plx = rec.nlx; rec.ply = rec.nly; rec.plz = rec.nlz;
+    rec.prx = rec.nrx; rec.pry = rec.nry; rec.prz = rec.nrz;
+    rec.pnx = rec.nnx; rec.pny = rec.nny; rec.pnz = rec.nnz;
+    rec.psx = rec.nsx; rec.psy = rec.nsy; rec.psz = rec.nsz;
+
     if (slot < this._dirtyLo) this._dirtyLo = slot;
     if (slot > this._dirtyHi) this._dirtyHi = slot;
   }
@@ -1128,6 +1252,8 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
 
         const hard = w.surfaceHardness ?? 1;
         const inten = w.markIntensity ?? 0;
+        // A loose surface throws material instead of blackening (that is
+        // Particles' job), and a rolling tyre leaves nothing at all.
         if (!w.grounded || hard < 0.28 || inten < MARK_MIN) {
           rec.active = false;
           rec.hasEdge = false;
@@ -1137,7 +1263,11 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
         const cx = w.contactX;
         const cy = w.contactY;
         const cz = w.contactZ;
-        if (!Number.isFinite(cx) || !Number.isFinite(cz)) { rec.active = false; continue; }
+        if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(cz)) {
+          rec.active = false;
+          rec.hasEdge = false;
+          continue;
+        }
 
         if (!rec.active) {
           rec.active = true;
@@ -1147,8 +1277,11 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
         }
 
         const dx = cx - rec.x;
+        const dy = cy - rec.y;
         const dz = cz - rec.z;
         const d2 = dx * dx + dz * dz;
+        // Below the pitch the anchor is deliberately left alone so the distance
+        // accumulates; the anchor and the trailing edge stay in lockstep.
         if (d2 < SEG_STEP_MIN2) continue;
         if (d2 > SEG_BREAK2) {
           // Teleported: start a fresh strip rather than drawing a 40 u smear.
@@ -1157,58 +1290,84 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
           continue;
         }
 
-        const d = Math.sqrt(d2);
+        /* --- strength: opacity from slip, weighted by load and by what the
+         *     tyre is actually doing ------------------------------------- */
+        const loadK = clamp((w.load ?? loadRef) / Math.max(1e-3, loadRef), 0.35, 1.9);
+        const gate = clamp((inten - MARK_MIN) / (MARK_FULL - MARK_MIN), 0, 1);
+        let s = gate * gate * (3 - 2 * gate);   // smooth onset, no visible edge
+        if (s > 0) {
+          // A locked wheel drags one patch of tread over the road and lays a
+          // solid line; a spinning one skips and lays a patchy, lighter one.
+          if (w.locked) s = Math.min(1, s * 1.35 + 0.20);
+          else if (w.spinning) s = Math.min(1, s * 1.15 + 0.08);
+        }
+        s *= hard;
+        s *= clamp(0.60 + 0.40 * loadK, 0.4, 1.15);
+        s = clamp(s, 0, 1);
+        if (!(s >= MARK_CUT)) {
+          // Not laying rubber this tick. The trailing edge has to go with the
+          // anchor: the next quad must open a fresh strip rather than stitch a
+          // live vertex to one the wheel left behind several car lengths ago.
+          rec.hasEdge = false;
+          rec.x = cx; rec.y = cy; rec.z = cz;
+          continue;
+        }
+
+        /* --- frame: travel direction, contact normal, lateral basis ------ */
+        const d = Math.sqrt(d2 + dy * dy);
+        if (!(d > 1e-6)) { rec.hasEdge = false; continue; }
         const inv = 1 / d;
+        let nx = w.normalX;
+        let ny = w.normalY;
+        let nz = w.normalZ;
+        if (!(ny > 0.05) || !Number.isFinite(nx + ny + nz)) { nx = 0; ny = 1; nz = 0; }
+        _v0.set(dx * inv, dy * inv, dz * inv);
+        _v1.set(nx, ny, nz).normalize();
         // Perpendicular to travel, in the plane of the contact normal, so the
         // strip lies flat on a banked road instead of cutting into it.
-        let ny = w.normalY;
-        let nx = w.normalX;
-        let nz = w.normalZ;
-        if (!(ny > 0.05)) { nx = 0; ny = 1; nz = 0; }
-        _v0.set(dx * inv, (cy - rec.y) * inv, dz * inv);
-        _v1.set(nx, ny, nz).normalize();
         _v2.crossVectors(_v1, _v0);
-        if (_v2.lengthSq() < 1e-8) _v2.set(dz * inv, 0, -dx * inv);
+        if (_v2.lengthSq() < 1e-8) _v2.set(dz, 0, -dx);
         _v2.normalize();
+        if (!(_v2.lengthSq() > 0.5)) { rec.hasEdge = false; rec.x = cx; rec.y = cy; rec.z = cz; continue; }
 
-        // Load widens the patch; a heavily loaded outside front is visibly a
-        // broader mark than an unloaded inside rear, and that is the tell that
-        // makes these read as tyre marks rather than as a painted line.
-        const loadK = clamp((w.load ?? loadRef) / Math.max(1e-3, loadRef), 0.35, 1.9);
-        const halfW = TYRE_HALF * (0.66 + 0.44 * loadK);
-
-        let s = inten;
-        if (w.locked) s = Math.min(1, s * 1.30 + 0.22);       // braking: darker
-        else if (w.spinning) s = Math.min(1, s * 1.12 + 0.10);
-        s *= hard;
-        s *= clamp(0.55 + 0.45 * loadK, 0.35, 1.15);
-        s = clamp(s, 0, 1);
-        if (s < MARK_MIN) { rec.x = cx; rec.y = cy; rec.z = cz; continue; }
+        // Load widens the patch, but only between about 0.83 u and 1.2 u of
+        // total width: a heavily loaded outside front is visibly a broader mark
+        // than an unloaded inside rear, and that is the tell that makes these
+        // read as tyre marks rather than as a painted line.
+        const halfW = TYRE_HALF * clamp(0.80 + 0.26 * loadK, 0.72, 1.30);
 
         const liftX = _v1.x * MARK_LIFT;
         const liftY = _v1.y * MARK_LIFT;
         const liftZ = _v1.z * MARK_LIFT;
-        const lx = cx - _v2.x * halfW + liftX;
-        const ly = cy - _v2.y * halfW + liftY;
-        const lz = cz - _v2.z * halfW + liftZ;
-        const rx = cx + _v2.x * halfW + liftX;
-        const ry = cy + _v2.y * halfW + liftY;
-        const rz = cz + _v2.z * halfW + liftZ;
+        rec.nlx = cx - _v2.x * halfW + liftX;
+        rec.nly = cy - _v2.y * halfW + liftY;
+        rec.nlz = cz - _v2.z * halfW + liftZ;
+        rec.nrx = cx + _v2.x * halfW + liftX;
+        rec.nry = cy + _v2.y * halfW + liftY;
+        rec.nrz = cz + _v2.z * halfW + liftZ;
+        rec.nnx = _v1.x; rec.nny = _v1.y; rec.nnz = _v1.z;
+        rec.nsx = _v2.x; rec.nsy = _v2.y; rec.nsz = _v2.z;
+
+        // A strip may only continue while its cross-section still faces the
+        // same way. Spin the car and the basis flips; bridging that flip builds
+        // a bowtie whose triangles cross at a point somewhere off the track.
+        if (rec.hasEdge &&
+            _v2.x * rec.psx + _v2.y * rec.psy + _v2.z * rec.psz < SEG_ALIGN_MIN) {
+          rec.hasEdge = false;
+        }
 
         if (!rec.hasEdge) {
-          rec.lx = lx; rec.ly = ly; rec.lz = lz;
-          rec.rx = rx; rec.ry = ry; rec.rz = rz;
+          rec.plx = rec.nlx; rec.ply = rec.nly; rec.plz = rec.nlz;
+          rec.prx = rec.nrx; rec.pry = rec.nry; rec.prz = rec.nrz;
+          rec.pnx = rec.nnx; rec.pny = rec.nny; rec.pnz = rec.nnz;
+          rec.psx = rec.nsx; rec.psy = rec.nsy; rec.psz = rec.nsz;
           rec.hasEdge = true;
           rec.v = 0;
           rec.x = cx; rec.y = cy; rec.z = cz;
           continue;
         }
 
-        const tint = this._tintFor(w.surface);
-        this._pushSegment(rec, lx, ly, lz, rx, ry, rz, s, tint, d / 5.5);
-
-        rec.lx = lx; rec.ly = ly; rec.lz = lz;
-        rec.rx = rx; rec.ry = ry; rec.rz = rz;
+        this._pushSegment(rec, s, this._depositFor(w.surface), d * MARK_V_SCALE);
         rec.x = cx; rec.y = cy; rec.z = cz;
       }
     }
@@ -1221,7 +1380,7 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
     if (!this._trackApplied && (ctx?.track || this.ctx?.track)) {
       try { this.applyTrack(ctx?.track || this.ctx.track); } catch (err) { /* retried next frame */ }
     }
-    if (this.markMat) this.markMat.uniforms.uTime.value = this.clock;
+    this._markUniforms.uTime.value = this.clock;
     this._flush();
   }
 
@@ -1243,9 +1402,10 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
       attr.needsUpdate = true;
     };
     upload('position', 3);
+    upload('normal', 3);
     upload('uv', 2);
     upload('aMark', 2);
-    upload('aColor', 3);
+    upload('color', 3);
 
     geo.setDrawRange(0, this.filled * 6);
   }

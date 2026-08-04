@@ -201,14 +201,23 @@ const FRAG_TRI_AO = /* glsl */`
 
 const _ID = { n: 0 };
 
+// The compiled shader is kept out of userData on purpose. THREE.Material.copy()
+// deep-clones userData through JSON, and a shader object reaches the bound
+// textures, whose sources are multi-megabyte typed arrays: serialising one is
+// not a slow clone, it is a hung tab.
+const _shaders = new WeakMap();
+
 /**
  * Attach one compiled-in feature set to a material.
  *
  * All features share a single onBeforeCompile so they cannot clobber each
  * other, and the uniform objects are created once and handed to every program
  * the material compiles, so changing one at runtime reaches the GPU.
+ *
+ * @param {Function} [install] re-applied to clones, for the convenience setters
+ *        a material exposes on top of its uniforms
  */
-function patch(material, feat, uniforms, keyParts) {
+function patch(material, feat, uniforms, keyParts, install) {
   material.userData.mgUniforms = uniforms;
   material.userData.mgFeatures = feat;
 
@@ -240,7 +249,8 @@ function patch(material, feat, uniforms, keyParts) {
     if (feat.macro) fDecl.push('uniform float uMgMacroScale;\nuniform float uMgMacroColor;\nuniform float uMgMacroRough;');
     if (feat.triplanar) fDecl.push('uniform float uMgTriScale;\nuniform float uMgTriSharp;');
     if (feat.flake) fDecl.push('uniform float uMgFlakeScale;\nuniform float uMgFlakeAmount;\nuniform float uMgFlakeGlint;\nuniform vec3 uMgFlakeColor;');
-    if (feat.clearcoatIor) fDecl.push('uniform float uMgCcIor;\nuniform float uMgCcRough;');
+    if (feat.clearcoatIor) fDecl.push('uniform float uMgCcIor;\nuniform float uMgCcRough;\nuniform float uMgCcFromRough;');
+    if (feat.specAA) fDecl.push('uniform float uMgSaaVar;\nuniform float uMgSaaMax;');
     if (feat.peel) fDecl.push('uniform float uMgPeelScale;\nuniform float uMgPeelAmount;');
     // The flake and orange-peel blocks rotate an object-space direction into
     // view space with normalMatrix. three declares that uniform in the vertex
@@ -300,20 +310,59 @@ roughnessFactor = clamp( roughnessFactor * ( 1.0 + ( mgMacro - 0.5 ) * uMgMacroR
       fs = fs.replace('#include <clearcoat_normal_fragment_maps>',
         '#include <clearcoat_normal_fragment_maps>\n' + FRAG_PEEL);
     }
-    if (feat.clearcoatIor) {
-      fs = fs.replace('#include <lights_physical_fragment>',
-        '#include <lights_physical_fragment>\n' + FRAG_CC_IOR);
+
+    /* ---- lobe tuning: clearcoat index, then specular antialiasing ----
+       Order matters. FRAG_CC_IOR authors the coat's intended roughness; the
+       antialiasing pass then widens whatever both lobes ended up with, so it
+       has to run last or its correction would simply be overwritten. */
+    let physBlock = '#include <lights_physical_fragment>';
+    if (feat.clearcoatIor) physBlock += '\n' + FRAG_CC_IOR;
+    if (feat.specAA) physBlock += '\n' + FRAG_SPEC_AA;
+    if (physBlock !== '#include <lights_physical_fragment>') {
+      fs = fs.replace('#include <lights_physical_fragment>', physBlock);
     }
 
     shader.vertexShader = vs;
     shader.fragmentShader = fs;
-    material.userData.shader = shader;
+    _shaders.set(material, shader);
   };
 
   // Without this three would happily reuse a program compiled from a different
   // injection for any material with the same parameter hash.
   const key = 'mg:' + keyParts.join('|');
   material.customProgramCacheKey = () => key;
+
+  // THREE.Material.copy() deliberately carries neither onBeforeCompile nor
+  // customProgramCacheKey, so a plain .clone() of anything from this factory
+  // comes back stripped of every injection in this file — the macro variation,
+  // the triplanar projection, the clearcoat lobe and the specular
+  // antialiasing — while still looking like a correctly configured PBR
+  // material. TrackBuilder clones every surface material it takes from here,
+  // which means the road and the ground, the two biggest things in frame, are
+  // exactly the surfaces that would silently miss out. Overriding clone() on
+  // the instance is the only hook available, since copy() is what drops them.
+  //
+  // Uniform holders are duplicated rather than shared so a clone can be tuned
+  // on its own; the cache key is identical, so both still compile one program.
+  material.clone = function mgClone() {
+    const copy = new this.constructor();
+    // Material.copy() JSON round-trips userData. Ours is safe, but a caller may
+    // have parked something that is not, and this is not the place to find out.
+    const keep = this.userData;
+    this.userData = {};
+    try { copy.copy(this); } finally { this.userData = keep; }
+
+    const u = {};
+    for (const k in uniforms) {
+      const v = uniforms[k].value;
+      u[k] = { value: v && typeof v.clone === 'function' ? v.clone() : v };
+    }
+    copy.userData = {};
+    patch(copy, feat, u, keyParts, install);
+    install?.(copy, u);
+    return copy;
+  };
+
   material.needsUpdate = true;
   return material;
 }
@@ -376,14 +425,72 @@ const FRAG_PEEL = /* glsl */`
 // read higher still, so the second lobe gets its own index here — which is
 // what the contract means by a second specular lobe rather than a copy of the
 // first with a different roughness.
+//
+// The coat also takes a roughness floor from the substrate. A clear film is not
+// a separate perfect sheet hovering above the surface: where the thing under it
+// is scuffed, dusty or open-grained, the film follows that topography and
+// scatters with it. Because `roughnessFactor` comes from the mip-filtered
+// roughness map, this is also what makes the coat lose its mirror with
+// distance instead of holding a razor reflection down to one pixel.
 const FRAG_CC_IOR = /* glsl */`
 #ifdef USE_CLEARCOAT
   {
     float mgF0 = ( uMgCcIor - 1.0 ) / ( uMgCcIor + 1.0 );
     material.clearcoatF0 = vec3( mgF0 * mgF0 );
-    material.clearcoatRoughness = clamp( uMgCcRough + geometryRoughness, 0.0125, 1.0 );
+    float mgCcR = max( uMgCcRough, roughnessFactor * uMgCcFromRough );
+    material.clearcoatRoughness = clamp( mgCcR + geometryRoughness, 0.0125, 1.0 );
   }
 #endif
+`;
+
+// GEOMETRIC SPECULAR ANTIALIASING — Tokuyoshi & Kaplanyan 2019, in Filament's
+// formulation.
+//
+// A pixel does not see one normal. It sees a distribution of them, and the
+// width of that distribution is physically indistinguishable from roughness:
+// a smooth surface whose normal sweeps ten degrees across one pixel scatters
+// exactly like a rough surface that stands still. Renderers that ignore this
+// try to resolve the resulting highlight on the pixel grid, cannot, and alias —
+// and because the environment being reflected is coloured, the aliasing is
+// chromatic. That is the mechanism behind a varnished table combing into red
+// and blue bands at a grazing angle: nothing about the wood is wrong, the
+// specular lobe is simply narrower than the pixel that has to contain it.
+//
+// So the sweep is measured from the screen-space derivatives of the *shading*
+// normal and folded into the GGX alpha. three already adds a geometryRoughness
+// term, but it is computed from nonPerturbedNormal — the interpolated vertex
+// normal — so it never sees the normal map, the triplanar blend or the paint
+// flake field, which is where nearly all of the variance actually lives.
+//
+// alpha'^2 = alpha^2 + min(2 * sigma^2, ceiling), and perceptual roughness is
+// sqrt(alpha), hence the fourth root. The ceiling is what keeps a silhouette or
+// a hard crease from dissolving the material into flat grey.
+const FRAG_SPEC_AA = /* glsl */`
+{
+  vec3 mgNdx = dFdx( normal );
+  vec3 mgNdy = dFdy( normal );
+  float mgKernel = min( 2.0 * uMgSaaVar * ( dot( mgNdx, mgNdx ) + dot( mgNdy, mgNdy ) ), uMgSaaMax );
+  float mgA = material.roughness * material.roughness;
+  material.roughness = clamp( sqrt( sqrt( clamp( mgA * mgA + mgKernel, 0.0, 1.0 ) ) ), 0.0525, 1.0 );
+
+  #ifdef USE_ANISOTROPY
+    // alphaT was derived from material.roughness inside the chunk we just ran,
+    // so it has to be rebuilt or the anisotropic lobe keeps the unfiltered
+    // width and brushed metal goes on shimmering.
+    material.alphaT = mix( pow2( material.roughness ), 1.0, pow2( material.anisotropy ) );
+  #endif
+
+  #ifdef USE_CLEARCOAT
+    // The coat has its own normal — usually the raw geometric one — so it needs
+    // its own measurement. This is the term that tames a mirror-finish surface
+    // seen almost edge-on, where one pixel spans a lot of curvature.
+    vec3 mgCdx = dFdx( clearcoatNormal );
+    vec3 mgCdy = dFdy( clearcoatNormal );
+    float mgCk = min( 2.0 * uMgSaaVar * ( dot( mgCdx, mgCdx ) + dot( mgCdy, mgCdy ) ), uMgSaaMax );
+    float mgCa = material.clearcoatRoughness * material.clearcoatRoughness;
+    material.clearcoatRoughness = clamp( sqrt( sqrt( clamp( mgCa * mgCa + mgCk, 0.0, 1.0 ) ) ), 0.0525, 1.0 );
+  #endif
+}
 `;
 
 /* ================================================================== helpers */
@@ -425,6 +532,10 @@ function withRepeat(tex, rx, ry, rot) {
   c.wrapT = THREE.RepeatWrapping;
   if (rot) { c.center.set(0.5, 0.5); c.rotation = rot; }
   c.needsUpdate = true;
+  // A clone carries its own version counter and its own mipmap array, so the
+  // in-place resolution upgrade has to be told it exists or it can end up
+  // re-uploading the draft chain over the sharp one.
+  Surfaces?.linkDerived?.(tex, c);
   _texClones.set(k, c);
   return c;
 }
@@ -448,6 +559,23 @@ function toColor(c, fallback = 0xffffff) {
 
 function remember(mat) {
   _owned.add(mat);
+  return mat;
+}
+
+// Defaults for the specular antialiasing filter. `variance` is the assumed
+// screen-space variance of the pixel reconstruction filter (Filament ships
+// 0.15; a little more suits a game whose signature look is a long lens with a
+// bright key, where under-filtering shows immediately). `max` is the ceiling on
+// how much GGX width one pixel of normal sweep may add.
+const SAA_VAR = 0.25;
+const SAA_MAX = 0.20;
+
+/** The antialiasing-only patch, for materials that need no other injection. */
+function withSpecAA(mat, tag, variance = SAA_VAR, max = SAA_MAX) {
+  patch(mat, { specAA: true }, {
+    uMgSaaVar: { value: variance },
+    uMgSaaMax: { value: max },
+  }, ['saa', tag]);
   return mat;
 }
 
@@ -509,8 +637,21 @@ export function carPaint(o = {}) {
     uMgFlakeColor: { value: toColor(o.flakeColor ?? 0xfff4e0) },
     uMgCcIor: { value: o.clearcoatIor ?? preset.ccIor },
     uMgCcRough: { value: o.clearcoatRoughness ?? preset.clearcoatRoughness },
+    // Fresh lacquer over a fresh basecoat: the coat does not inherit the
+    // substrate's microtexture the way a wiped-on varnish does.
+    uMgCcFromRough: { value: 0 },
     uMgPeelScale: { value: 1 / 0.55 },
     uMgPeelAmount: { value: (o.orangePeel ?? 1) * 0.55 },
+    uMgSaaVar: { value: SAA_VAR },
+    // The flake field perturbs the basecoat normal hard and deliberately, so a
+    // car needs more headroom than a floor before its sparkle turns to noise.
+    uMgSaaMax: { value: 0.26 },
+  };
+
+  // Handy for a livery editor or a damage system to reach at runtime.
+  const install = (m, u) => {
+    m.userData.setFlake = (v) => { u.uMgFlakeAmount.value = v * 0.55; };
+    m.userData.setClearcoatIor = (v) => { u.uMgCcIor.value = v; };
   };
 
   patch(mat, {
@@ -518,11 +659,9 @@ export function carPaint(o = {}) {
     flake: flake > 0.001,
     clearcoatIor: (o.clearcoat ?? preset.clearcoat) > 0.001,
     peel: (o.clearcoat ?? preset.clearcoat) > 0.001 && (o.orangePeel ?? 1) > 0.001,
-  }, uniforms, ['paint', flake > 0.001 ? 'f' : '-', (o.clearcoat ?? preset.clearcoat) > 0.001 ? 'c' : '-', (o.orangePeel ?? 1) > 0.001 ? 'p' : '-']);
-
-  // Handy for a livery editor or a damage system to reach at runtime.
-  mat.userData.setFlake = (v) => { uniforms.uMgFlakeAmount.value = v * 0.55; };
-  mat.userData.setClearcoatIor = (v) => { uniforms.uMgCcIor.value = v; };
+    specAA: true,
+  }, uniforms, ['paint', flake > 0.001 ? 'f' : '-', (o.clearcoat ?? preset.clearcoat) > 0.001 ? 'c' : '-', (o.orangePeel ?? 1) > 0.001 ? 'p' : '-'], install);
+  install(mat, uniforms);
 
   _cache.set(key, mat);
   return remember(mat);
@@ -553,6 +692,9 @@ export function chrome(o = {}) {
   mat.normalScale.set(0.55, 0.55);
   mat.name = 'chrome';
   if (_env) mat.envMap = _env;
+  // A mirror has no diffuse term to hide its aliasing behind: every pixel of it
+  // is a reflection of something, so it is the worst offender in the scene.
+  withSpecAA(mat, 'chrome', 0.28, 0.28);
   _cache.set(key, mat);
   return remember(mat);
 }
@@ -589,6 +731,7 @@ export function glass(o = {}) {
   }
   mat.name = 'glass';
   if (_env) mat.envMap = _env;
+  withSpecAA(mat, 'glass', 0.25, 0.24);
   _cache.set(key, mat);
   return remember(mat);
 }
@@ -615,6 +758,10 @@ export function rubber(o = {}) {
   mat.normalScale.set(o.normalScale ?? 1, o.normalScale ?? 1);
   mat.name = 'rubber';
   if (_env) mat.envMap = _env;
+  // A 1.15 u wheel is a few dozen pixels across with a moulded tread normal map
+  // on it, so its normal variance per pixel is enormous even though the
+  // material itself is dull.
+  withSpecAA(mat, 'rubber');
   _cache.set(key, mat);
   return remember(mat);
 }
@@ -649,10 +796,15 @@ export function plasticToy(o = {}) {
   const uniforms = {
     uMgCcIor: { value: 1.5 },
     uMgCcRough: { value: 0.06 + (1 - gloss) * 0.35 },
+    // Moulded plastic's coat is the moulding itself, so it follows every bit of
+    // the surface texture underneath it.
+    uMgCcFromRough: { value: 0.45 },
     uMgPeelScale: { value: 1 / 0.8 },
     uMgPeelAmount: { value: 0.30 },
+    uMgSaaVar: { value: SAA_VAR },
+    uMgSaaMax: { value: 0.22 },
   };
-  patch(mat, { objPos: true, clearcoatIor: gloss > 0.05, peel: gloss > 0.45 },
+  patch(mat, { objPos: true, clearcoatIor: gloss > 0.05, peel: gloss > 0.45, specAA: true },
     uniforms, ['plastic', gloss > 0.45 ? 'p' : '-']);
 
   _cache.set(key, mat);
@@ -684,6 +836,7 @@ export function lamp(o = {}) {
   });
   mat.name = 'lamp';
   if (_env) mat.envMap = _env;
+  withSpecAA(mat, 'lamp', 0.25, 0.22);
   mat.userData.setIntensity = (v) => { mat.emissiveIntensity = v; };
   _cache.set(key, mat);
   return remember(mat);
@@ -807,22 +960,34 @@ export function surface(kind, o = {}) {
   const macro = d?.macro ?? { colorAmount: 0.06, roughAmount: 0.1, scale: 0.004 };
   const macroMul = o.macro ?? 1;
   const useMacro = macroMul > 0.001 && (macro.colorAmount > 0 || macro.roughAmount > 0);
+  const hasCc = physical && (mat.clearcoat ?? 0) > 0.001;
 
-  if (useMacro || triplanar) {
-    const uniforms = {
-      uMgMacroScale: { value: macro.scale },
-      uMgMacroColor: { value: macro.colorAmount * macroMul },
-      uMgMacroRough: { value: macro.roughAmount * macroMul },
-      uMgTriScale: { value: (1 / Math.max(0.01, d?.tileWorld ?? 40)) * (typeof o.repeat === 'number' ? o.repeat : 1) },
-      uMgTriSharp: { value: o.triSharpness ?? 5.0 },
-    };
-    patch(mat, {
-      world: true,
-      worldNormal: triplanar,
-      macro: useMacro,
-      triplanar,
-    }, uniforms, ['surf', triplanar ? 'tri' : 'uv', useMacro ? 'm' : '-', physical ? 'p' : 's', set?.metalnessMap ? 'me' : '-']);
-  }
+  // Unlike the others this patch is unconditional: specular antialiasing is not
+  // an effect a surface opts into, it is the difference between a material that
+  // holds together when it is minified and one that does not.
+  const uniforms = {
+    uMgMacroScale: { value: macro.scale },
+    uMgMacroColor: { value: macro.colorAmount * macroMul },
+    uMgMacroRough: { value: macro.roughAmount * macroMul },
+    uMgTriScale: { value: (1 / Math.max(0.01, d?.tileWorld ?? 40)) * (typeof o.repeat === 'number' ? o.repeat : 1) },
+    uMgTriSharp: { value: o.triSharpness ?? 5.0 },
+    uMgCcIor: { value: md.clearcoatIor ?? md.ior ?? 1.5 },
+    uMgCcRough: { value: md.clearcoatRoughness ?? 0.1 },
+    uMgCcFromRough: { value: md.ccFromRough ?? 0 },
+    uMgSaaVar: { value: md.saaVariance ?? SAA_VAR },
+    uMgSaaMax: { value: md.saaMax ?? SAA_MAX },
+  };
+  patch(mat, {
+    world: useMacro || triplanar,
+    worldNormal: triplanar,
+    macro: useMacro,
+    triplanar,
+    clearcoatIor: hasCc,
+    specAA: true,
+  }, uniforms, [
+    'surf', triplanar ? 'tri' : 'uv', useMacro ? 'm' : '-',
+    physical ? 'p' : 's', set?.metalnessMap ? 'me' : '-', hasCc ? 'c' : '-',
+  ]);
 
   _cache.set(key, mat);
   return remember(mat);
@@ -872,6 +1037,10 @@ export const Materials = {
   surface,
 
   PAINT_PRESETS,
+
+  /** The compiled shader for one of our materials, once it has been drawn at
+   *  least once. Lives in a WeakMap rather than on userData — see `_shaders`. */
+  shaderFor(mat) { return _shaders.get(mat) || null; },
 
   /** Lighting pushes its PMREM environment here; three would apply
    *  scene.environment automatically, but an explicit handle lets a track use a

@@ -699,10 +699,13 @@ function encodeNormal(B, out) {
       const inv = 1 / Math.sqrt(gx * gx + gy * gy + 1);
       const o = (r1 + x) * 4;
       // DataTexture is flipY=false, so row index rises with v: both axes encode
-      // as 0.5 - slope/2 in the OpenGL (+Y up) convention three expects.
-      out[o] = (0.5 - 0.5 * gx * inv) * 255;
-      out[o + 1] = (0.5 - 0.5 * gy * inv) * 255;
-      out[o + 2] = (0.5 + 0.5 * inv) * 255;
+      // as 0.5 - slope/2 in the OpenGL (+Y up) convention three expects. The
+      // + 0.5 rounds rather than truncates: the mip builder measures the length
+      // of averaged normals, so a systematic half-level bias on every texel
+      // would read as surface roughness that is not there.
+      out[o] = (0.5 - 0.5 * gx * inv) * 255 + 0.5;
+      out[o + 1] = (0.5 - 0.5 * gy * inv) * 255 + 0.5;
+      out[o + 2] = (0.5 + 0.5 * inv) * 255 + 0.5;
       out[o + 3] = 255;
     }
   }
@@ -750,17 +753,249 @@ function deriveAO(B) {
   return out;
 }
 
-function makeTex(data, size, srgb, aniso) {
+/* ------------------------------------------------------------- mip chains */
+//
+// The hardware box filter is the wrong filter for two of these three maps, and
+// that is the single biggest reason a varnished table combs into red and blue
+// bands at grazing angles.
+//
+// Averaging an *encoded* normal shortens the vector; the shader then
+// renormalises it and throws away the only thing the average told us — how much
+// the surface wobbles inside that footprint. Averaging roughness is worse: two
+// texels at roughness 0.1 whose normals are twenty degrees apart do not behave
+// like one texel at 0.1, they behave like a markedly rougher one. Discard that
+// variance and every minified specular highlight has to be resolved by the
+// pixel grid, which it cannot be, so it strobes.
+//
+// So the chain is built here. Each level keeps the *unnormalised* mean of the
+// level-0 unit normals. The length of that mean is a von Mises-Fisher
+// concentration (kappa = r(3 - r^2)/(1 - r^2)), and the extra GGX width it
+// implies — alpha^2 += 2/kappa, the Olano-Baker / Frostbite result — is folded
+// into the roughness byte stored at that level. Roughness therefore *rises*
+// with distance, which is the entire point: the highlight that can no longer be
+// resolved is turned into lobe width instead of into noise.
+
+// Averaging sRGB bytes averages code values, not light, and darkens every edge
+// in the texture. Both directions go through tables because a mip chain is
+// ~1.33 n texels and Math.pow in that loop is a visible chunk of the bake.
+const SRGB_TO_LIN = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  const c = i / 255;
+  SRGB_TO_LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+const LIN2SRGB_N = 4096;
+const LIN2SRGB = new Uint8Array(LIN2SRGB_N + 1);
+for (let i = 0; i <= LIN2SRGB_N; i++) {
+  const v = i / LIN2SRGB_N;
+  const c = v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+  LIN2SRGB[i] = clamp(Math.round(c * 255), 0, 255);
+}
+function linToSrgbByte(v) {
+  if (!(v > 0)) return 0;
+  if (v >= 1) return 255;
+  return LIN2SRGB[(v * LIN2SRGB_N) | 0];
+}
+
+/** Extra GGX alpha^2 implied by a mean normal of length `len`. */
+function vmfAlphaSq(len) {
+  const r = clamp(len, 1e-4, 0.999999);
+  const r2 = r * r;
+  const kappa = (r * (3 - r2)) / Math.max(1 - r2, 1e-6);
+  return 2 / Math.max(kappa, 1e-6);
+}
+
+/**
+ * Build the albedo / ORM / normal mip chains together.
+ *
+ * They have to be built together because the roughness stored at a level is a
+ * function of the normal spread measured at that same level.
+ *
+ * @returns {{albedo: object[], orm: object[], normal: object[]}} level arrays
+ *          in three's `texture.mipmaps` shape, level 0 first.
+ */
+function buildMipChains(albedo, orm, normal, size) {
+  const out = {
+    albedo: [{ data: albedo, width: size, height: size }],
+    orm: [{ data: orm, width: size, height: size }],
+    normal: [{ data: normal, width: size, height: size }],
+  };
+
+  let w = size;
+  // Working state at the level we are reducing *from*. Null means "read the
+  // level-0 byte arrays"; every later level reads these instead so the mean
+  // normal stays relative to level 0 rather than to its immediate parent.
+  let alb = null, nrm = null, m4 = null, aom = null;
+
+  while (w > 1) {
+    const nw = w >> 1;
+    const nn = nw * nw;
+    const nAlb = new Float32Array(nn * 4);
+    const nNrm = new Float32Array(nn * 3);
+    const nM4 = new Float32Array(nn);
+    const nAom = new Float32Array(nn * 2);
+    const bAlb = new Uint8Array(nn * 4);
+    const bOrm = new Uint8Array(nn * 4);
+    const bNrm = new Uint8Array(nn * 4);
+
+    for (let y = 0; y < nw; y++) {
+      for (let x = 0; x < nw; x++) {
+        let ar = 0, ag = 0, ab = 0, aa = 0;
+        let nx = 0, ny = 0, nz = 0;
+        let r4 = 0, ao = 0, me = 0;
+        for (let j = 0; j < 2; j++) {
+          const sy = (y << 1) + j;
+          for (let i = 0; i < 2; i++) {
+            const si = sy * w + (x << 1) + i;
+            if (alb === null) {
+              const b = si * 4;
+              ar += SRGB_TO_LIN[albedo[b]];
+              ag += SRGB_TO_LIN[albedo[b + 1]];
+              ab += SRGB_TO_LIN[albedo[b + 2]];
+              aa += albedo[b + 3] * (1 / 255);
+              nx += normal[b] * (2 / 255) - 1;
+              ny += normal[b + 1] * (2 / 255) - 1;
+              nz += normal[b + 2] * (2 / 255) - 1;
+              ao += orm[b] * (1 / 255);
+              const pr = orm[b + 1] * (1 / 255);
+              const p2 = pr * pr;
+              r4 += p2 * p2;
+              me += orm[b + 2] * (1 / 255);
+            } else {
+              const b = si * 4, c = si * 3, d = si * 2;
+              ar += alb[b]; ag += alb[b + 1]; ab += alb[b + 2]; aa += alb[b + 3];
+              nx += nrm[c]; ny += nrm[c + 1]; nz += nrm[c + 2];
+              r4 += m4[si];
+              ao += aom[d]; me += aom[d + 1];
+            }
+          }
+        }
+
+        const o = y * nw + x;
+        const q = 0.25;
+        ar *= q; ag *= q; ab *= q; aa *= q;
+        nx *= q; ny *= q; nz *= q;
+        r4 *= q; ao *= q; me *= q;
+
+        const a4 = o * 4, n3 = o * 3, a2 = o * 2;
+        nAlb[a4] = ar; nAlb[a4 + 1] = ag; nAlb[a4 + 2] = ab; nAlb[a4 + 3] = aa;
+        nNrm[n3] = nx; nNrm[n3 + 1] = ny; nNrm[n3 + 2] = nz;
+        nM4[o] = r4;
+        nAom[a2] = ao; nAom[a2 + 1] = me;
+
+        bAlb[a4] = linToSrgbByte(ar);
+        bAlb[a4 + 1] = linToSrgbByte(ag);
+        bAlb[a4 + 2] = linToSrgbByte(ab);
+        bAlb[a4 + 3] = clamp(aa, 0, 1) * 255;
+
+        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        const inv = len > 1e-6 ? 1 / len : 0;
+        bNrm[a4] = (nx * inv * 0.5 + 0.5) * 255;
+        bNrm[a4 + 1] = (ny * inv * 0.5 + 0.5) * 255;
+        bNrm[a4 + 2] = (nz * inv * 0.5 + 0.5) * 255;
+        bNrm[a4 + 3] = 255;
+
+        // alpha^2 = mean(alpha_i^2) + 2/kappa, and perceptual roughness is
+        // sqrt(alpha), hence the fourth root.
+        const aSq = clamp(r4 + vmfAlphaSq(len), 0, 1);
+        bOrm[a4] = clamp(ao, 0, 1) * 255;
+        bOrm[a4 + 1] = clamp(Math.sqrt(Math.sqrt(aSq)), 0.02, 1) * 255;
+        bOrm[a4 + 2] = clamp(me, 0, 1) * 255;
+        bOrm[a4 + 3] = 255;
+      }
+    }
+
+    out.albedo.push({ data: bAlb, width: nw, height: nw });
+    out.orm.push({ data: bOrm, width: nw, height: nw });
+    out.normal.push({ data: bNrm, width: nw, height: nw });
+
+    alb = nAlb; nrm = nNrm; m4 = nM4; aom = nAom;
+    w = nw;
+  }
+
+  return out;
+}
+
+/**
+ * Wrap-aware bilinear magnification of a packed RGBA image.
+ *
+ * Only the draft bake uses this. A DataTexture's GPU storage is immutable once
+ * three has allocated it, so a set that starts at draft resolution and later
+ * sharpens must keep the *same* pixel dimensions throughout — otherwise the
+ * sharp upload is silently dropped by the driver and the surface stays a blur
+ * forever. The draft is therefore generated small and magnified to the final
+ * size; only its detail is provisional, never its shape in memory.
+ */
+function upsampleRGBA(src, sw, dst, dw) {
+  const k = sw / dw;
+  for (let y = 0; y < dw; y++) {
+    const fy = y * k;
+    const y0 = Math.floor(fy);
+    const ty = fy - y0;
+    const r0 = (y0 % sw) * sw;
+    const r1 = ((y0 + 1) % sw) * sw;
+    for (let x = 0; x < dw; x++) {
+      const fx = x * k;
+      const x0 = Math.floor(fx);
+      const tx = fx - x0;
+      const c0 = x0 % sw;
+      const c1 = (x0 + 1) % sw;
+      const i00 = (r0 + c0) * 4, i10 = (r0 + c1) * 4;
+      const i01 = (r1 + c0) * 4, i11 = (r1 + c1) * 4;
+      const o = (y * dw + x) * 4;
+      for (let c = 0; c < 4; c++) {
+        const a = src[i00 + c] + (src[i10 + c] - src[i00 + c]) * tx;
+        const b = src[i01 + c] + (src[i11 + c] - src[i01 + c]) * tx;
+        dst[o + c] = a + (b - a) * ty;
+      }
+    }
+  }
+  return dst;
+}
+
+/**
+ * @param {?object[]} mips level array (level 0 first) or null to let the
+ *        driver box-filter its own chain — only appropriate for maps that are
+ *        never minified, i.e. the vertex-stage displacement and thickness maps.
+ */
+function makeTex(data, size, srgb, aniso, mips) {
   const t = new DataTexture(data, size, size, RGBAFormat, UnsignedByteType);
   t.wrapS = RepeatWrapping;
   t.wrapT = RepeatWrapping;
   t.magFilter = LinearFilter;
   t.minFilter = LinearMipmapLinearFilter;
-  t.generateMipmaps = true;
+  if (mips && mips.length > 1) {
+    t.mipmaps = mips;
+    t.generateMipmaps = false;
+  } else {
+    t.generateMipmaps = true;
+  }
   t.anisotropy = aniso;
   t.colorSpace = srgb ? SRGBColorSpace : NoColorSpace;
   t.needsUpdate = true;
   return t;
+}
+
+// Deliberately not texture.userData: THREE.Texture.copy() deep-clones userData
+// through JSON, so parking a texture in there would make the next clone try to
+// serialise a multi-megabyte typed array.
+const _derived = new WeakMap();
+
+/**
+ * Register a repeat-adjusted clone of one of our textures.
+ *
+ * Texture.clone() shares the Source — and therefore the single GPU upload —
+ * but it carries its own `version` and, critically, its own `mipmaps` array.
+ * When a draft is re-baked in place only the original is marked dirty, so if a
+ * clone happens to be bound first the driver is handed that clone's stale mip
+ * chain and the sharp bake is silently thrown away. Tracking the clones lets an
+ * in-place re-bake reach every view of the texture.
+ */
+export function linkDerived(base, derived) {
+  if (!base || !derived || base === derived) return derived;
+  let list = _derived.get(base);
+  if (!list) { list = []; _derived.set(base, list); }
+  if (list.indexOf(derived) < 0) list.push(derived);
+  return derived;
 }
 
 let _anisotropy = 8;
@@ -979,10 +1214,15 @@ function woodBase(B, cfg) {
 
   // Surface wear: fine scuffs and a few deeper scratches. Applied after the
   // grain so it reads as damage *to* the finish rather than part of it.
+  // Scratch width is in texels, so it has to be tied to the bake resolution or
+  // a 2048 bake would draw them at half the physical width of a 1024 one. At
+  // size/620 a scratch is ~0.1 mm across on a 60 cm tile: fine, but still two
+  // or three texels wide, which is the narrowest a feature can be and survive
+  // the mip chain as anything other than noise.
   if (cfg.wear > 0) addScratches(B, {
     count: Math.round(cfg.wear * 130),
     lenMin: size * 0.02, lenMax: size * 0.16,
-    width: size / 900, depth: 0.05, rough: 0.10, bright: 0.05, seed: 4411,
+    width: size / 620, depth: 0.05, rough: 0.10, bright: 0.05, seed: 4411,
   });
 
   return { planks, knots };
@@ -1095,18 +1335,32 @@ function addFingerprints(B, count, strength, seedOff) {
 
 /* ---------------------------------------------------------------- surfaces */
 
+// Grain frequency is set by what the camera can resolve, not by botany.
+//
+// A 60 cm tile at 210 fibre cells and 300 pore cells puts features at 2.9 mm
+// and 2.0 mm. In a gameplay frame the far half of the table runs at roughly one
+// screen pixel per two millimetres, so those features land at or under Nyquist,
+// and everything they touch — albedo, the derived normal, the roughness — turns
+// into per-pixel noise that the specular lobe then amplifies into colour
+// fringing. At 96 and 150 the same figure sits at 6.2 mm and 4.0 mm: still
+// clearly oak in a close-up, still four to six texels wide at 1024, and it
+// survives minification as grain rather than as sparkle.
 GEN.oak = (B) => {
   woodBase(B, {
     planks: 5, ringsPerCm: 1.35, ringJitter: 0.30, archCells: 5,
     pithMin: 1.6, pithMax: 5.5, archMin: 0.8, archMax: 2.6, depthDrift: 0.35,
     lateStart: 0.58, lateEnd: 0.94, poreBand: 0.30,
-    grainCells: 26, fibreCells: 210,
+    grainCells: 26, fibreCells: 96,
     early: rgb('#c39764'), late: rgb('#8d5f30'), pore: rgb('#4d3118'),
     ray: rgb('#dcb987'), knotColor: rgb('#4a2c14'),
-    rays: 0.85, pores: 1, poreCellsU: 300, poreStretch: 7, poreSize: 0.42,
+    rays: 0.85, pores: 1, poreCellsU: 150, poreStretch: 6, poreSize: 0.40,
     knots: 3, knotMin: 0.7, knotMax: 2.4, deadKnot: 0.2,
     hueJitter: 4, satJitter: 0.10, valJitter: 0.07, patina: 0.10,
-    jointWidth: 0.09, endJoints: 0.7, rough: 0.44, wear: 0.9,
+    // Bare oak is not a semi-gloss surface. 0.44 was glossy enough that at
+    // grazing incidence, where Fresnel drives reflectance towards 1 whatever the
+    // base colour, the board returned a recognisable image of the sky instead of
+    // a broad sheen. 0.62 is where a sanded, unfinished board actually sits.
+    jointWidth: 0.09, endJoints: 0.7, rough: 0.62, wear: 0.9,
   });
 };
 
@@ -1115,10 +1369,10 @@ GEN.pine = (B) => {
     planks: 4, ringsPerCm: 0.85, ringJitter: 0.26, archCells: 4,
     pithMin: 1.2, pithMax: 4.2, archMin: 1.0, archMax: 3.1, depthDrift: 0.5,
     lateStart: 0.66, lateEnd: 0.97, poreBand: 0.16,
-    grainCells: 20, fibreCells: 170,
+    grainCells: 20, fibreCells: 88,
     early: rgb('#e6cfa4'), late: rgb('#a9682f'), pore: rgb('#7a4c22'),
     ray: rgb('#f0dcb6'), knotColor: rgb('#5c3512'),
-    rays: 0.10, pores: 0.25, poreCellsU: 230, poreStretch: 9, poreSize: 0.30,
+    rays: 0.10, pores: 0.25, poreCellsU: 128, poreStretch: 8, poreSize: 0.30,
     knots: 7, knotMin: 0.6, knotMax: 3.0, deadKnot: 0.4,
     hueJitter: 5, satJitter: 0.13, valJitter: 0.09, patina: 0.12,
     jointWidth: 0.11, endJoints: 0.55, rough: 0.56, wear: 1.2,
@@ -1149,10 +1403,10 @@ GEN.varnishedWood = (B) => {
     planks: 3, ringsPerCm: 2.1, ringJitter: 0.34, archCells: 6,
     pithMin: 2.2, pithMax: 7.0, archMin: 0.6, archMax: 2.0, depthDrift: 0.25,
     lateStart: 0.62, lateEnd: 0.95, poreBand: 0.26,
-    grainCells: 32, fibreCells: 240,
+    grainCells: 32, fibreCells: 112,
     early: rgb('#6b4326'), late: rgb('#3c2312'), pore: rgb('#241408'),
     ray: rgb('#8a5c37'), knotColor: rgb('#2a1608'),
-    rays: 0.35, pores: 0.55, poreCellsU: 340, poreStretch: 8, poreSize: 0.34,
+    rays: 0.35, pores: 0.55, poreCellsU: 152, poreStretch: 7, poreSize: 0.34,
     knots: 1, knotMin: 0.6, knotMax: 1.6, deadKnot: 0.1,
     hueJitter: 3, satJitter: 0.08, valJitter: 0.06, patina: 0.07,
     jointWidth: 0.05, endJoints: 0.25, rough: 0.10, wear: 0.35,
@@ -1166,7 +1420,11 @@ GEN.varnishedWood = (B) => {
     tint(tmp, B.r[i], B.g[i], B.b[i], 2, 1.24, 0.94);
     B.r[i] = tmp[0]; B.g[i] = tmp[1]; B.b[i] = tmp[2];
     B.h[i] = 0.5 + (B.h[i] - 0.5) * 0.18;
-    B.rough[i] = clamp(0.075 + (B.rough[i] - 0.10) * 0.22, 0.05, 0.4);
+    // Satin, not a mirror. A kitchen table is a hand-applied wiping varnish
+    // that has been eaten by ten years of plates: a roughness floor of 0.16
+    // still throws a long soft highlight, but it no longer reproduces the sky
+    // and the window sharply enough to alias against its own normal map.
+    B.rough[i] = clamp(0.16 + (B.rough[i] - 0.10) * 0.34, 0.14, 0.56);
   }
 
   // Orange peel: the long-wavelength ripple every sprayed finish has.
@@ -1199,10 +1457,10 @@ GEN.laminate = (B) => {
     planks: 2, ringsPerCm: 1.15, ringJitter: 0.28, archCells: 5,
     pithMin: 1.8, pithMax: 5.0, archMin: 0.9, archMax: 2.4, depthDrift: 0.3,
     lateStart: 0.60, lateEnd: 0.94, poreBand: 0.26,
-    grainCells: 22, fibreCells: 190,
+    grainCells: 22, fibreCells: 104,
     early: rgb('#cba372'), late: rgb('#9a6d3c'), pore: rgb('#6a4522'),
     ray: rgb('#dfc296'), knotColor: rgb('#553318'),
-    rays: 0.25, pores: 0.35, poreCellsU: 260, poreStretch: 7, poreSize: 0.34,
+    rays: 0.25, pores: 0.35, poreCellsU: 148, poreStretch: 6, poreSize: 0.34,
     knots: 2, knotMin: 0.7, knotMax: 2.0, deadKnot: 0.15,
     hueJitter: 2, satJitter: 0.06, valJitter: 0.05, patina: 0.06,
     jointWidth: 0.10, endJoints: 0.9, rough: 0.30, wear: 0.5,
@@ -2632,10 +2890,47 @@ function bakeBuffers(kind, size, opts) {
 /* ============================================================== public bake */
 
 /**
+ * Bake a kind and hand back upload-ready level-0 images plus their filtered
+ * mip chains, always at exactly `size` pixels.
+ *
+ * `opts.draft` runs the generator at a fraction of the linear resolution and
+ * magnifies the result: a sixteenth of the generator's cost, which is what
+ * keeps the boot from stalling on the first frame, while still handing the
+ * driver an allocation that never has to change shape when the sharp bake
+ * lands on top of it.
+ */
+function bakeAtSize(kind, size, opts = {}) {
+  let genSize = size;
+  if (opts.draft === true) {
+    const req = clamp(opts.draftSize ?? 256, 64, size);
+    genSize = Math.min(size, 1 << Math.round(Math.log2(req)));
+  }
+  const buf = bakeBuffers(kind, genSize, opts);
+
+  if (genSize !== size) {
+    const n4 = size * size * 4;
+    const lift = (src) => (src ? upsampleRGBA(src, genSize, new Uint8Array(n4), size) : null);
+    buf.albedo = lift(buf.albedo);
+    buf.orm = lift(buf.orm);
+    buf.normal = lift(buf.normal);
+    buf.height = lift(buf.height);
+    buf.thickness = lift(buf.thickness);
+    buf.size = size;
+  }
+
+  return {
+    buf,
+    genSize,
+    draft: genSize !== size,
+    mips: buildMipChains(buf.albedo, buf.orm, buf.normal, size),
+  };
+}
+
+/**
  * Bake a complete PBR set for a named surface.
  *
  * @param {string} kind one of TEXTURE_KINDS
- * @param {object} [opts] { size, seed, height }
+ * @param {object} [opts] { size, seed, height, draft, draftSize }
  * @returns {object} { map, normalMap, roughnessMap, aoMap, metalnessMap,
  *                     displacementMap, thicknessMap, ormMap, ... }
  *
@@ -2646,11 +2941,12 @@ function bakeBuffers(kind, size, opts) {
 export function makeTextureSet(kind, opts = {}) {
   const k = GEN[kind] ? kind : FALLBACK_KIND;
   const size = resolveSize(k, opts);
-  const buf = bakeBuffers(k, size, opts);
+  const bake = bakeAtSize(k, size, opts);
+  const buf = bake.buf;
 
-  const map = makeTex(buf.albedo, size, true, _anisotropy);
-  const normalMap = makeTex(buf.normal, size, false, _anisotropy);
-  const ormMap = makeTex(buf.orm, size, false, _anisotropy);
+  const map = makeTex(buf.albedo, size, true, _anisotropy, bake.mips.albedo);
+  const normalMap = makeTex(buf.normal, size, false, _anisotropy, bake.mips.normal);
+  const ormMap = makeTex(buf.orm, size, false, _anisotropy, bake.mips.orm);
   const displacementMap = buf.height ? makeTex(buf.height, size, false, _anisotropy) : null;
   const thicknessMap = buf.thickness ? makeTex(buf.thickness, size, false, _anisotropy) : null;
 
@@ -2671,7 +2967,8 @@ export function makeTextureSet(kind, opts = {}) {
     hasMetal: buf.hasMetal,
     relief: buf.relief,
     tileWorld: buf.tileWorld,
-    level: opts.level ?? 1,
+    level: bake.draft ? 0 : 1,
+    genSize: bake.genSize,
     seed: opts.seed ?? 0,
     opts: { ...opts },
     textures: [map, normalMap, ormMap],
@@ -2682,26 +2979,38 @@ export function makeTextureSet(kind, opts = {}) {
   set.bytes = estimateBytes(set);
 
   /**
-   * Re-bake at a different resolution in place. The Source objects behind the
-   * textures are mutated rather than replaced, so every material and every
-   * repeat-clone already pointing at this set picks the new pixels up on the
-   * next frame without being rebuilt.
+   * Re-bake at full detail, in place.
+   *
+   * The pixel dimensions never change — see `upsampleRGBA` for why they must
+   * not — so this is a straight data swap into storage the driver has already
+   * allocated. The Source objects behind the textures are mutated rather than
+   * replaced, so every material and every repeat-clone already pointing at this
+   * set picks the sharp pixels up on the next frame without being rebuilt.
    */
-  set.upgrade = (newSize, extra = {}) => {
-    const target = resolveSize(k, { ...opts, ...extra, size: newSize });
-    if (target === set.size) return set;
-    const nb = bakeBuffers(k, target, { ...opts, ...extra });
-    const swap = (tex, data) => {
+  set.upgrade = (_newSize, extra = {}) => {
+    if (set.level >= 1 && !extra.force) return set;
+    const nb = bakeAtSize(k, set.size, { ...opts, ...extra, draft: false });
+    const swap = (tex, data, mips) => {
       if (!tex || !data) return;
-      tex.image = { data, width: target, height: target };
+      tex.image = { data, width: set.size, height: set.size };
+      if (mips && tex.mipmaps.length === mips.length) tex.mipmaps = mips;
       tex.needsUpdate = true;
+      // Every repeat-adjusted view of this texture too — see linkDerived().
+      const derived = _derived.get(tex);
+      if (derived) {
+        for (let i = 0; i < derived.length; i++) {
+          const d = derived[i];
+          if (mips && d.mipmaps.length === mips.length) d.mipmaps = mips;
+          d.needsUpdate = true;
+        }
+      }
     };
-    swap(map, nb.albedo);
-    swap(normalMap, nb.normal);
-    swap(ormMap, nb.orm);
-    if (displacementMap && nb.height) swap(displacementMap, nb.height);
-    if (thicknessMap && nb.thickness) swap(thicknessMap, nb.thickness);
-    set.size = target;
+    swap(map, nb.buf.albedo, nb.mips.albedo);
+    swap(normalMap, nb.buf.normal, nb.mips.normal);
+    swap(ormMap, nb.buf.orm, nb.mips.orm);
+    if (displacementMap && nb.buf.height) swap(displacementMap, nb.buf.height, null);
+    if (thicknessMap && nb.buf.thickness) swap(thicknessMap, nb.buf.thickness, null);
+    set.genSize = nb.genSize;
     set.level = 1;
     set.bytes = estimateBytes(set);
     return set;
@@ -2815,6 +3124,7 @@ export function verifyAllTiling(opts = {}) {
 export const ProcTex = {
   makeTextureSet,
   disposeTextureSet,
+  linkDerived,
   estimateBytes,
   verifyTiling,
   verifyAllTiling,
