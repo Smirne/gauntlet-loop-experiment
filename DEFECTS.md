@@ -37,6 +37,45 @@ highlight. Should be near-neutral grey with anisotropic streaks and roughness ~0
 dark warm brown. The grain, plank seams and ray fleck are otherwise excellent — this is a
 palette bug in the knot pass only.
 
+## D9 — Screen-filling black wedge and radial streaks in every frame — CRITICAL — FIXED
+
+`fx/Trails.js` [A9]. Every round-2 capture carried two headline artifacts: a pure-black
+hard-edged polygon covering a large part of the frame, and cream-coloured streaks radiating
+across the whole image. They were one bug.
+
+`RIBBON_VERT` retired a dead segment by teleporting its vertex outside the clip volume:
+
+```glsl
+if (aLife.y <= 0.0 || f <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); ... }
+```
+
+That idiom is only valid when the condition is **uniform across the primitive** — which is
+how `fx/Particles.js` uses it correctly, since all four vertices of a particle quad share one
+`aTime`. On a ribbon it is not. `Ribbon.push()` writes `strength0` to the trailing edge and
+`strength1` to the leading edge, so `aLife.y` differs *within* a quad, and every trail starts
+with `strength0 = 0`. The result is a triangle with two dead and two live vertices. The
+clipper does not discard such a triangle — it clips it, stretching a polygon from the live
+geometry out toward the off-screen corner, across a huge span of screen. The streaks were the
+same polygons at other orientations.
+
+`f` derives from `aLife.x`, which `push()` writes identically to all four vertices, so that
+half of the test *is* uniform and still collapses the quad safely. Fix: drop `aLife.y` from
+the branch and let `vFade` plus the existing `if (a < 0.004) discard;` retire weak vertices.
+The boundary quad then tapers from zero, which is what it should have looked like anyway.
+
+Two notes worth keeping:
+
+- **Why black, not bright?** The material is additive, which cannot darken, and that sent me
+  looking in the wrong place. The geometric cause above is confirmed by isolation (hiding
+  `fx:speedRibbon` alone removes the wedge; the fix removes it at source). The most likely
+  compositing mechanism is that the stretched polygons dumped alpha into the target while
+  contributing almost no RGB, and premultiplied-alpha compositing then reads high alpha with
+  low RGB as opaque black — but that part is inference, not something I measured.
+- **Diagnosis route.** A raycast through the black pixels named `fx:speedRibbon` as the first
+  hit. Isolating each of the three ribbons in turn was what actually settled it. Guessing from
+  material state was misleading: `blending: 2` (additive), `depthWrite: false` and clean,
+  NaN-free geometry all say "this mesh cannot possibly do that".
+
 ## D6, D7, D8 — ALL FIXED BY ONE SIGN ERROR
 
 `world/Track.js` built its per-frame surface normal as `right × tangent`. With forward = +Z

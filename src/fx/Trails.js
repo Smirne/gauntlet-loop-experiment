@@ -229,9 +229,21 @@ varying vec3  vTint;
 void main() {
   float age = uTime - aLife.x;
   float f = 1.0 - clamp(age / max(uLife, 1e-3), 0.0, 1.0);
-  // A dead segment collapses to a point rather than being skipped on the CPU:
+  // An expired quad collapses to a point rather than being skipped on the CPU:
   // the ring buffer stays contiguous and the draw range never fragments.
-  if (aLife.y <= 0.0 || f <= 0.0) {
+  //
+  // Only `f` may drive this branch. It derives from aLife.x, and Ribbon.push()
+  // writes the same birth time to all four vertices, so the branch is uniform
+  // across the primitive and the triangle really does collapse to zero area.
+  //
+  // aLife.y (strength) must NOT: push() takes strength0 for the trailing edge
+  // and strength1 for the leading one, so a quad routinely has two dead and two
+  // live vertices — every trail burst starts with strength0 = 0. Teleporting
+  // just the dead pair leaves a triangle with live vertices, and the clipper
+  // does not remove that, it stretches it from the live geometry out to the
+  // off-screen corner. That is where the screen-filling black wedge across
+  // every frame came from. Let vFade and the fragment discard retire those.
+  if (f <= 0.0) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     vUv = vec2(0.0);
     vFade = 0.0;
@@ -239,7 +251,7 @@ void main() {
     return;
   }
   vUv = uv;
-  vFade = aLife.y * f;
+  vFade = max(aLife.y, 0.0) * f;
   vTint = aTint;
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mvPosition;
