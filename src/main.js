@@ -339,11 +339,30 @@ async function boot() {
   }
   if (params.get('nohud') === '1') ctx.hud?.hide?.();
 
+  // Fast-forward advances the whole simulation, not just physics. Stepping
+  // fixedUpdate alone leaves the AI (which thinks in update()) silent, so the
+  // field never leaves the grid and every captured frame is a static start
+  // line. Rendering real frames would be correct but pays for the full post
+  // chain 1200 times, so this drives the systems that actually change the
+  // picture and skips the composer until the capture itself.
   const ff = Number(params.get('t') ?? 0);
   if (ff > 0) {
     const fdt = ctx.time.fixedDt;
     const steps = Math.min(Math.round(ff / fdt), 60 * 120);
-    for (let i = 0; i < steps; i++) engine.stepFixed?.(fdt);
+    for (let i = 0; i < steps; i++) {
+      ctx.time.dt = fdt;
+      ctx.time.elapsed += fdt;
+      ctx.time.frame++;
+      for (const d of ctx.drivers) d.update?.(fdt, ctx);
+      engine.stepFixed?.(fdt);
+      ctx.race?.update?.(fdt, ctx);
+      ctx.fx.particles?.update?.(fdt, ctx);
+      ctx.fx.trails?.update?.(fdt, ctx);
+      ctx.decals?.update?.(fdt, ctx);
+      for (const v of ctx.vehicles) v.update?.(fdt, ctx);
+    }
+    ctx.director?.lateUpdate?.(fdt, ctx);
+    ctx.hud?.lateUpdate?.(fdt, ctx);
     window.MG.fastForwarded = { seconds: ff, steps };
   }
 

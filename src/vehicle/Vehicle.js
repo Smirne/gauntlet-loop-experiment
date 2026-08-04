@@ -925,7 +925,7 @@ export class Vehicle {
     this._updateSteering(fdt, g);
     this._probeWheels();
     this._updateTrackState();
-    this._suspension(g);
+    this._suspension(fdt, g);
     this._drivetrain(fdt);
     this._wheelForces(fdt);
     this._aero();
