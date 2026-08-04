@@ -1029,6 +1029,16 @@ const POST_TIERS = {
 const _size = new THREE.Vector2();
 const _vp = new THREE.Matrix4();
 const _proj = new THREE.Vector3();
+const _cutPos = new THREE.Vector3();
+const _cutQuat = new THREE.Quaternion();
+
+// Camera-cut thresholds for the motion blur reprojection. 1 unit = 1 cm, and a
+// chase camera travels a few units per frame at racing speed, so 30 u (900 u²)
+// in a single frame is a jump no follow camera makes. The dot is between
+// successive world quaternions: 0.985 is a hair under 10 degrees of rotation in
+// one frame, well outside what a damped camera does and well inside a cut.
+const CUT_DIST_SQ = 900;
+const CUT_DOT = 0.985;
 
 /** Finite-or-default. Every number a peer hands us goes through this first —
  *  a NaN reaching a uniform is invisible until the whole pass renders black. */
@@ -1083,6 +1093,11 @@ export class PostFX {
     this._lookExposure = 1;
     this._bloomKnee = 3.1;
     this._prevVP = new THREE.Matrix4();
+    // Previous camera pose, for telling a cut apart from fast camera motion.
+    this._prevCamPos = new THREE.Vector3();
+    this._prevCamQuat = new THREE.Quaternion();
+    this._camHistory = false;
+    this._cutPending = false;
     this._time = 0;
     this._failures = 0;
     this._hardFail = false;
@@ -1092,6 +1107,20 @@ export class PostFX {
     this._probeB = null;
 
     ctx.postfx = ctx.postfx || this;
+  }
+
+  /**
+   * Tell the motion blur that the camera teleported, so it skips reprojection
+   * for one frame instead of smearing the cut across the screen.
+   *
+   * The pose heuristic in update() catches cuts on its own, but it can only
+   * guess from a threshold. Anything that knowingly repositions the camera —
+   * a director cut, a respawn, a replay seek, the review capture rig — should
+   * call this and not rely on the guess.
+   */
+  notifyCameraCut() {
+    this._cutPending = true;
+    return this;
   }
 
   async init() {
@@ -1713,6 +1742,28 @@ export class PostFX {
       const u = p.motionBlur.uniforms;
       _vp.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
       u.uInvViewProj.value.copy(_vp).invert();
+
+      // A camera CUT is not camera MOTION. Reprojecting across one leaves
+      // uPrevViewProj describing a completely different view, the per-pixel
+      // velocity comes out enormous, and the pass smears the whole frame into
+      // cream-coloured streaks radiating from the centre. The director cuts
+      // between angles during a race, so this ships unless it is caught.
+      //
+      // Held for a frame rather than fixed up: with no trustworthy previous
+      // view there is no correct blur to draw, and none is right.
+      _cutPos.setFromMatrixPosition(camera.matrixWorld);
+      camera.getWorldQuaternion(_cutQuat);
+      const jumped =
+        this._cutPending ||
+        !this._camHistory ||
+        _cutPos.distanceToSquared(this._prevCamPos) > CUT_DIST_SQ ||
+        Math.abs(_cutQuat.dot(this._prevCamQuat)) < CUT_DOT;
+      this._cutPending = false;
+      this._camHistory = true;
+      this._prevCamPos.copy(_cutPos);
+      this._prevCamQuat.copy(_cutQuat);
+      if (jumped) this._prevVP.copy(_vp);
+
       u.uPrevViewProj.value.copy(this._prevVP);
       // World position, not .position: the camera may be parented to a rig.
       u.uCamPos.value.setFromMatrixPosition(camera.matrixWorld);

@@ -9,7 +9,14 @@
 //   const m = await import('/tools/capture-set.js'); await m.captureSet('r2');
 //
 // Boot with the matching URL or the sim state won't line up:
-//   /?track=kitchen&skipmenu=1&t=6&quality=ultra
+//   /?track=kitchen&skipmenu=1&t=16&quality=ultra
+//
+// t=16 puts the leaders around 55% of the opening lap with the field strung
+// out, which is what a review frame should show. Rounds 1 and 2 used t=6, but
+// that was before D10 was found: the fast-forward stepped no systems at all, so
+// t=6 really meant "the field has barely left the grid and no physics has run".
+// Do not compare frames across that boundary and read the difference as a
+// rendering change.
 //
 // Pass a suffix to namespace a round: captureSet('r2') writes
 // shots/crit-1-gameplay-r2.png etc. No suffix overwrites the round-1 names.
@@ -38,6 +45,7 @@ export async function captureSet(suffix = '') {
   cam.position.set(c.x - fw.x * 46 + 6, c.y + 26, c.z - fw.z * 46 + 6);
   cam.lookAt(c.x, c.y + 2, c.z);
   cam.updateProjectionMatrix();
+  ctx.postfx?.notifyCameraCut?.();
   shots.push(await window.MG.capture('crit-2-chase' + tag, 1920, 1080));
 
   // 3. macro detail: car body against the table surface
@@ -45,6 +53,7 @@ export async function captureSet(suffix = '') {
   cam.position.set(c.x + 17, c.y + 9, c.z + 21);
   cam.lookAt(c.x, c.y + 1.4, c.z);
   cam.updateProjectionMatrix();
+  ctx.postfx?.notifyCameraCut?.();
   shots.push(await window.MG.capture('crit-3-macro' + tag, 1920, 1080));
 
   // 4. wide establishing shot of the whole circuit
@@ -56,6 +65,7 @@ export async function captureSet(suffix = '') {
   cam.position.set(ctr.x + d * 0.42, ctr.y + d * 0.80, ctr.z + d * 0.62);
   cam.lookAt(ctr.x, ctr.y, ctr.z);
   cam.updateProjectionMatrix();
+  ctx.postfx?.notifyCameraCut?.();
   shots.push(await window.MG.capture('crit-4-establishing' + tag, 1920, 1080));
 
   return {

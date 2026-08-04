@@ -232,7 +232,7 @@ void main() {
   // An expired quad collapses to a point rather than being skipped on the CPU:
   // the ring buffer stays contiguous and the draw range never fragments.
   //
-  // Only `f` may drive this branch. It derives from aLife.x, and Ribbon.push()
+  // Only 'f' may drive this branch. It derives from aLife.x, and Ribbon.push()
   // writes the same birth time to all four vertices, so the branch is uniform
   // across the primitive and the triangle really does collapse to zero area.
   //
