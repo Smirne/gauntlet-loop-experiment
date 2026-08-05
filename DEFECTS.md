@@ -37,6 +37,32 @@ highlight. Should be near-neutral grey with anisotropic streaks and roughness ~0
 dark warm brown. The grain, plank seams and ray fleck are otherwise excellent — this is a
 palette bug in the knot pass only.
 
+## D12 — There is no room. The table runs to the horizon — MAJOR — OPEN
+`render/Sky.js` [A4] + `world/Track.js` [A5]. `shots/diag-table-edge.png` looks across the
+table at a low angle and there is nothing there: no kitchen, no walls, no floor, no table
+edge, no table thickness. The wood plain runs to a flat horizon and everything past
+mid-distance washes out to the fog colour (#d9d0bd), which is close enough to the wood that
+the horizon barely resolves.
+
+`MG.Backdrop`'s uniforms clearly intend a room — `uCeiling`, `uWindowColor`, `uClutterColor`,
+`uGround` — but none of it survives the fog at any angle a camera actually uses.
+
+This matters more than its severity suggests. The whole premise is toys on a kitchen table,
+and that reading depends on seeing the table as an object in a room. Without the room it is
+just an infinite wooden plain, which is a direct hit on the miniature illusion the tilt-shift
+is working to sell.
+
+It is also where the dark navy bands in `shots/diag-live-blur.png` and the first
+`shots/ui-hud-racing.png` came from: they are the backdrop's ground/clutter colours (#38322b,
+#2b2b31) showing wherever a sightline passes below the horizon, i.e. off the edge of the
+table. I first read them as pure-black shadows, then as missing road geometry. They are
+neither — a raycast finds the road present, and they survive with `shadowMap.enabled = false`.
+
+## D13 — Fog is heavy enough to erase the backdrop — MAJOR — OPEN
+`render/Sky.js` [A4]. Follows from D12 and may share a fix. At the distances the establishing
+and low-angle cameras use, fog has already taken everything to near-flat. Whatever is built
+behind the table will not be visible until this is retuned.
+
 ## D9 — Screen-filling black wedge and radial streaks in every frame — CRITICAL — FIXED
 
 `fx/Trails.js` [A9]. Every round-2 capture carried two headline artifacts: a pure-black
@@ -149,3 +175,21 @@ likely satisfies the crossing test on every tick and increments the lap counter 
 - A metallic sphere in a scene with a dark environment map reads as near-black and looks
   "missing". Judge metals against a lit floor before calling them broken — this produced one
   false positive before the re-test with an oak floor disambiguated it.
+- **Pause the engine before any A/B capture.** The sim keeps running between two
+  `MG.capture()` calls, so the camera has moved and you are comparing two different shots. I
+  burned several isolation passes on this before pausing: `engine.pause()` and
+  `ctx.director.enabled = false`, then toggle one thing at a time.
+- **Backticks cannot appear in a `/* glsl */` comment.** They terminate the template literal
+  and the module fails to parse. This has now bitten three times (c483289, and again in the
+  commit that introduced the D9 fix). If a shader module suddenly reports a `SyntaxError` on
+  an identifier that looks like ordinary prose, this is why.
+- **The motion blur streaks in a captured frame are usually not what a player sees.**
+  `MG.capture()` calls `renderFrame()` outside the normal update cadence, so `_prevVP` can be
+  stale by an arbitrary amount and the reprojection smears. A live gameplay frame at the same
+  speed is clean (`shots/diag-live-blur.png`, camera travel 0.9–3.6 u/frame). Judge motion
+  blur from a live frame, never from a capture that has just moved the camera.
+- **`cloneNode()` does not copy a canvas bitmap**, and a `<canvas>` inside an SVG
+  `foreignObject` rasterises blank regardless. The HUD minimap looked broken in the first UI
+  captures and was drawing perfectly. `tools/capture-ui.js` swaps each canvas for an `<img>`
+  of its `toDataURL()`. Cloned nodes also restart their CSS animations from keyframe zero,
+  which is why the results table rendered with a header and no rows.
