@@ -407,6 +407,25 @@ const BAND_MAX = 0.115;
  * the faster you go) instead of flat-topping against the ceiling.
  */
 const BAND_SQUEEZE = 0.5;
+
+/**
+ * Shot-type gate for the band width. See the "band width, by shot type" block
+ * in update() for why this exists at all.
+ *
+ * Units are world units above the motion plane, i.e. above the table. The chase
+ * camera sits about 26 u up and the in-race camera well under 120; the
+ * establishing camera is around 350. Below NEAR the band stays at its miniature
+ * width, above FAR it relaxes to BAND_MAX_WIDE, which is roughly what shipped
+ * before the band was narrowed and is known to leave the circuit readable.
+ */
+const BAND_WIDE_NEAR = 120;
+const BAND_WIDE_FAR = 320;
+const BAND_MAX_WIDE = 0.30;
+
+/** Depth held fully sharp on a wide shot, against DOF_DEPTH_BAND up close. */
+const DOF_DEPTH_BAND_WIDE = 1.05;
+/** Peak blur radius on a wide shot, as a fraction of the close-up radius. */
+const DOF_RADIUS_WIDE = 0.42;
 /**
  * uv.y distance over which the screen band's coc climbs 0 -> 1. Owned here.
  *
@@ -1267,6 +1286,7 @@ const _vp = new THREE.Matrix4();
 const _proj = new THREE.Vector3();
 const _cutPos = new THREE.Vector3();
 const _cutQuat = new THREE.Quaternion();
+const _camPos = new THREE.Vector3();
 const _planeN = new THREE.Vector3();
 const _camWorld = new THREE.Vector3();
 const _viewPos = new THREE.Vector3();
@@ -1352,6 +1372,13 @@ export class PostFX {
     this._prevCamQuat = new THREE.Quaternion();
     this._camHistory = false;
     this._cutPending = false;
+    // Last half-height asked for, before the shot-type squeeze and ceiling.
+    // A Director-typical request: resolves to the narrow miniature band on a
+    // low camera and back toward the pre-narrowing width on a high one.
+    this._bandRequested = 0.20;
+    // Peak blur radius before the shot-type scale in update() reduces it.
+    // Owned by setDofScale(), which is also what resize goes through.
+    this._dofRadiusBase = null;
     this._time = 0;
     this._failures = 0;
     this._hardFail = false;
@@ -1374,6 +1401,26 @@ export class PostFX {
    */
   notifyCameraCut() {
     this._cutPending = true;
+
+    // Consume it here too, not only in update(). The capture pipeline calls
+    // renderFrame() directly without an update(), so a flag alone never got
+    // read: _prevVP stayed as it was at the last real frame — which could be
+    // arbitrarily far back — and every review capture came out with the frame
+    // smeared into radial streaks. That cost a round of critique where I first
+    // took the streaks for a scene effect and then for excessive blur strength;
+    // live gameplay frames at the same speed were clean all along.
+    const cam = this.ctx?.camera;
+    if (cam) {
+      cam.updateMatrixWorld();
+      _vp.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+      this._prevVP.copy(_vp);
+      const mb = this.passes?.motionBlur;
+      if (mb) mb.uniforms.uPrevViewProj.value.copy(_vp);
+      _camPos.setFromMatrixPosition(cam.matrixWorld);
+      this._prevCamPos.copy(_camPos);
+      cam.getWorldQuaternion(this._prevCamQuat);
+      this._camHistory = true;
+    }
     return this;
   }
 
@@ -1855,9 +1902,13 @@ export class PostFX {
     const t = this.passes.tiltShift;
     if (!t) return this;
     const u = t.uniforms;
+    // Store the request rather than resolving it here. The squeeze and the
+    // ceiling both depend on how far the camera is above the table, which
+    // changes without anyone calling this — see update().
     if (Number.isFinite(width)) {
+      this._bandRequested = width;
       const w = BAND_MIN + Math.max(0, width - BAND_MIN) * BAND_SQUEEZE;
-      u.uBandWidth.value = clampNum(w, BAND_MIN, BAND_MAX);
+      u.uBandWidth.value = clampNum(w, BAND_MIN, BAND_MAX_WIDE);
     }
     if (Number.isFinite(falloff)) u.uPower.value = clampNum(falloff, 1, 4);
     return this;
@@ -1890,7 +1941,8 @@ export class PostFX {
     if (t) {
       const tier = POST_TIERS[this.tier] || POST_TIERS.ultra;
       const dh = Math.max(1, Math.round(this.height * (this.ctx.renderer?.getPixelRatio?.() || 1)));
-      t.uniforms.uMaxRadius.value = Math.max(4, dh * tier.dofRadius) * this._dofAmount;
+      t.uniforms.uMaxRadius.value = this._dofRadiusBase =
+        Math.max(4, dh * tier.dofRadius) * this._dofAmount;
     }
     return this;
   }
@@ -1929,7 +1981,8 @@ export class PostFX {
       // dh is the drawing-buffer height in device pixels, so the blur is the
       // same fraction of the frame at every resolution: 16.7 px at 1080p ultra,
       // 11.2 px at 720p, 33.5 px at 2160p.
-      p.tiltShift.uniforms.uMaxRadius.value = Math.max(4, dh * tier.dofRadius) * this._dofAmount;
+      p.tiltShift.uniforms.uMaxRadius.value = this._dofRadiusBase =
+        Math.max(4, dh * tier.dofRadius) * this._dofAmount;
       p.tiltShift.uniforms.uAspect.value = dw / dh;
     }
     if (p.chromatic) p.chromatic.uniforms.uTexel.value.set(1 / dw, 1 / dh);
@@ -2127,7 +2180,31 @@ export class PostFX {
       const nearSpan = clampNum(zBot > 0 && zBot < fz ? fz - zBot : fz * 0.35, fz * 0.06, fz * 0.55);
       u.uFarSpan.value = farSpan;
       u.uNearSpan.value = nearSpan;
-      u.uDepthBand.value = Math.min(nearSpan, farSpan) * DOF_DEPTH_BAND;
+
+      // How much this shot should behave like a miniature. 0 = a chase frame
+      // sitting on the table, 1 = an establishing shot of the whole playfield.
+      //
+      // Everything below keys off this. Deriving the ramps from the frame's own
+      // depth spread is right, but it still assumes the answer should be "blur
+      // it" — and on a wide shot the depth spread is several hundred units, so
+      // that answer blurs the entire circuit into mush. A real tilt-shift lens
+      // holds a fixed WORLD slab sharp, which on a wide shot projects to a
+      // smaller screen fraction, so heavy blur there is physically correct and
+      // still the wrong call: this game is descended from Micro Machines and
+      // its wide shot has to be legible. A beautiful frame nobody can race on
+      // is a worse failure than an unconvincing one.
+      const camY = _camPos.setFromMatrixPosition(camera.matrixWorld).y;
+      const wide = clampNum((camY - this.motionPlaneY - BAND_WIDE_NEAR) /
+                            (BAND_WIDE_FAR - BAND_WIDE_NEAR), 0, 1);
+
+      // Hold far more depth fully sharp as the shot opens out.
+      const depthBand = DOF_DEPTH_BAND + (DOF_DEPTH_BAND_WIDE - DOF_DEPTH_BAND) * wide;
+      u.uDepthBand.value = Math.min(nearSpan, farSpan) * depthBand;
+      // ...and take the peak blur radius down with it, so whatever does fall
+      // outside the slab softens rather than smears.
+      if (Number.isFinite(this._dofRadiusBase)) {
+        u.uMaxRadius.value = this._dofRadiusBase * (1 - (1 - DOF_RADIUS_WIDE) * wide);
+      }
 
       /* --- band angle ---------------------------------------------------- */
       if (this._tiltOverride == null) {
@@ -2145,6 +2222,32 @@ export class PostFX {
         const cb = Math.cos(bias);
         const sb = Math.sin(bias);
         u.uBandDir.value.set(bx * cb + by * sb, by * cb - bx * sb);
+      }
+
+      /* --- band width, by shot type -------------------------------------- */
+      // The band is a screen-space construct with no depth term, so on its own
+      // it cannot tell a chase frame from an establishing one. Narrowing it to
+      // BAND_MAX is right for a chase and ruinous for a wide: the establishing
+      // shot came back with the whole circuit out of focus and unreadable.
+      //
+      // A real tilt-shift lens holds a fixed WORLD slab sharp, which on a wide
+      // shot projects to a smaller screen fraction — so heavy blur there is
+      // physically correct and still the wrong call. This game is descended
+      // from Micro Machines and its wide shot has to be legible; a beautiful
+      // frame nobody can race on is a worse failure than an unconvincing one.
+      //
+      // So: gate on how far the camera is above the table. Low camera reads as
+      // a miniature photographed close and keeps the narrow band; high camera
+      // reads as a view of the whole playfield and relaxes toward the width
+      // this had before, including dropping the squeeze that pulls a requested
+      // width back toward BAND_MIN. Recomputed every frame from the stored
+      // request, so it still holds while nothing is calling setFocusBand().
+      const squeeze = BAND_SQUEEZE + (1 - BAND_SQUEEZE) * wide;
+      const maxW = BAND_MAX + (BAND_MAX_WIDE - BAND_MAX) * wide;
+      const req = this._bandRequested;
+      if (Number.isFinite(req)) {
+        u.uBandWidth.value = clampNum(BAND_MIN + Math.max(0, req - BAND_MIN) * squeeze,
+                                      BAND_MIN, maxW);
       }
     }
 
