@@ -185,19 +185,26 @@ function makePaintMaterial(mats, livery, tex, opts = {}) {
     color: 0xffffff,
     preset: livery.preset || 'metallic',
     flake: livery.flake ?? 0.55,
-    flakeSize: opts.flakeSize ?? 0.042,
+    flakeSize: opts.flakeSize ?? 0.014,
   });
 
   const mat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
-    metalness: base.metalness ?? 0.85,
-    roughness: base.roughness ?? 0.31,
+    metalness: base.metalness ?? 0.34,
+    roughness: base.roughness ?? 0.30,
     clearcoat: base.clearcoat ?? 1,
     clearcoatRoughness: base.clearcoatRoughness ?? 0.045,
     envMapIntensity: base.envMapIntensity ?? 1.35,
     ior: base.ior ?? 1.48,
     map: tex?.map || null,
     normalMap: tex?.normalMap || null,
+    // The livery canvas punches its window openings out of the alpha channel,
+    // so the shell has real holes and you look through the glazing into the
+    // cabin instead of at a painted-on rectangle. Alpha *test* rather than
+    // blending: it sorts correctly against everything, and three copies both
+    // the map and the threshold onto the depth material, so the openings show
+    // up in the shadow the car casts too.
+    alphaTest: tex?.hasAperture ? 0.45 : 0,
   });
   mat.name = `carPaint:${livery.name}`;
   if (mat.normalScale) mat.normalScale.set(0.62, 0.62);
@@ -398,12 +405,28 @@ export class VehicleVisual {
     M.chrome = mats.chrome({});
     M.glass = mats.glass({
       color: lv.glassTint ?? 0x1e2831,
-      opacity: 0.46,
-      envMapIntensity: 2.0,
+      // Face-on transmission drops so the cabin behind the pane is legible;
+      // the grazing end is where the screen picks up the window. Both numbers
+      // are deliberately short of a real Fresnel's 1.0: the glazing strip is a
+      // band of the body surface, so it lies over painted roof as well as over
+      // the openings, and a physically honest grazing alpha turned the whole
+      // shoulder into frosted plastic. At 0.62 it reads as lacquer over the
+      // paint and as glass over a hole, which is the read that matters.
+      opacity: 0.30,
+      edgeOpacity: 0.62,
+      envMapIntensity: 1.5,
     });
     M.trim = mats.plasticToy({ color: 0x1a1c20, gloss: 0.35 });
     M.grille = mats.plasticToy({ color: 0x0d0f12, gloss: 0.18 });
-    M.interior = mats.plasticToy({ color: 0x16181c, gloss: 0.14 });
+    // The cabin is now something you can see into, so it has to be a material
+    // rather than a hole: near-black returns nothing through the glass and the
+    // window reads as a painted rectangle again. Moulded dark grey with a
+    // little sheen catches the sky and gives the aperture depth.
+    M.interior = mats.plasticToy({ color: 0x33353b, gloss: 0.22 });
+    // Looking in through the near window you can see the far door card, whose
+    // outward face points away from you; without this the cabin has a hole in
+    // it that you can see the track through.
+    if (M.interior && M.interior.side !== THREE.DoubleSide) M.interior.side = THREE.DoubleSide;
     try {
       M.base = mats.surface('galvanisedSteel', { repeat: 3, normalScale: 0.7 });
     } catch (_) {
@@ -433,15 +456,26 @@ export class VehicleVisual {
     const wf = this.chassis.wheels.front;
     const wr = this.chassis.wheels.rear;
     const tyreTex = wheelTexture(wf, { size: this.ctx?.settings?.quality === 'low' ? 512 : 1024 });
-    // render/Materials rubber() reads as a void at this scale (DEFECTS D3), so
-    // the tyre gets its own moulded texture and a real sheen instead.
-    M.tyre = new THREE.MeshStandardMaterial({
-      color: 0x303236,
+    // DEFECTS D3. This used to multiply a 0x303236 tint over an albedo map that
+    // already bakes ~0.019 linear, for a product of 0.0006 — six ten-thousandths
+    // of the incoming light, which is not dark rubber, it is a hole. Measured
+    // 36.6 mean luma at 2.3 standard deviation across a top-lit curved surface:
+    // no shading variation whatsoever, because there was no diffuse term left
+    // to shade. The tint is now neutral and the moulded texture carries the
+    // 0.05-0.08 albedo real carbon-black rubber has, and the broad Charlie
+    // sheen is what makes the sidewall bulge and the tread shoulder separate
+    // from the underbody — a wide grazing lobe traces curvature on a dark
+    // object exactly where a narrow GGX one returns nothing.
+    M.tyre = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
       map: tyreTex.map || null,
       normalMap: tyreTex.normalMap || null,
       metalness: 0,
-      roughness: 0.80,
-      envMapIntensity: 0.62,
+      roughness: 0.74,
+      envMapIntensity: 0.95,
+      sheen: 0.6,
+      sheenRoughness: 0.8,
+      sheenColor: new THREE.Color(0x8f8880),
     });
     M.tyre.name = 'tyre';
     if (M.tyre.normalScale) M.tyre.normalScale.set(1.1, 1.1);

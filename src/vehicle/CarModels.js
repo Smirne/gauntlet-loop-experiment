@@ -74,10 +74,18 @@ export function mergeGeoms(items) {
     if (!g.attributes.uv) {
       g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
     }
-    list.push({ g, m: it.isBufferGeometry ? null : (it.matrix || null) });
+    list.push({
+      g,
+      m: it.isBufferGeometry ? null : (it.matrix || null),
+      // Collapse this part's UVs onto one texel of the livery atlas. See
+      // makeCollector: a swept arch lip or a lofted boot lip carries its own
+      // 0..1 unwrap, so mapped into the atlas it wears a squashed copy of the
+      // entire livery — number roundel, sponsor text, window graphic and all.
+      uvc: it.isBufferGeometry ? null : (it.uvConst || null),
+    });
   }
   if (!list.length) return new THREE.BufferGeometry();
-  if (list.length === 1 && !list[0].m) return list[0].g;
+  if (list.length === 1 && !list[0].m && !list[0].uvc) return list[0].g;
 
   let vTotal = 0;
   let iTotal = 0;
@@ -94,7 +102,7 @@ export function mergeGeoms(items) {
   let vo = 0;
   let io = 0;
   const nm = new THREE.Matrix3();
-  for (const { g, m } of list) {
+  for (const { g, m, uvc } of list) {
     const p = g.attributes.position;
     const n = g.attributes.normal;
     const t = g.attributes.uv;
@@ -111,8 +119,8 @@ export function mergeGeoms(items) {
       nrm[(vo + i) * 3] = _v3b.x;
       nrm[(vo + i) * 3 + 1] = _v3b.y;
       nrm[(vo + i) * 3 + 2] = _v3b.z;
-      uv[(vo + i) * 2] = t.getX(i);
-      uv[(vo + i) * 2 + 1] = t.getY(i);
+      uv[(vo + i) * 2] = uvc ? uvc[0] : t.getX(i);
+      uv[(vo + i) * 2 + 1] = uvc ? uvc[1] : t.getY(i);
     }
     if (g.index) {
       const gi = g.index;
@@ -582,9 +590,20 @@ export function bevelBox(w, h, d, r = 0.16, cornerSteps = 3) {
   return loftShell(slices, { capFront: true, capBack: true });
 }
 
-/** Offset a ring inward along its own outward normals. */
+/**
+ * Offset a ring along its own outward normals: positive inward, negative proud.
+ *
+ * The early-out used to be `d <= 1e-6`, which silently swallowed every negative
+ * offset — and `buildGlazing` is built entirely on negative offsets, because
+ * that is how it lifts the pane off the paint. The result was a glazing shell
+ * sharing its vertices exactly with the body shell underneath it. With
+ * `depthWrite: false` and the default LESS depth test, every one of those
+ * fragments failed on equal depth and the glass drew literally nothing: eight
+ * cars, four frames, not one transparent surface anywhere in the set. The
+ * material, the tint and the interior tub were all correct and all invisible.
+ */
 function insetRing(ring, d) {
-  if (d <= 1e-6) return ring;
+  if (!(Math.abs(d) > 1e-6)) return ring;
   const pts = new Float64Array(ring.pts.length);
   for (let i = 0; i < ring.count; i++) {
     pts[i * 2] = ring.pts[i * 2] - ring.nrm[i * 2] * d;
@@ -891,6 +910,23 @@ function canvas2d(w, h) {
   return { canvas: c, g, w, h };
 }
 
+/** Rounded-rect path. Written out rather than using ctx.roundRect so the
+ *  livery bake does not depend on a comparatively recent canvas API. */
+function roundRectPath(g, x, y, w, h, r) {
+  const rr = Math.max(0, Math.min(r, w * 0.5, h * 0.5));
+  g.beginPath();
+  g.moveTo(x + rr, y);
+  g.lineTo(x + w - rr, y);
+  g.quadraticCurveTo(x + w, y, x + w, y + rr);
+  g.lineTo(x + w, y + h - rr);
+  g.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  g.lineTo(x + rr, y + h);
+  g.quadraticCurveTo(x, y + h, x, y + h - rr);
+  g.lineTo(x, y + rr);
+  g.quadraticCurveTo(x, y, x + rr, y);
+  g.closePath();
+}
+
 function finishTexture(canvas, srgb, aniso = 8) {
   const t = new THREE.CanvasTexture(canvas);
   t.wrapS = THREE.RepeatWrapping;
@@ -988,7 +1024,13 @@ export function tyreTexture(style = 'road', treadV = [0.35, 0.65], size = 1024) 
   const treadTop = Math.min(y0, y1);
   const treadH = Math.abs(y1 - y0);
 
-  g.fillStyle = '#26272a';
+  // DEFECTS D3. This palette used to run #202124-#2c2d32, about 0.019 linear,
+  // and then the material multiplied a 0x303236 tint over it for a final
+  // albedo of 0.0006 — a hole, not a substance. Carbon-black rubber measures
+  // 0.05-0.08 linear and the anti-ozonant bloom on a moulded tyre lifts the
+  // sidewall further, which is #48-#52 in sRGB, and slightly warm rather than
+  // the blue these were. Everything below is keyed off that.
+  g.fillStyle = '#4a4845';
   g.fillRect(0, 0, W, H);
   gh.fillStyle = '#808080';
   gh.fillRect(0, 0, hc.w, hc.h);
@@ -998,7 +1040,7 @@ export function tyreTexture(style = 'road', treadV = [0.35, 0.65], size = 1024) 
     for (let y = top; y < bottom; y += 3) {
       const t = (y - top) / Math.max(1, bottom - top);
       const shade = 0.86 + Math.sin(t * 22) * 0.05 + (rng.next() - 0.5) * 0.03;
-      g.fillStyle = `rgb(${(38 * shade) | 0},${(39 * shade) | 0},${(43 * shade) | 0})`;
+      g.fillStyle = `rgb(${(84 * shade) | 0},${(81 * shade) | 0},${(77 * shade) | 0})`;
       g.fillRect(0, y, W, 3);
       gh.fillStyle = `rgba(${(128 + Math.sin(t * 22) * 26) | 0},0,0,1)`;
       gh.fillRect(0, (y * 0.5) | 0, hc.w, 2);
@@ -1020,7 +1062,7 @@ export function tyreTexture(style = 'road', treadV = [0.35, 0.65], size = 1024) 
       if (k === 1) g.scale(1, -1);
       g.font = `700 ${fs}px ${HEADLINE_FONT}`;
       g.textBaseline = 'middle';
-      g.fillStyle = 'rgba(196,198,204,0.34)';
+      g.fillStyle = 'rgba(214,210,202,0.30)';
       g.fillText(txt, 0, 0);
       g.restore();
       gh.save();
@@ -1036,13 +1078,15 @@ export function tyreTexture(style = 'road', treadV = [0.35, 0.65], size = 1024) 
 
   // Tread. Each style is a real pattern, not noise: a groove layout plus block
   // edges, which is what gives the normal map something to catch light on.
-  g.fillStyle = '#202124';
+  // The tread band is the working surface: scrubbed clean of bloom, so it is
+  // the darkest part of the tyre rather than the same value as the sidewall.
+  g.fillStyle = '#3a3937';
   g.fillRect(0, treadTop, W, treadH);
   gh.fillStyle = '#8c8c8c';
   gh.fillRect(0, treadTop * 0.5, hc.w, treadH * 0.5);
 
   const drawBlock = (x, y, bw, bh, shade) => {
-    g.fillStyle = `rgb(${(44 * shade) | 0},${(45 * shade) | 0},${(50 * shade) | 0})`;
+    g.fillStyle = `rgb(${(78 * shade) | 0},${(76 * shade) | 0},${(72 * shade) | 0})`;
     g.fillRect(x, y, bw, bh);
     g.fillStyle = 'rgba(255,255,255,0.05)';
     g.fillRect(x, y, bw, 1.5);
@@ -1128,6 +1172,16 @@ function shade(c, amt) {
   return '#' + col.getHexString();
 }
 
+// The nose panel is a solid full-height column of body colour at the extreme
+// +U end of the atlas, so it is the one place guaranteed to be opaque and
+// on-palette no matter which livery is playing. Every painted part that is not
+// the lofted shell collapses onto a single texel of it (see makeCollector).
+// V is taken mid-flank so the wear shader keys off a sensible height rather
+// than the sill, where it would scuff and dirty the trim on its own schedule.
+function flatPaintUV(bands) {
+  return [0.989, (bands[0] + bands[2]) * 0.5];
+}
+
 /**
  * Paint one car's albedo and normal map.
  *
@@ -1135,6 +1189,11 @@ function shade(c, amt) {
  * the section. The band boundaries come from the geometry, so the flank
  * artwork lands on the flank on every one of the eight bodies without a single
  * per-model magic number.
+ *
+ * The alpha channel is load-bearing: the window openings are punched out of it
+ * so the shell has real holes and the glazing has something to be transparent
+ * *over*. That is the whole difference between a car with glass and a car with
+ * a dark rectangle painted where glass should be.
  */
 export function makeLiveryTextures(chassis, livery, opts = {}) {
   const W = opts.size || 1024;
@@ -1205,6 +1264,24 @@ export function makeLiveryTextures(chassis, livery, opts = {}) {
   const cab = chassis.cabin;
   const noseU = ux(chassis.uv.zMax);
   const tailU = ux(chassis.uv.zMin);
+
+  /* --- window openings ---------------------------------------------------
+   * Collected as they are drawn and punched out of the alpha channel in one
+   * pass at the very end, after the noise wash — anything drawn over a hole
+   * would fill it back in. `chassis.uv.glass` is the pane's real extent, taken
+   * from the glazing geometry rather than from the cabin table, so an opening
+   * can never end up somewhere the pane does not cover. No pane, no holes. */
+  const gz = chassis.uv.glass;
+  const punches = [];
+  const seal = Math.max(2.5, flankH * 0.045);
+  /** Clamp a z range into the pane and convert to canvas X. */
+  const glassSpanU = (z0, z1) => {
+    if (!gz) return null;
+    const a = Math.max(z0, gz.z0);
+    const b2 = Math.min(z1, gz.z1);
+    if (b2 - a < 0.12) return null;
+    return [ux(a), ux(b2)];
+  };
 
   /* --- flank artwork ----------------------------------------------------- */
   const paintFlank = (side) => {
@@ -1293,23 +1370,44 @@ export function makeLiveryTextures(chassis, livery, opts = {}) {
       }
     }
 
-    // Side glazing: the body behind the clear canopy has to read as an
-    // interior, so it is painted out. Cheap, and it is what makes the tinted
-    // glass look like glass instead of like coloured plastic on paint.
+    // Side glazing. The door glass is cut clean out of the body — the alpha
+    // punch below — so what is painted here is only what surrounds it: the
+    // black rubber weatherstrip and the pillar shadow. A die-cast's window is
+    // a hole with a tinted insert in it, and until now this was a rectangle of
+    // #0b0d10 with a gradient over it, which is exactly what "painted-on
+    // glass" means.
     if (cab && cab.glassZ) {
-      const gy0 = hF * (1 - (cab.beltFrac ?? 0.62));
+      let gy0 = hF * (1 - (cab.beltFrac ?? 0.62));
+      const x0 = ux(cab.glassZ[0]);
+      const x1 = ux(cab.glassZ[1]);
       g.fillStyle = '#0b0d10';
-      g.fillRect(ux(cab.glassZ[0]), 0, ux(cab.glassZ[1]) - ux(cab.glassZ[0]), gy0);
+      g.fillRect(x0, 0, x1 - x0, gy0);
       const grd = g.createLinearGradient(0, 0, 0, gy0);
       grd.addColorStop(0, 'rgba(96,116,140,0.42)');
       grd.addColorStop(0.55, 'rgba(20,26,34,0.10)');
       grd.addColorStop(1, 'rgba(8,10,14,0.55)');
       g.fillStyle = grd;
-      g.fillRect(ux(cab.glassZ[0]), 0, ux(cab.glassZ[1]) - ux(cab.glassZ[0]), gy0);
+      g.fillRect(x0, 0, x1 - x0, gy0);
       // Window surround, in trim black — every die-cast has one.
       g.strokeStyle = 'rgba(14,15,18,0.9)';
       g.lineWidth = Math.max(2, hF * 0.035);
-      g.strokeRect(ux(cab.glassZ[0]), -2, ux(cab.glassZ[1]) - ux(cab.glassZ[0]), gy0 + 2);
+      g.strokeRect(x0, -2, x1 - x0, gy0 + 2);
+
+      const span = glassSpanU(cab.glassZ[0], cab.glassZ[1]);
+      if (span) {
+        // The daylight opening also has to stay inside the pane in V. The belt
+        // line is authored as a fraction of the flank, the pane's lower edge
+        // is a ring index; whichever sits higher wins, plus a seal's width.
+        const vFloor = gz.vLo + (b[2] - b[0]) * 0.02;
+        gy0 = Math.min(gy0, Math.max(0, (b[2] - vFloor) * H));
+        // Top edge stops a seal short of the roof corner, which is the roof
+        // rail; bottom edge stops a seal short of the belt line.
+        const top = seal * 0.6;
+        const h = gy0 - seal - top;
+        if (h > seal) {
+          punches.push({ band: side, x: span[0] + seal, y: top, w: span[1] - span[0] - seal * 2, h, r: seal * 1.6 });
+        }
+      }
     }
 
     // Number roundel.
@@ -1387,17 +1485,23 @@ export function makeLiveryTextures(chassis, livery, opts = {}) {
     g.fillRect(0, hR * 0.5 + cw + cw * 0.02, W, cw * 0.24);
   }
   if (cab && cab.glassZ) {
-    // Windscreen and backlight, painted out for the same reason as the sides.
+    // Windscreen and backlight. Same story as the flanks: what stays painted
+    // is the frame, the aperture itself is cut out below.
     const wz = cab.screenZ || [cab.glassZ[1] - 0.3, cab.glassZ[1] + 1.1];
     const bz = cab.backlightZ || [cab.glassZ[0] - 1.0, cab.glassZ[0] + 0.3];
     g.fillStyle = '#0a0c0f';
     g.fillRect(ux(wz[0]), hR * 0.10, ux(wz[1]) - ux(wz[0]), hR * 0.80);
-    g.fillRect(ux(bz[0]), hR * 0.12, ux(bz[1]) - ux(bz[0]), hR * 0.76);
+    if (cab.backlightZ !== null) g.fillRect(ux(bz[0]), hR * 0.12, ux(bz[1]) - ux(bz[0]), hR * 0.76);
     const gr = g.createLinearGradient(ux(wz[0]), 0, ux(wz[1]), 0);
     gr.addColorStop(0, 'rgba(150,175,205,0.10)');
     gr.addColorStop(1, 'rgba(150,175,205,0.46)');
     g.fillStyle = gr;
     g.fillRect(ux(wz[0]), hR * 0.10, ux(wz[1]) - ux(wz[0]), hR * 0.80);
+
+    const ws = glassSpanU(wz[0], wz[1]);
+    if (ws) punches.push({ band: 'roof', x: ws[0] + seal, y: hR * 0.10 + seal, w: ws[1] - ws[0] - seal * 2, h: hR * 0.80 - seal * 2, r: seal * 1.4 });
+    const bs = cab.backlightZ === null ? null : glassSpanU(bz[0], bz[1]);
+    if (bs) punches.push({ band: 'roof', x: bs[0] + seal, y: hR * 0.12 + seal, w: bs[1] - bs[0] - seal * 2, h: hR * 0.76 - seal * 2, r: seal * 1.4 });
   }
   // Bonnet and boot shuts, seen from above.
   for (const sz of (chassis.hoodZ || [])) {
@@ -1426,9 +1530,30 @@ export function makeLiveryTextures(chassis, livery, opts = {}) {
 
   noiseWash(g, W, H, rng, 0.035, 14);
 
+  // The one texel every non-shell painted part samples. Drawn last so nothing
+  // can overwrite it, inside the nose column so it is invisible on the car.
+  const flat = flatPaintUV(b);
+  g.fillStyle = livery.nose ? hexStr(livery.nose) : shade(livery.base, -0.10);
+  g.fillRect(flat[0] * W - 3, (1 - flat[1]) * H - 3, 6, 6);
+
+  /* --- cut the daylight openings ----------------------------------------
+   * destination-out, so the alpha goes to zero and the paint material's alpha
+   * test drops those fragments. Last pass: a hole is only a hole until
+   * something paints over it. */
+  for (const p of punches) {
+    if (!(p.w > 1 && p.h > 1)) continue;
+    if (p.band === 'roof') enterRoof(); else enterFlank(p.band);
+    g.globalCompositeOperation = 'destination-out';
+    g.fillStyle = '#000';
+    roundRectPath(g, p.x, p.y, p.w, p.h, Math.min(p.r, p.w * 0.45, p.h * 0.45));
+    g.fill();
+    g.globalCompositeOperation = 'source-over';
+    leave();
+  }
+
   const map = finishTexture(c.canvas, true, opts.anisotropy ?? 8);
   const normalMap = finishTexture(normalFromHeight(hc.canvas, 1.35, false) || hc.canvas, false, opts.anisotropy ?? 8);
-  return { map, normalMap };
+  return { map, normalMap, hasAperture: punches.length > 0 };
 }
 
 /* ==========================================================================
@@ -1573,11 +1698,24 @@ function buildBodyShell(cfg) {
 
   // The V parameterisation is taken once from the widest section, so a stripe
   // stays at a constant height instead of wandering with the local girth.
+  //
+  // "Widest" has to mean widest *full-height* section. The widest raw `wide`
+  // key on most of these bodies sits directly over an axle, and directly over
+  // an axle the arch has lifted the floor line to within 0.1 u of the roof, so
+  // the reference ring is a 4.3 x 0.1 lens. Measured on the muscle car, that
+  // gave a V table where the entire right flank occupied 1.6% of the ring —
+  // eight texels of a 512-tall atlas for the stripes, the number roundel, the
+  // sponsor text and the whole window surround, stretched over a third of the
+  // car. Requiring 70% of the tallest span picks a real cross-section and the
+  // flank comes back to ~23%, which is roughly its share of the perimeter.
+  // Maximising the flank's own share of the ring perimeter is exactly the
+  // quantity the choice is for, and it excludes the collapsed sections by
+  // construction — a lens has almost no flank.
   let ref = slices[0];
-  let bestW = -1;
+  let bestFlank = -1;
   for (const s of slices) {
-    const w = section(s.z).wide;
-    if (w > bestW) { bestW = w; ref = s; }
+    const flank = arcTable(s.ring)[RING_PER * 2];
+    if (flank > bestFlank) { bestFlank = flank; ref = s; }
   }
   const vTable = arcTable(ref.ring);
   const bands = [];
@@ -1591,8 +1729,17 @@ function buildBodyShell(cfg) {
   return { slices: all, body: slices, vTable, bands, section, ringAt, zMin, zMax, geometry, floorAt };
 }
 
-/** Glazing: a band of the body surface pushed proud, feathered to nothing at
- *  its ends so it melts into the paint instead of showing a lip. */
+/**
+ * Glazing: a band of the body surface pushed proud, feathered to nothing at
+ * its ends so it melts into the paint instead of showing a lip.
+ *
+ * `cfg.low` is the ring index the band starts at, measured up from the
+ * maximum-beam corner. Every model's was authored at 4-5, which puts the
+ * pane's lower edge on the car's shoulder — invisible while the pane was
+ * failing the depth test, and a hard glossy seam halfway down the flank the
+ * moment it started drawing. 6-7 lands it on the belt line, where the livery
+ * paints its window surround and the edge disappears into the trim.
+ */
 function buildGlazing(shell, cfg) {
   const z0 = cfg.z[0];
   const z1 = cfg.z[1];
@@ -1609,12 +1756,22 @@ function buildGlazing(shell, cfg) {
 
   const slices = zs.map((z) => {
     const ring = shell.ringAt(z);
-    const t = saturate(Math.min(z - z0, z1 - z) / Math.max(0.05, (z1 - z0) * 0.14));
+    // The feather used to run over 14% of the cabin at each end. Now that the
+    // lift is actually applied (see insetRing), that is a third of the pane
+    // sitting too close to the paint to be trusted with an aperture behind it,
+    // and the windscreen on most of these bodies runs right to the front edge
+    // of the band. 4.5% still hides the lip and leaves the openings room.
+    const t = saturate(Math.min(z - z0, z1 - z) / Math.max(0.05, (z1 - z0) * GLASS_FEATHER));
     const d = -lift * smoothstep(0, 1, t);
     return { z, ring: insetRing(ring, d) };
   });
   return loftStrip(slices, j0, j1, { vTable: shell.vTable, zMin: shell.zMin, zMax: shell.zMax });
 }
+
+// Fraction of the cabin length over which the glazing ramps up to full lift,
+// and the extra margin an alpha aperture keeps clear of that ramp.
+const GLASS_FEATHER = 0.045;
+const GLASS_APERTURE_PAD = 0.075;
 
 /** Base plate: the die-cast tell. A flat metal pan set a hair inside the sill
  *  so the gap between it and the body reads as a real parting line. */
@@ -1792,14 +1949,24 @@ function makeDriver(o = {}) {
   };
 }
 
-/** Interior tub: a dark shell inside the glass so the cabin has depth. */
+/**
+ * Interior tub: the shell inside the glass that gives the cabin depth.
+ *
+ * With the window openings cut out of the paint this is no longer decoration —
+ * it is the surface you look at through the glazing, so it needs enough recess
+ * to read as a cabin rather than as a dent. The authored insets (0.18-0.30)
+ * are a couple of millimetres on a 9 cm car and vanish under the pane; 1.75x
+ * of that puts a visible step behind the aperture without letting a narrow
+ * greenhouse turn itself inside out.
+ */
 function makeInterior(shell, z0, z1, o = {}) {
   const parts = [];
   const n = 10;
   const slices = [];
+  const inset = Math.min((o.inset ?? 0.30) * 1.75, 0.62);
   for (let i = 0; i <= n; i++) {
     const z = lerp(z0, z1, i / n);
-    slices.push({ z, ring: insetRing(shell.ringAt(z), o.inset ?? 0.30) });
+    slices.push({ z, ring: insetRing(shell.ringAt(z), inset) });
   }
   parts.push({ geometry: loftStrip(slices, RING_PER + CORNER_STEPS, 2 * RING_TOP - RING_PER - CORNER_STEPS, { vTable: shell.vTable, zMin: shell.zMin, zMax: shell.zMax }) });
   if (o.seats !== false) {
@@ -1809,6 +1976,15 @@ function makeInterior(shell, z0, z1, o = {}) {
       parts.push({ geometry: seat, matrix: xform(s, (o.seatY ?? 0.9) + 0.34, (o.seatZ ?? 0) - 0.42) });
       parts.push({ geometry: cushion, matrix: xform(s, o.seatY ?? 0.9, o.seatZ ?? 0) });
     }
+    // Something to see through the windscreen other than an empty tub. A
+    // die-cast has exactly this much interior: a scuttle and a wheel boss.
+    const zd = lerp(z0, z1, 0.84);
+    const sw = shell.section(zd).wide;
+    parts.push({ geometry: bevelBox(sw * 1.44, 0.30, 0.46, 0.10, 2), matrix: xform(0, (o.seatY ?? 0.9) + 0.46, zd) });
+    parts.push({
+      geometry: bevelBox(0.62, 0.10, 0.60, 0.05, 2),
+      matrix: xform((o.seatX ?? [-0.72, 0.72])[1] * 0.62, (o.seatY ?? 0.9) + 0.56, lerp(z0, z1, 0.66), -0.5),
+    });
   }
   return mergeGeoms(parts);
 }
@@ -1840,14 +2016,34 @@ function mirrorGeom(g) {
   return out;
 }
 
-function makeCollector() {
+/**
+ * @param {number[]} [flatUV] the atlas texel every painted part that is *not*
+ *        the lofted shell should collapse onto. Only the shell has UVs in the
+ *        livery's coordinate system; every other painted part — arch lips,
+ *        bonnet bulges, boot lips — is a sweep or a bevel box carrying its own
+ *        0..1 unwrap, so it maps the whole canvas onto itself and comes out
+ *        wearing a smeared copy of the livery. One solid texel is both the
+ *        correct read (they are body-coloured trim) and what makes it safe for
+ *        the livery to punch its window openings out of the alpha channel: the
+ *        openings can only ever cut the shell.
+ */
+function makeCollector(flatUV) {
   const byRole = new Map();
+  let shellGeom = null;
+  const uvcFor = (role, geometry) => (
+    flatUV && role === 'paint' && geometry !== shellGeom ? flatUV : null
+  );
   return {
+    /** The lofted body: the one painted part whose UVs address the atlas. */
+    addShell(geometry) {
+      shellGeom = geometry;
+      this.add('paint', geometry);
+    },
     add(role, geometry, matrix) {
       if (!geometry) return;
       let a = byRole.get(role);
       if (!a) { a = []; byRole.set(role, a); }
-      a.push(matrix ? { geometry, matrix } : { geometry, matrix: null });
+      a.push({ geometry, matrix: matrix || null, uvConst: uvcFor(role, geometry) });
     },
     /** Add a part and its mirror image on the other side of the car. */
     pair(role, geometry, matrix) {
@@ -1973,6 +2169,17 @@ function dressChassis(env, d) {
   if (d.glass) {
     const g = buildGlazing(shell, d.glass);
     if (g) out.add('glass', g);
+    // Hand the livery painter the exact extent of the pane. Every window
+    // opening it punches has to sit strictly inside this, in V *and* in Z, or
+    // the car ends up with a hole in it that nothing covers.
+    const j0 = RING_PER + (d.glass.low ?? CORNER_STEPS);
+    const pad = Math.max(0.10, (d.glass.z[1] - d.glass.z[0]) * GLASS_APERTURE_PAD);
+    env.glass = {
+      vLo: shell.vTable[j0],
+      vHi: shell.vTable[2 * RING_TOP - j0],
+      z0: d.glass.z[0] + pad,
+      z1: d.glass.z[1] - pad,
+    };
   }
 
   if (d.interior) {
@@ -2058,7 +2265,7 @@ export const CAR_MODELS = {
           { path: [[1.02, 0.52, -3.4], [1.10, 0.50, -4.2], [1.14, 0.54, -4.72]], r: 0.155, flare: 0.30 },
           { path: [[1.42, 0.52, -3.4], [1.48, 0.50, -4.2], [1.50, 0.54, -4.72]], r: 0.155, flare: 0.30 },
         ],
-        glass: { z: [-2.55, 0.98], lift: 0.06, low: 4, steps: 14 },
+        glass: { z: [-2.55, 0.98], lift: 0.06, low: 6, steps: 14 },
         interior: { z0: -2.5, z1: 0.9, inset: 0.30, seatY: 1.52, seatZ: -1.2, seatX: [-0.68, 0.68] },
         plate: { z0: -4.30, z1: 4.30, inset: 0.13 },
       });
@@ -2066,8 +2273,14 @@ export const CAR_MODELS = {
       out.add('accent', bevelBox(1.42, 0.30, 1.55, 0.13, 3), xform(0, 2.30, 2.30, -3 * DEG, 0, 0));
       out.add('grille', bevelBox(1.05, 0.12, 0.55, 0.05, 2), xform(0, 2.44, 2.92));
       out.add('paint', bevelBox(2.55, 0.16, 2.90, 0.28, 3), xform(0, 2.20, 1.95));
-      // Rocker side pipes.
-      out.pair('chrome', makeExhaust([[1.80, 0.66, 1.70], [1.86, 0.62, -0.6], [1.84, 0.66, -2.55]], 0.19, { flare: 0.10 }));
+      // Rocker side pipes. They have to stop at the arch openings: the wheel
+      // arches are cut into the loft as a rising floor line, so between
+      // z = 1.37 and 3.95 (and -1.96 to -4.54) there is no body at rocker
+      // height at all, and the previous path ran from 1.70 to -2.55 — both
+      // ends inside an arch, both ends inside the tyre. What you saw was a
+      // chrome capsule apparently floating beside the sills with its tips
+      // buried in the wheels.
+      out.pair('chrome', makeExhaust([[1.78, 0.74, 1.30], [1.83, 0.70, -0.30], [1.80, 0.74, -1.92]], 0.19, { flare: 0.10 }));
       // Boot lip.
       out.add('paint', bevelBox(3.20, 0.16, 0.55, 0.10, 2), xform(0, 2.50, -4.02, 4 * DEG, 0, 0));
       return lights;
@@ -2126,7 +2339,7 @@ export const CAR_MODELS = {
         reverselamps: [{ x: 0.34, y: 1.58, z: -4.50, w: 0.34, h: 0.20 }],
         mirrors: [{ x: 1.98, y: 2.16, z: 0.55, role: 'trim' }],
         exhausts: [{ path: [[0.55, 0.62, -3.9], [0.58, 0.60, -4.45], [0.60, 0.62, -4.80]], r: 0.19, flare: 0.35 }],
-        glass: { z: [-1.62, 1.06], lift: 0.05, low: 5, steps: 14 },
+        glass: { z: [-1.62, 1.06], lift: 0.05, low: 7, steps: 14 },
         interior: { z0: -1.55, z1: 1.0, inset: 0.26, seatY: 1.30, seatZ: -0.55, seatX: [-0.62, 0.62] },
         plate: { z0: -4.20, z1: 4.15, inset: 0.14 },
       });
@@ -2202,7 +2415,7 @@ export const CAR_MODELS = {
         grille: { y: 1.64, z: 4.20, w: 2.20, h: 0.52, bars: 3, pitch: -6 * DEG },
         mirrors: [{ x: 2.06, y: 2.62, z: 0.95, role: 'accent' }],
         exhausts: [{ path: [[1.05, 0.86, -3.5], [1.14, 0.84, -4.2], [1.18, 0.90, -4.55]], r: 0.18, flare: 0.40 }],
-        glass: { z: [-2.95, 1.24], lift: 0.055, low: 4, steps: 16 },
+        glass: { z: [-2.95, 1.24], lift: 0.055, low: 6, steps: 16 },
         interior: { z0: -2.85, z1: 1.15, inset: 0.28, seatY: 1.80, seatZ: -0.55, seatX: [-0.70, 0.70] },
         plate: { z0: -3.95, z1: 3.90, inset: 0.14 },
       });
@@ -2287,7 +2500,7 @@ export const CAR_MODELS = {
         reverselamps: [{ x: 0.70, y: 1.62, z: -4.84, w: 0.44, h: 0.22 }],
         grille: { y: 2.18, z: 4.66, w: 2.20, h: 0.92, bars: 7 },
         mirrors: [{ x: 2.16, y: 2.94, z: 0.72 }],
-        glass: { z: [-1.05, 0.80], lift: 0.06, low: 4, steps: 10 },
+        glass: { z: [-1.05, 0.80], lift: 0.06, low: 6, steps: 10 },
         interior: { z0: -1.0, z1: 0.72, inset: 0.30, seatY: 2.02, seatZ: -0.35, seatX: [-0.74, 0.74] },
         plate: { z0: -4.40, z1: 4.40, inset: 0.16 },
       });
@@ -2304,14 +2517,19 @@ export const CAR_MODELS = {
       out.add('chrome', revolveX([[0.001, -0.10], [0.44, -0.10], [0.50, 0.02], [0.44, 0.12], [0.001, 0.12]], 16),
         xform(0, 4.30, 1.55, 0, 0, Math.PI / 2));
       out.add('trim', bevelBox(0.22, 1.00, 0.24, 0.05, 2), xform(0.92, 3.70, 2.45));
+      // Headers down the outside of the bonnet, then a collector along the
+      // rocker. Both are routed around the wheels rather than through them:
+      // the front tyre occupies z 1.4-3.97 out to x 2.36, and the rear starts
+      // at z -2.01, so the headers stay inboard of x 1.42 until they are clear
+      // in z and the collector stops short of the rear arch opening.
       for (let i = 0; i < 4; i++) {
         out.pair('chrome', makeExhaust([
           [1.20, 3.10 - i * 0.05, 2.30 - i * 0.42],
-          [1.85, 2.30, 2.10 - i * 0.42],
-          [2.02, 1.66, 1.30 - i * 0.30],
+          [1.28, 2.46, 1.95 - i * 0.30],
+          [2.00, 1.74, 1.10 - i * 0.24],
         ], 0.125, { flare: 0 }));
       }
-      out.pair('chrome', makeExhaust([[2.04, 1.55, 0.60], [2.06, 1.42, -1.60], [2.04, 1.40, -2.60]], 0.20, { flare: 0.30 }));
+      out.pair('chrome', makeExhaust([[2.04, 1.62, 0.90], [2.06, 1.46, -0.70], [2.04, 1.44, -1.96]], 0.20, { flare: 0.30 }));
       return lights;
     },
   },
@@ -2368,7 +2586,7 @@ export const CAR_MODELS = {
         reverselamps: [{ x: 0.30, y: 1.36, z: -4.80, w: 0.30, h: 0.18 }],
         mirrors: [{ x: 2.02, y: 2.14, z: 0.60, role: 'trim' }],
         exhausts: [{ path: [[0.85, 0.86, -4.10], [0.88, 0.88, -4.70], [0.90, 0.90, -5.00]], r: 0.17, flare: 0.30 }],
-        glass: { z: [-1.88, 1.16], lift: 0.05, low: 5, steps: 16 },
+        glass: { z: [-1.88, 1.16], lift: 0.05, low: 7, steps: 16 },
         interior: { z0: -1.80, z1: 1.10, inset: 0.24, seatY: 1.14, seatZ: -0.45, seatX: [-0.66, 0.66] },
         plate: { z0: -4.55, z1: 4.55, inset: 0.10, drop: 0.02 },
       });
@@ -2558,7 +2776,7 @@ export const CAR_MODELS = {
         reverselamps: [{ x: 0.42, y: 2.90, z: -4.50, w: 0.36, h: 0.20 }],
         grille: { y: 3.42, z: 4.40, w: 1.85, h: 0.72, bars: 5 },
         mirrors: [{ x: 1.84, y: 4.70, z: 1.00 }],
-        glass: { z: [-0.85, 1.12], lift: 0.06, low: 4, steps: 10 },
+        glass: { z: [-0.85, 1.12], lift: 0.06, low: 6, steps: 10 },
         interior: { z0: -0.80, z1: 1.05, inset: 0.28, seatY: 3.92, seatZ: -0.20, seatX: [-0.60, 0.60] },
         plate: false,
       });
@@ -2784,8 +3002,8 @@ export function buildChassis(id, opts = {}) {
   ];
 
   const shell = buildBodyShell({ ...def.body, arches });
-  const out = makeCollector();
-  out.add('paint', shell.geometry);
+  const out = makeCollector(flatPaintUV(shell.bands));
+  out.addShell(shell.geometry);
 
   const env = {
     id: def.id, def, out, shell, arches, axleZ,
@@ -2848,7 +3066,7 @@ export function buildChassis(id, opts = {}) {
     arms: def.arms || null,
     liveAxle: def.liveAxle || null,
     stats: def.stats || null,
-    uv: { zMin: shell.zMin, zMax: shell.zMax, bands: shell.bands },
+    uv: { zMin: shell.zMin, zMax: shell.zMax, bands: shell.bands, glass: env.glass || null },
     footprint: { length: def.length * 0.96, width: Math.max(def.width, halfTrack * 2 + front.halfWidth * 2) * 0.92 },
     cgHeight,
     halfTrack,

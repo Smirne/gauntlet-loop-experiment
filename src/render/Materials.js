@@ -250,8 +250,9 @@ function patch(material, feat, uniforms, keyParts, install) {
     if (feat.triplanar) fDecl.push('uniform float uMgTriScale;\nuniform float uMgTriSharp;');
     if (feat.flake) fDecl.push('uniform float uMgFlakeScale;\nuniform float uMgFlakeAmount;\nuniform float uMgFlakeGlint;\nuniform vec3 uMgFlakeColor;');
     if (feat.clearcoatIor) fDecl.push('uniform float uMgCcIor;\nuniform float uMgCcRough;\nuniform float uMgCcFromRough;');
-    if (feat.specAA) fDecl.push('uniform float uMgSaaVar;\nuniform float uMgSaaMax;');
+    if (feat.specAA) fDecl.push('uniform float uMgSaaVar;\nuniform float uMgSaaMax;\nuniform float uMgRoughMin;');
     if (feat.peel) fDecl.push('uniform float uMgPeelScale;\nuniform float uMgPeelAmount;');
+    if (feat.glassFresnel) fDecl.push('uniform float uMgGlassEdge;\nuniform float uMgGlassBase;');
     // The flake and orange-peel blocks rotate an object-space direction into
     // view space with normalMatrix. three declares that uniform in the vertex
     // prefix only, so referencing it from the fragment stage is an undeclared
@@ -300,6 +301,14 @@ roughnessFactor = clamp( roughnessFactor * ( 1.0 + ( mgMacro - 0.5 ) * uMgMacroR
     let normalBlock = feat.triplanar
       ? '#include <normal_fragment_maps>\n' + FRAG_TRI_NORMAL
       : '#include <normal_fragment_maps>';
+    // Snapshot the shading normal *before* the flake field perturbs it. The
+    // specular antialiasing filter measures how far the normal sweeps across
+    // one pixel and widens the lobe to match, which is right for a normal map
+    // but wrong for flake: flake is faded out on its own screen footprint
+    // precisely so that whatever survives is resolved, and feeding a resolved
+    // per-pixel sparkle field into the filter simply pins the base roughness at
+    // its ceiling and turns the whole car matte.
+    if (feat.specAA) normalBlock += '\nvec3 mgSaaNormal = normal;\n';
     if (feat.flake) normalBlock += FRAG_FLAKE;
     if (normalBlock !== '#include <normal_fragment_maps>') {
       fs = fs.replace('#include <normal_fragment_maps>', normalBlock);
@@ -316,10 +325,16 @@ roughnessFactor = clamp( roughnessFactor * ( 1.0 + ( mgMacro - 0.5 ) * uMgMacroR
        antialiasing pass then widens whatever both lobes ended up with, so it
        has to run last or its correction would simply be overwritten. */
     let physBlock = '#include <lights_physical_fragment>';
+    if (feat.flake) physBlock += '\n' + FRAG_FLAKE_SPEC;
     if (feat.clearcoatIor) physBlock += '\n' + FRAG_CC_IOR;
-    if (feat.specAA) physBlock += '\n' + FRAG_SPEC_AA;
+    if (feat.specAA) physBlock += '\n' + specAaBlock(feat.flake ? 'mgSaaNormal' : 'normal');
     if (physBlock !== '#include <lights_physical_fragment>') {
       fs = fs.replace('#include <lights_physical_fragment>', physBlock);
+    }
+
+    /* ---- glazing: alpha rises toward the grazing angle ---- */
+    if (feat.glassFresnel) {
+      fs = fs.replace('#include <opaque_fragment>', FRAG_GLASS_FRESNEL + '\n#include <opaque_fragment>');
     }
 
     shader.vertexShader = vs;
@@ -370,13 +385,31 @@ roughnessFactor = clamp( roughnessFactor * ( 1.0 + ( mgMacro - 0.5 ) * uMgMacroR
 // Flakes perturb `normal` only. `nonPerturbedNormal` (and therefore
 // clearcoatNormal) is left alone, which is exactly the physical arrangement:
 // aluminium flakes are suspended in the basecoat, underneath the lacquer.
+//
+// FLAKE IS A SPECULAR EFFECT AND NOTHING ELSE. A flake is a two-micron mirror
+// suspended in the binder; it is not a change of pigment. The previous version
+// mixed the flake tint into `diffuseColor`, which put sparkle on panels
+// receiving no direct light at all — the single tell that gave the old paint
+// away, because real sparkle vanishes the instant the panel turns away from
+// the source. The tint now goes to `material.specularColor` (FRAG_FLAKE_SPEC),
+// where a metal's reflectance actually lives.
+//
+// The field is also split into a statistical half and a resolved half.
+// *Coverage* — what fraction of the basecoat is aluminium rather than binder —
+// is a property of the paint, not of how many pixels the car happens to
+// occupy, so it drives the specular colour at every distance and a minified
+// car keeps its metallic sheen instead of collapsing to a matte slab. Only the
+// per-flake glint and the normal tilt fade with the screen footprint, because
+// those are the two parts that would alias.
 const FRAG_FLAKE = /* glsl */`
+float mgFlakeGlint = 0.0;
+float mgFlakeShow = 0.0;
 {
-  // Screen-space footprint of one flake cell. Above roughly half a pixel the
-  // field is past Nyquist, so it is faded out rather than allowed to alias
-  // into a shimmering mess at race distance.
+  // Screen-space footprint of one flake cell, in cells per pixel. Past about
+  // one cell per pixel the field is beyond Nyquist and is faded out rather
+  // than allowed to crawl at race distance.
   float mgFw = max( length( fwidth( vMgObj ) ) * uMgFlakeScale, 1e-5 );
-  float mgResolve = 1.0 - smoothstep( 0.20, 0.72, mgFw );
+  float mgResolve = 1.0 - smoothstep( 0.35, 1.60, mgFw );
   float mgAmt = uMgFlakeAmount * mgResolve;
   if ( mgAmt > 0.002 ) {
     vec3 mgFp = vMgObj * uMgFlakeScale;
@@ -391,12 +424,30 @@ const FRAG_FLAKE = /* glsl */`
     float mgGlint = pow( fract( mgR1.x * 0.5 + mgR2.y * 0.5 + 0.5 ), uMgFlakeGlint );
     vec3 mgDirV = normalize( normalMatrix * mgDir );
     vec3 mgTang = mgDirV - normal * dot( mgDirV, normal );
-    normal = normalize( normal + mgTang * mgAmt * ( 0.30 + mgGlint * 1.7 ) );
-    // A tilted flake is a mirror: locally the basecoat gets sharper, and it
-    // takes the flake's own tint rather than the pigment's.
-    roughnessFactor = clamp( roughnessFactor * ( 1.0 - mgGlint * mgAmt * 1.6 ), 0.02, 1.0 );
-    diffuseColor.rgb = mix( diffuseColor.rgb, uMgFlakeColor, mgGlint * mgAmt * 0.55 );
+    // Milled aluminium flake floats nearly parallel to the film surface: the
+    // spread is a few degrees, not the forty the old constants asked for. A
+    // tangent offset of 0.17 is about ten degrees at the steepest flake.
+    normal = normalize( normal + mgTang * mgAmt * ( 0.06 + mgGlint * 0.34 ) );
+    // A tilted flake is a mirror, so the basecoat sharpens locally where one
+    // catches the key.
+    roughnessFactor = clamp( roughnessFactor * ( 1.0 - mgGlint * mgAmt * 0.85 ), 0.03, 1.0 );
+    mgFlakeGlint = mgGlint;
+    mgFlakeShow = mgAmt;
   }
+}
+`;
+
+// The flake's contribution to the specular lobe, injected after three has
+// built `material`. In a metallic paint it is the aluminium, not the pigment,
+// that owns F0: that is why a black metallic panel is not black but a dim
+// mirror, and why lifting the coverage term is what gives a dark livery a
+// continuous basecoat instead of scattered glitter over a void.
+const FRAG_FLAKE_SPEC = /* glsl */`
+{
+  float mgCov = clamp( uMgFlakeAmount * 1.15, 0.0, 1.0 );
+  vec3 mgFlakeF0 = uMgFlakeColor * 0.92;
+  float mgMix = clamp( mgCov * 0.55 + mgFlakeShow * mgFlakeGlint * 0.55, 0.0, 1.0 );
+  material.specularColor = mix( material.specularColor, mgFlakeF0, mgMix );
 }
 `;
 
@@ -465,13 +516,13 @@ const FRAG_CC_IOR = /* glsl */`
 // alpha'^2 = alpha^2 + min(2 * sigma^2, ceiling), and perceptual roughness is
 // sqrt(alpha), hence the fourth root. The ceiling is what keeps a silhouette or
 // a hard crease from dissolving the material into flat grey.
-const FRAG_SPEC_AA = /* glsl */`
+const specAaBlock = (nrm) => /* glsl */`
 {
-  vec3 mgNdx = dFdx( normal );
-  vec3 mgNdy = dFdy( normal );
+  vec3 mgNdx = dFdx( ${nrm} );
+  vec3 mgNdy = dFdy( ${nrm} );
   float mgKernel = min( 2.0 * uMgSaaVar * ( dot( mgNdx, mgNdx ) + dot( mgNdy, mgNdy ) ), uMgSaaMax );
   float mgA = material.roughness * material.roughness;
-  material.roughness = clamp( sqrt( sqrt( clamp( mgA * mgA + mgKernel, 0.0, 1.0 ) ) ), 0.0525, 1.0 );
+  material.roughness = clamp( sqrt( sqrt( clamp( mgA * mgA + mgKernel, 0.0, 1.0 ) ) ), uMgRoughMin, 1.0 );
 
   #ifdef USE_ANISOTROPY
     // alphaT was derived from material.roughness inside the chunk we just ran,
@@ -481,15 +532,35 @@ const FRAG_SPEC_AA = /* glsl */`
   #endif
 
   #ifdef USE_CLEARCOAT
-    // The coat has its own normal — usually the raw geometric one — so it needs
-    // its own measurement. This is the term that tames a mirror-finish surface
-    // seen almost edge-on, where one pixel spans a lot of curvature.
+    // The coat gets the same filter at a fraction of the strength, and that
+    // asymmetry is deliberate. Its normal is the raw geometric one, so on a
+    // die-cast the derivative is not measuring microfacet detail — it is
+    // measuring the 0.3 u fillets the entire model is built out of, and those
+    // fillets are exactly where the one highlight this material exists to
+    // produce has to land. Filtered at full strength a 20-pixel fillet lifts
+    // the coat from 0.045 to 0.23 and the highlight stops being a line, which
+    // is why no panel on the car had one. Some shimmer on a rolling highlight
+    // is the cheaper defect, and SMAA takes the edge off it.
     vec3 mgCdx = dFdx( clearcoatNormal );
     vec3 mgCdy = dFdy( clearcoatNormal );
-    float mgCk = min( 2.0 * uMgSaaVar * ( dot( mgCdx, mgCdx ) + dot( mgCdy, mgCdy ) ), uMgSaaMax );
+    float mgCk = min( 2.0 * uMgSaaVar * 0.15 * ( dot( mgCdx, mgCdx ) + dot( mgCdy, mgCdy ) ), uMgSaaMax * 0.25 );
     float mgCa = material.clearcoatRoughness * material.clearcoatRoughness;
-    material.clearcoatRoughness = clamp( sqrt( sqrt( clamp( mgCa * mgCa + mgCk, 0.0, 1.0 ) ) ), 0.0525, 1.0 );
+    material.clearcoatRoughness = clamp( sqrt( sqrt( clamp( mgCa * mgCa + mgCk, 0.0, 1.0 ) ) ), 0.0180, 1.0 );
   #endif
+}
+`;
+
+// Glazing alpha has to be a function of angle or it is not glass. A flat 46%
+// blend attenuates the reflection along with everything else, so a windscreen
+// ends up a uniformly murky film — which is precisely how "painted-on glass"
+// reads. Schlick on the shading normal instead: face-on the pane stays open
+// and you see the cabin through it, at a grazing angle it goes almost opaque
+// with sky. That gradient across a curved screen is the whole read.
+const FRAG_GLASS_FRESNEL = /* glsl */`
+{
+  vec3 mgVdir = normalize( vViewPosition );
+  float mgFres = pow( 1.0 - clamp( dot( normal, mgVdir ), 0.0, 1.0 ), 5.0 );
+  diffuseColor.a = clamp( mix( uMgGlassBase, uMgGlassEdge, mgFres ) * ( diffuseColor.a / max( opacity, 1e-4 ) ), 0.0, 1.0 );
 }
 `;
 
@@ -569,12 +640,16 @@ function remember(mat) {
 // how much GGX width one pixel of normal sweep may add.
 const SAA_VAR = 0.25;
 const SAA_MAX = 0.20;
+// three's own floor. Anything below this is a lobe narrower than the pixel
+// that has to contain it, which is where specular aliasing starts.
+const SAA_MIN = 0.0525;
 
 /** The antialiasing-only patch, for materials that need no other injection. */
-function withSpecAA(mat, tag, variance = SAA_VAR, max = SAA_MAX) {
+function withSpecAA(mat, tag, variance = SAA_VAR, max = SAA_MAX, min = SAA_MIN) {
   patch(mat, { specAA: true }, {
     uMgSaaVar: { value: variance },
     uMgSaaMax: { value: max },
+    uMgRoughMin: { value: min },
   }, ['saa', tag]);
   return mat;
 }
@@ -583,13 +658,24 @@ function withSpecAA(mat, tag, variance = SAA_VAR, max = SAA_MAX) {
 
 // Eight liveries' worth of range: the flake is not just "sparkle on/off", it is
 // what separates a candy red from a solid red, and it wants to differ per car.
+//
+// METALNESS. These used to run 0.85-0.95, which is how you author a *metal*,
+// not how you author a metallic paint, and it is why the cars read as black
+// with sparkle on top. At metalness 0.9 the diffuse term is scaled by 0.1, so
+// the pigment all but disappears; the only thing left is a specular lobe whose
+// F0 is the pigment colour, and outside the highlight that returns almost
+// nothing. A metallic basecoat is a *dielectric binder loaded with aluminium*,
+// so the honest metalness is the flake coverage — a third or so — and the
+// flake's own neutral F0 is added on top of that in FRAG_FLAKE_SPEC. Candy
+// keeps a high value because a candy really is a transparent tinted lacquer
+// over a bright metallic ground, and chromeish is a plated finish, not a paint.
 const PAINT_PRESETS = {
-  solid:    { metalness: 0.15, roughness: 0.34, flake: 0.0,  clearcoat: 1.0, clearcoatRoughness: 0.055, ccIor: 1.52 },
-  metallic: { metalness: 0.85, roughness: 0.31, flake: 0.55, clearcoat: 1.0, clearcoatRoughness: 0.045, ccIor: 1.52 },
-  pearl:    { metalness: 0.55, roughness: 0.26, flake: 0.35, clearcoat: 1.0, clearcoatRoughness: 0.035, ccIor: 1.58 },
-  candy:    { metalness: 0.95, roughness: 0.20, flake: 0.75, clearcoat: 1.0, clearcoatRoughness: 0.028, ccIor: 1.60 },
-  matte:    { metalness: 0.30, roughness: 0.62, flake: 0.10, clearcoat: 0.25, clearcoatRoughness: 0.42, ccIor: 1.46 },
-  chromeish:{ metalness: 1.0,  roughness: 0.10, flake: 0.25, clearcoat: 1.0, clearcoatRoughness: 0.02, ccIor: 1.55 },
+  solid:    { metalness: 0.04, roughness: 0.36, flake: 0.0,  clearcoat: 1.0, clearcoatRoughness: 0.050, ccIor: 1.52 },
+  metallic: { metalness: 0.34, roughness: 0.30, flake: 0.55, clearcoat: 1.0, clearcoatRoughness: 0.042, ccIor: 1.52 },
+  pearl:    { metalness: 0.22, roughness: 0.26, flake: 0.35, clearcoat: 1.0, clearcoatRoughness: 0.034, ccIor: 1.58 },
+  candy:    { metalness: 0.58, roughness: 0.20, flake: 0.75, clearcoat: 1.0, clearcoatRoughness: 0.026, ccIor: 1.60 },
+  matte:    { metalness: 0.12, roughness: 0.62, flake: 0.10, clearcoat: 0.25, clearcoatRoughness: 0.42, ccIor: 1.46 },
+  chromeish:{ metalness: 1.0,  roughness: 0.12, flake: 0.25, clearcoat: 1.0, clearcoatRoughness: 0.02, ccIor: 1.55 },
 };
 
 /**
@@ -627,9 +713,13 @@ export function carPaint(o = {}) {
   mat.name = 'carPaint';
   if (_env) mat.envMap = _env;
 
-  // A flake cell of ~0.045 cm on a 9 cm car sits at roughly two pixels at
-  // race distance and several at replay distance: present but never crawling.
-  const flakeSize = o.flakeSize ?? 0.045;
+  // 0.045 cm is half a millimetre: on a 9 cm car that is glitter, not flake,
+  // and it was reading as exactly that. Real automotive flake is 10-50 microns;
+  // 0.014 cm is a deliberate compromise, small enough to read as a metallic
+  // grain rather than a scattering of confetti and still large enough to
+  // resolve in the macro shots that the whole miniature premise is built on.
+  // The Nyquist fade in FRAG_FLAKE retires it before it can crawl.
+  const flakeSize = o.flakeSize ?? 0.014;
   const uniforms = {
     uMgFlakeScale: { value: 1 / Math.max(0.004, flakeSize) },
     uMgFlakeAmount: { value: flake * 0.55 },
@@ -642,10 +732,12 @@ export function carPaint(o = {}) {
     uMgCcFromRough: { value: 0 },
     uMgPeelScale: { value: 1 / 0.55 },
     uMgPeelAmount: { value: (o.orangePeel ?? 1) * 0.55 },
-    uMgSaaVar: { value: SAA_VAR },
-    // The flake field perturbs the basecoat normal hard and deliberately, so a
-    // car needs more headroom than a floor before its sparkle turns to noise.
-    uMgSaaMax: { value: 0.26 },
+    // The filter now measures the pre-flake normal, so the extra headroom the
+    // sparkle field used to need is gone; what is left is the paint's own
+    // normal map, which is gentle.
+    uMgSaaVar: { value: 0.18 },
+    uMgSaaMax: { value: 0.16 },
+    uMgRoughMin: { value: SAA_MIN },
   };
 
   // Handy for a livery editor or a damage system to reach at runtime.
@@ -669,8 +761,23 @@ export function carPaint(o = {}) {
 
 /* ================================================================ fixtures */
 
-/** Polished chrome: the plated normal map carries the orange peel, so the
- *  roughness can go as low as it physically should without looking synthetic. */
+/**
+ * Polished chrome: the plated normal map carries the orange peel, so the
+ * roughness can go as low as it physically should without looking synthetic.
+ *
+ * `roughness: 1` is not a bug and must not be "fixed" downward. It is this
+ * factory's convention throughout: the surface's roughness *map* carries the
+ * absolute value and the material multiplier stays at unity, so `surface()`,
+ * `plasticToy()` and this all read 1. `chromePlate` bakes 0.035-0.14, so the
+ * product is already far sharper than a 1 cm rim wants — lowering the base
+ * would drive it to a pinhole mirror of a low-resolution probe. What actually
+ * flattened the rims is the antialiasing ceiling: a spoked wheel a few dozen
+ * pixels across sweeps its normal so fast that the filter pinned the lobe at
+ * (0.28)^0.25 = 0.73 over most of the wheel. So: a tight ceiling, and a
+ * roughness *floor* instead of a lower multiplier. The floor cannot fight a
+ * corrected map — it is inert the moment the map exceeds it — where a lower
+ * multiplier would silently halve whatever the map ends up saying.
+ */
 export function chrome(o = {}) {
   const key = keyOf('chrome', o);
   const hit = _cache.get(key);
@@ -692,9 +799,10 @@ export function chrome(o = {}) {
   mat.normalScale.set(0.55, 0.55);
   mat.name = 'chrome';
   if (_env) mat.envMap = _env;
-  // A mirror has no diffuse term to hide its aliasing behind: every pixel of it
-  // is a reflection of something, so it is the worst offender in the scene.
-  withSpecAA(mat, 'chrome', 0.28, 0.28);
+  // A mirror has no diffuse term to hide its aliasing behind, so it still gets
+  // filtered — but with a ceiling that leaves a lobe, and a floor of 0.26 that
+  // lands the finish in the 0.25-0.35 band a small plated part wants.
+  withSpecAA(mat, 'chrome2', 0.28, 0.09, o.roughnessMin ?? 0.26);
   _cache.set(key, mat);
   return remember(mat);
 }
@@ -731,13 +839,35 @@ export function glass(o = {}) {
   }
   mat.name = 'glass';
   if (_env) mat.envMap = _env;
-  withSpecAA(mat, 'glass', 0.25, 0.24);
+  patch(mat, { specAA: true, glassFresnel: true }, {
+    uMgSaaVar: { value: 0.25 },
+    uMgSaaMax: { value: 0.24 },
+    uMgRoughMin: { value: SAA_MIN },
+    // Face-on the pane is mostly open, edge-on it is almost solid sky. Those
+    // two numbers are the whole difference between glazing and a tinted decal.
+    uMgGlassBase: { value: o.opacity ?? 0.42 },
+    uMgGlassEdge: { value: o.edgeOpacity ?? 0.97 },
+  }, ['glassF']);
   _cache.set(key, mat);
   return remember(mat);
 }
 
-/** Tyre rubber. Uses the moulded rubber surface at a tight repeat so the
- *  cavity texture reads even on a 1.15 u wheel. */
+/**
+ * Tyre rubber (DEFECTS D3). Uses the moulded rubber surface at a tight repeat
+ * so the cavity texture reads even on a 1.15 u wheel.
+ *
+ * Rubber is not black. Carbon-black filled rubber sits around 0.05-0.08 linear
+ * albedo, and the anti-ozonant bloom on a moulded tyre lifts it further; the
+ * old material multiplied a white tint over an albedo map that bakes ~0.015,
+ * which is a void, not a substance — 36.6 mean luma at 2.3 standard deviation
+ * across a top-lit curved surface, i.e. no shading at all. Two changes: a
+ * colour multiplier above unity to bring the map into the physical band (a
+ * Color is a plain uniform, nothing clamps it to 1, and doing it here rather
+ * than in the bake leaves the texture usable at its authored level elsewhere),
+ * and a broad Charlie sheen. The sheen is what actually makes the sidewall
+ * bulge and the tread shoulder read: it is a wide grazing-angle lobe, so it
+ * traces the curvature of a dark object exactly where a GGX lobe gives nothing.
+ */
 export function rubber(o = {}) {
   const key = keyOf('rubber', o);
   const hit = _cache.get(key);
@@ -745,7 +875,7 @@ export function rubber(o = {}) {
 
   const set = safeSet('rubber');
   const rep = o.repeat ?? 2;
-  const mat = new THREE.MeshStandardMaterial({
+  const mat = new THREE.MeshPhysicalMaterial({
     color: toColor(o.color ?? 0xffffff),
     metalness: 0,
     roughness: o.roughness ?? 1,
@@ -753,15 +883,19 @@ export function rubber(o = {}) {
     normalMap: set ? withRepeat(set.normalMap, rep, rep) : null,
     roughnessMap: set ? withRepeat(set.roughnessMap, rep, rep) : null,
     aoMap: set ? withRepeat(set.aoMap, rep, rep) : null,
-    envMapIntensity: o.envMapIntensity ?? 0.55,
+    envMapIntensity: o.envMapIntensity ?? 0.85,
+    sheen: o.sheen ?? 0.55,
+    sheenRoughness: 0.82,
+    sheenColor: toColor(o.sheenColor ?? 0x8e8880),
   });
+  if (o.color === undefined) mat.color.setRGB(2.30, 2.24, 2.14);
   mat.normalScale.set(o.normalScale ?? 1, o.normalScale ?? 1);
   mat.name = 'rubber';
   if (_env) mat.envMap = _env;
   // A 1.15 u wheel is a few dozen pixels across with a moulded tread normal map
   // on it, so its normal variance per pixel is enormous even though the
   // material itself is dull.
-  withSpecAA(mat, 'rubber');
+  withSpecAA(mat, 'rubber2');
   _cache.set(key, mat);
   return remember(mat);
 }
@@ -803,6 +937,7 @@ export function plasticToy(o = {}) {
     uMgPeelAmount: { value: 0.30 },
     uMgSaaVar: { value: SAA_VAR },
     uMgSaaMax: { value: 0.22 },
+    uMgRoughMin: { value: SAA_MIN },
   };
   patch(mat, { objPos: true, clearcoatIor: gloss > 0.05, peel: gloss > 0.45, specAA: true },
     uniforms, ['plastic', gloss > 0.45 ? 'p' : '-']);
@@ -976,6 +1111,7 @@ export function surface(kind, o = {}) {
     uMgCcFromRough: { value: md.ccFromRough ?? 0 },
     uMgSaaVar: { value: md.saaVariance ?? SAA_VAR },
     uMgSaaMax: { value: md.saaMax ?? SAA_MAX },
+    uMgRoughMin: { value: md.roughnessMin ?? SAA_MIN },
   };
   patch(mat, {
     world: useMacro || triplanar,

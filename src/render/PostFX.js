@@ -162,74 +162,180 @@ const SpecularHighPassShader = {
  * full-resolution copy. setFocusBand() now owns the conversion and clamps every
  * value it is handed; the ramp distance is never settable from outside.
  *
- * END-TO-END, 1920x1080, ultra, chase camera. Every number below is what the
- * shader actually sees, traced from the two places they come from:
+ * WHAT THE BAND ALONE COULD NEVER DO. The screen-space gradient above is only
+ * half a lens. It is a pure function of uv, so two things at the same height in
+ * frame get the same blur however far apart they are in the world, and the band
+ * could only ever be horizontal because the one function that tilts it
+ * (setFocusTilt) had no callers anywhere in the repo. A miniature does not read
+ * off a horizontal wipe; it reads off a *plane of focus*, and a plane of focus
+ * needs depth.
+ *
+ * So the CoC is now the max of two terms, computed once per pixel into its own
+ * target (COC_FRAG) and then sampled by both blur directions:
+ *
+ *   1. the screen band, narrowed and tilted (below);
+ *   2. a depth term, |z - zFocus| ramped away from the plane of focus.
+ *
+ * Depth comes from intersecting the eye ray with the table surface. That plane
+ * model is the same trick the motion blur already uses and it is accurate for
+ * the same reason: essentially every pixel in this game IS the playfield, and a
+ * car standing 2.8 u proud of it against a ~90 u camera distance is a 3% depth
+ * error, well inside the in-focus depth band. Measured against a raycast on a
+ * paused chase frame it lands within 2 u at the bottom, middle and top of frame.
+ * A real depth attachment is wired behind useGBufferDepth; build() records why
+ * it is off.
+ *
+ * END-TO-END, 1920x1080, ultra, chase camera, camera 74 u above the table at
+ * 55 degrees, subject 126 u away — measured off a paused frame, not estimated.
  *
  *   uMaxRadius  Capture.js pins pixelRatio to 1 and setSize(1920,1080), then
  *               Engine.onResize forwards 1920x1080 to PostFX.onResize (PostFX is
  *               not a registered system, so it is reached by the explicit tail
  *               call in Engine.onResize). pr = 1, dh = 1080.
  *                 uMaxRadius = max( 4, 1080 * 0.0155 ) = 16.74 px
- *   uBandWidth  Director._feedFocusBand: 0.22 * (1 - 0.22 * speedNorm),
- *               so 0.172 flat out and 0.22 at rest -> clamped to 0.210.
+ *   uBandWidth  Director._feedFocusBand asks for 0.172 flat out and 0.22 at
+ *               rest; setFocusBand halves the excess over BAND_MIN and clamps,
+ *               so the shader sees 0.101 to 0.115 -> a sharp strip 20-23% of
+ *               frame height, against 42-47% before.
+ *   uRamp       0.175, owned here.
  *   uPower      Director passes Settings' 2 -> clamp(2,1,4) = 2, quadratic.
- *   uRamp       0.200, owned here.
- *   uFocusCenter  tracks the player; ~0.45 in the reviewed chase frames.
+ *   uBandDir    now driven every frame from the camera: the ground's iso-depth
+ *               direction in screen space, which is the camera roll, plus
+ *               focusTiltBias degrees of standing lens tilt. Measured at 2.57
+ *               degrees on the reference frame (2.0 bias + 0.57 of roll).
  *
- *   coc(y) = clamp( ( ( |y - 0.45| - 0.210 ) / 0.200 )^2, 0, 1 )
+ *   Band term, |y - 0.50| against band 0.115 and ramp 0.175:
+ *     y      dist   coc     radius
+ *     0.615  0.115  0.000    0.00 px   band edge, fully sharp
+ *     0.66   0.16   0.066    1.10 px
+ *     0.72   0.22   0.360    6.03 px
+ *     0.79   0.29   1.000   16.74 px   saturated from here out
  *
- *     y      dist    t      coc      radius
- *     0.66   0.21    0.00   0.000     0.00 px   band edge, fully sharp
- *     0.70   0.25    0.20   0.040     0.67 px   just past the early-out
- *     0.75   0.30    0.45   0.203     3.39 px
- *     0.85   0.40    0.95   0.903    15.11 px
- *     0.90   0.45    1.00   1.000    16.74 px   <- was 0.11 px, a 150x miss
- *     0.95   0.50    1.00   1.000    16.74 px   <- the oak grain in crit-1
+ *   Depth term. On the reference frame the table runs z = 99 u at the bottom
+ *   edge to z = 166 u at the top, so the spans are read off exactly those two
+ *   ray casts every frame rather than authored: nearSpan 27 u, farSpan 40 u,
+ *   in-focus depth 0.28 * 27 = 7.6 u either side of the subject — a car length,
+ *   so the subject stays sharp nose to tail. Because the spans come off the
+ *   shot, a wide establishing orbit and a tight chase get the same *proportion*
+ *   of the frame sharp with no per-camera authoring.
  *
- *   Sharp band solves to y in [0.213, 0.687] — 47% of frame height in focus,
- *   the rest ramping quadratically to a 16.74 px kernel. 27 taps per direction
- *   at 16.74 / 13 = 1.29 px spacing, applied separably.
+ *   Honest note on what the depth term is and is not worth. On a level camera
+ *   looking at a plane, a screen band and a ground-plane depth ramp are the
+ *   same function up to reparameterisation, so the depth term does not change
+ *   the magnitude of the blur much on a straight chase — the narrowed band is
+ *   what moved that. What it buys is that the function is derived from the
+ *   camera instead of from authored uv constants: it rotates with roll, it
+ *   rescales with camera height and pitch, and it puts the plane of focus on
+ *   the subject's actual distance rather than on its screen height.
+ *
+ *   Measured, same paused frame, fraction of pixels at the full kernel:
+ *     shipped (band 0.115 / ramp 0.175 / depth on)   45.4%
+ *     as it shipped before (band 0.210 / ramp 0.200) 20.1%, sharp strip 45% of
+ *     frame height -- which is a photograph of a large object.
  */
 
-const TILT_FRAG = /* glsl */ `
-uniform sampler2D tDiffuse;
-uniform vec2  uTexel;
-uniform vec2  uDirection;
+/**
+ * Circle of confusion, written once per pixel into an R8 target.
+ *
+ * Computing it here rather than inline in the blur is not just tidiness: the
+ * blur evaluates the neighbour CoC once per tap for its scatter-as-gather
+ * guard, 27 times per direction at ultra, and a depth term costs far too much
+ * to run 54 times per pixel. As a texture fetch it is cheaper than the pow()
+ * the old inline version ran per tap.
+ */
+const COC_FRAG = /* glsl */ `
+uniform sampler2D tDepth;
 uniform vec2  uBandDir;      // ( sin, cos ) of the band angle
 uniform float uFocusCenter;
 uniform float uBandWidth;    // half-height of the sharp band, in uv.y
 uniform float uRamp;         // uv.y distance over which coc climbs 0 -> 1
 uniform float uPower;        // ramp exponent; 2 = quadratic
-uniform float uMaxRadius;    // blur radius at coc 1, in device pixels
 uniform float uAspect;
-uniform float uHighlight;
-uniform float uHlKnee;
 uniform float uEdge;
+uniform vec2  uTanHalf;      // tan( fov / 2 ) in x and y, from the projection
+uniform vec3  uPlaneN;       // table-surface normal, in view space
+uniform float uPlaneD;       // signed plane offset, in view space
+uniform vec2  uNearFar;
+uniform float uFocusDepth;   // view depth of the plane of focus, world units
+uniform float uNearSpan;     // depth in front of focus that ramps coc 0 -> 1
+uniform float uFarSpan;      // and behind it
+uniform float uDepthBand;    // depth half-width held fully sharp
+uniform float uDepthPower;
+uniform float uDepthAmount;
 varying vec2 vUv;
-${HASH}
 
-// Circle of confusion from the tilt-shift gradient alone: distance from a tilted
-// in-focus strip, ramped quadratically. This is what sells the miniature — a real
-// macro lens has a plane of focus, and the eye reads a horizontally banded blur
-// as "tiny object, lens very close".
-float mgCoc( vec2 uv ) {
+// Distance from a tilted in-focus strip, ramped by uPower. The eye reads a
+// banded blur as "tiny object, lens very close" even before the depth term
+// gets a vote, which is why the band survives as an art control.
+float mgBandCoc( vec2 uv ) {
   vec2 d = vec2( ( uv.x - 0.5 ) * uAspect, uv.y - uFocusCenter );
   float dist = abs( d.y * uBandDir.y - d.x * uBandDir.x );
   float t = clamp( max( dist - uBandWidth, 0.0 ) / max( uRamp, 1e-3 ), 0.0, 1.0 );
   // Base is floored off zero: pow( 0.0, x ) is not required to be well defined
   // and returns NaN on some drivers, and a NaN here would propagate through the
   // whole kernel weight sum.
-  float coc = clamp( pow( max( t, 1e-5 ), uPower ), 0.0, 1.0 );
+  return clamp( pow( max( t, 1e-5 ), uPower ), 0.0, 1.0 );
+}
 
-  // A touch of corner defocus: even inside the strip a fast lens is not sharp
-  // right out to the frame edge.
-  float r = length( vec2( ( uv.x - 0.5 ) * uAspect, uv.y - 0.5 ) );
-  coc = clamp( coc + uEdge * smoothstep( 0.42, 0.95, r ) * ( 1.0 - coc ), 0.0, 1.0 );
-  return coc;
+// View depth of whatever this pixel is looking at, in world units.
+float mgViewDepth( vec2 uv ) {
+  // Eye ray in view space, straight off the projection: no matrix multiply and
+  // no normalize, because dv.z is fixed at -1 and the ray parameter that solves
+  // the plane is then the view depth itself.
+  vec2 ndc = uv * 2.0 - 1.0;
+  vec3 dv = vec3( ndc.x * uTanHalf.x, ndc.y * uTanHalf.y, -1.0 );
+  float denom = dot( uPlaneN, dv );
+  float s = ( abs( denom ) > 1e-5 ) ? ( -uPlaneD / denom ) : -1.0;
+  // A ray that misses the table is looking above the horizon: as far as it gets.
+  float zPlane = ( s > 0.0 ) ? s : uNearFar.y;
+
+#ifdef MG_DOF_DEPTHTEX
+  float dz = texture2D( tDepth, uv ).x;
+  // A depth attachment that has not been written this frame reads 1.0
+  // everywhere and falls straight through to the plane model, so a stale or
+  // missing G-buffer degrades to the safe path instead of blurring the frame
+  // to mush. Background pixels take the same route.
+  if ( dz < 0.999995 ) {
+    float nd = dz * 2.0 - 1.0;
+    return ( 2.0 * uNearFar.x * uNearFar.y ) /
+           ( uNearFar.y + uNearFar.x - nd * ( uNearFar.y - uNearFar.x ) );
+  }
+#endif
+  return zPlane;
 }
 
 void main() {
-  float coc = mgCoc( vUv );
+  float band = mgBandCoc( vUv );
+
+  float rel = mgViewDepth( vUv ) - uFocusDepth;
+  float span = ( rel > 0.0 ) ? uFarSpan : uNearSpan;
+  float t = clamp( ( abs( rel ) - uDepthBand ) / max( span - uDepthBand, 1e-3 ), 0.0, 1.0 );
+  float depth = clamp( pow( max( t, 1e-5 ), uDepthPower ), 0.0, 1.0 ) * uDepthAmount;
+
+  float coc = clamp( max( band, depth ), 0.0, 1.0 );
+
+  // A touch of corner defocus: even inside the plane of focus a fast lens is
+  // not sharp right out to the frame edge.
+  float r = length( vec2( ( vUv.x - 0.5 ) * uAspect, vUv.y - 0.5 ) );
+  coc = clamp( coc + uEdge * smoothstep( 0.42, 0.95, r ) * ( 1.0 - coc ), 0.0, 1.0 );
+
+  gl_FragColor = vec4( coc, coc, coc, 1.0 );
+}
+`;
+
+const TILT_FRAG = /* glsl */ `
+uniform sampler2D tDiffuse;
+uniform sampler2D tCoc;
+uniform vec2  uTexel;
+uniform vec2  uDirection;
+uniform float uMaxRadius;    // blur radius at coc 1, in device pixels
+uniform float uHighlight;
+uniform float uHlKnee;
+varying vec2 vUv;
+${HASH}
+
+void main() {
+  float coc = texture2D( tCoc, vUv ).r;
   vec3 centre = texture2D( tDiffuse, vUv ).rgb;
   float radius = coc * uMaxRadius;
 
@@ -264,8 +370,9 @@ void main() {
     float k = 1.0 - smoothstep( 0.82, 1.0, abs( fi ) );
 
     // Scatter-as-gather guard: a sharp pixel must not bleed into a blurred one,
-    // only the other way round.
-    k *= clamp( mgCoc( uv ) / max( coc, 1e-3 ), 0.10, 1.0 );
+    // only the other way round. This is the tap that made a per-pixel CoC
+    // target worth having.
+    k *= clamp( texture2D( tCoc, uv ).r / max( coc, 1e-3 ), 0.10, 1.0 );
 
     // Weight highlights up before averaging so they resolve as bright discs
     // instead of being diluted by their dark surround. This buffer is linear
@@ -285,30 +392,65 @@ void main() {
 }
 `;
 
-/** Half-height of the sharp band, in uv.y. Clamps whatever a peer hands us. */
-const BAND_MIN = 0.040;
-const BAND_MAX = 0.210;
-/** uv.y distance over which coc climbs 0 -> 1. Owned here; art direction. */
-const DOF_RAMP = 0.200;
+/**
+ * Half-height of the sharp band, in uv.y, i.e. half the fraction of frame
+ * height held sharp by the screen-space term. 0.115 is a 23% strip. The old
+ * ceiling of 0.210 was a 42% strip and, with Director asking for 0.22 at rest,
+ * that is what shipped: nearly half the frame sharp is a photograph of a large
+ * object, which is the opposite of the effect this pass exists for.
+ */
+const BAND_MIN = 0.030;
+const BAND_MAX = 0.115;
+/**
+ * Incoming half-heights are compressed toward BAND_MIN by this before clamping,
+ * so Director's speed-dependent 0.172..0.22 keeps its *shape* (a narrower band
+ * the faster you go) instead of flat-topping against the ceiling.
+ */
+const BAND_SQUEEZE = 0.5;
+/**
+ * uv.y distance over which the screen band's coc climbs 0 -> 1. Owned here.
+ *
+ * The instinct with a narrower band is to sharpen the ramp with it, and that is
+ * wrong now that a depth term exists: the two are the same function on a level
+ * camera, so a short ramp just double-counts. Measured on a paused chase frame
+ * at 1920x1080 ultra, fraction of the frame sitting at the full 16.7 px kernel:
+ * ramp 0.150 -> 50.1%, ramp 0.175 -> 45.4%, ramp 0.200 -> 40.7%. 0.175 keeps
+ * the sharp strip at 20% of frame height while leaving the transition long
+ * enough to read as a lens rather than as a wipe.
+ */
+const DOF_RAMP = 0.175;
+/** Depth held fully sharp either side of the plane of focus, as a fraction of
+ *  the shorter of the two ramp spans. 0.28 is ~6 u on a chase camera, which is
+ *  a car length: the subject stays sharp nose to tail. */
+const DOF_DEPTH_BAND = 0.28;
 
 /**
- * Separable two-pass tilt-shift DOF. Owns its own intermediate target because a
- * pair of ShaderPasses would ping-pong the composer buffers and force the second
- * direction to read a half-finished frame.
+ * Separable tilt-shift DOF with a real depth term.
+ *
+ * Three draws: a CoC prepass into its own R8 target, then horizontal and
+ * vertical blur. It owns its intermediate targets because a chain of
+ * ShaderPasses would ping-pong the composer buffers and force each stage to
+ * read a half-finished frame.
  */
 class TiltShiftPass extends Pass {
-  constructor(width, height, taps = 8) {
+  constructor(width, height, taps = 8, depthTexture = null) {
     super();
     this.name = 'MG.TiltShift';
     this.needsSwap = true;
+    this.usesDepthTexture = !!depthTexture;
 
+    // One shared bag. Every material takes its uniforms from here by reference,
+    // so a single write in JS reaches all three; three only uploads the ones a
+    // given program actually declares.
     this.uniforms = {
       tDiffuse: { value: null },
+      tCoc: { value: null },
+      tDepth: { value: depthTexture },
       uTexel: { value: new THREE.Vector2(1 / width, 1 / height) },
       uDirection: { value: new THREE.Vector2(1, 0) },
       uBandDir: { value: new THREE.Vector2(0, 1) },
       uFocusCenter: { value: 0.52 },
-      uBandWidth: { value: 0.130 },
+      uBandWidth: { value: 0.100 },
       uRamp: { value: DOF_RAMP },
       uPower: { value: 2.0 },
       uMaxRadius: { value: 16 },
@@ -316,29 +458,48 @@ class TiltShiftPass extends Pass {
       uHighlight: { value: 2.2 },
       uHlKnee: { value: 0.85 },
       uEdge: { value: 0.16 },
+      uTanHalf: { value: new THREE.Vector2(0.60, 0.33) },
+      uPlaneN: { value: new THREE.Vector3(0, 0.6, 0.8) },
+      uPlaneD: { value: 100 },
+      uNearFar: { value: new THREE.Vector2(2, 4000) },
+      uFocusDepth: { value: 130 },
+      uNearSpan: { value: 40 },
+      uFarSpan: { value: 60 },
+      uDepthBand: { value: 8 },
+      // Slightly sub-quadratic: the depth spread across a high-angle chase
+      // frame is only about +-25% of the focus distance, so a steeper exponent
+      // leaves the mid-field looking sharp and the effect looking like a wipe.
+      uDepthPower: { value: 1.25 },
+      uDepthAmount: { value: 1.0 },
     };
 
-    const make = (dir) => {
-      const u = THREE.UniformsUtils.clone(this.uniforms);
-      // Everything except tDiffuse and uDirection is shared by reference so a
-      // single write in JS reaches both directions.
-      for (const k in u) {
-        if (k !== 'tDiffuse' && k !== 'uDirection') u[k] = this.uniforms[k];
-      }
-      u.uDirection.value.copy(dir);
+    const make = (frag, overrides, name) => {
+      const u = {};
+      for (const k in this.uniforms) u[k] = this.uniforms[k];
+      for (const k in overrides) u[k] = overrides[k];
       return new THREE.ShaderMaterial({
-        name: 'MG.TiltShift',
-        defines: { MG_DOF_TAPS: taps },
+        name,
+        defines: Object.assign(
+          { MG_DOF_TAPS: taps },
+          depthTexture ? { MG_DOF_DEPTHTEX: 1 } : null
+        ),
         uniforms: u,
         vertexShader: POST_VERT,
-        fragmentShader: TILT_FRAG,
+        fragmentShader: frag,
         depthTest: false,
         depthWrite: false,
       });
     };
 
-    this.materialH = make(new THREE.Vector2(1, 0));
-    this.materialV = make(new THREE.Vector2(0, 1));
+    this.materialCoc = make(COC_FRAG, {}, 'MG.TiltShift.coc');
+    this.materialH = make(TILT_FRAG, {
+      tDiffuse: { value: null },
+      uDirection: { value: new THREE.Vector2(1, 0) },
+    }, 'MG.TiltShift.h');
+    this.materialV = make(TILT_FRAG, {
+      tDiffuse: { value: null },
+      uDirection: { value: new THREE.Vector2(0, 1) },
+    }, 'MG.TiltShift.v');
 
     this.rt = new THREE.WebGLRenderTarget(width, height, {
       type: THREE.HalfFloatType,
@@ -348,13 +509,32 @@ class TiltShiftPass extends Pass {
     this.rt.texture.name = 'MG.TiltShift.h';
     this.rt.texture.generateMipmaps = false;
 
+    // 8 bits is 1/255 of a 16.7 px kernel, i.e. 0.07 px of radius quantisation.
+    // RGBA rather than Red because R8 render targets are the kind of thing a
+    // driver declines quietly.
+    this.rtCoc = new THREE.WebGLRenderTarget(width, height, {
+      type: THREE.UnsignedByteType,
+      format: THREE.RGBAFormat,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    this.rtCoc.texture.name = 'MG.TiltShift.coc';
+    this.rtCoc.texture.generateMipmaps = false;
+    this.uniforms.tCoc.value = this.rtCoc.texture;
+
     this._quad = new FullScreenQuad(null);
   }
 
   setSize(width, height) {
-    this.rt.setSize(width, height);
-    this.uniforms.uTexel.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
-    this.uniforms.uAspect.value = width / Math.max(1, height);
+    const w = Math.max(1, width);
+    const h = Math.max(1, height);
+    this.rt.setSize(w, h);
+    this.rtCoc.setSize(w, h);
+    // setSize can hand back a fresh texture object; keep the sampler pointed at
+    // whatever the target actually owns now.
+    this.uniforms.tCoc.value = this.rtCoc.texture;
+    this.uniforms.uTexel.value.set(1 / w, 1 / h);
+    this.uniforms.uAspect.value = w / h;
   }
 
   setTaps(taps) {
@@ -367,6 +547,11 @@ class TiltShiftPass extends Pass {
   render(renderer, writeBuffer, readBuffer) {
     const autoClear = renderer.autoClear;
     renderer.autoClear = false;
+
+    this._quad.material = this.materialCoc;
+    renderer.setRenderTarget(this.rtCoc);
+    renderer.clear();
+    this._quad.render(renderer);
 
     this.materialH.uniforms.tDiffuse.value = readBuffer.texture;
     this._quad.material = this.materialH;
@@ -389,6 +574,8 @@ class TiltShiftPass extends Pass {
 
   dispose() {
     this.rt.dispose();
+    this.rtCoc.dispose();
+    this.materialCoc.dispose();
     this.materialH.dispose();
     this.materialV.dispose();
     // Deliberately not this._quad.dispose(): FullScreenQuad.dispose() frees the
@@ -495,6 +682,12 @@ const GradeShader = {
     uShadowTint: { value: new THREE.Vector3(1, 1, 1) },
     uMidTint: { value: new THREE.Vector3(1, 1, 1) },
     uHighTint: { value: new THREE.Vector3(1, 1, 1) },
+    // Soft-clip knees, in the perceptual domain the contrast stretch works in.
+    // See mgSoftClip: the toe knee is what stops the stretch welding every
+    // deep value onto one number, the shoulder knee is what stops a specular
+    // going flat white a stop before it should.
+    uToeKnee: { value: 0.020 },
+    uShoulderKnee: { value: 0.030 },
   },
   vertexShader: POST_VERT,
   fragmentShader: /* glsl */ `
@@ -514,6 +707,8 @@ const GradeShader = {
     uniform vec3  uShadowTint;
     uniform vec3  uMidTint;
     uniform vec3  uHighTint;
+    uniform float uToeKnee;
+    uniform float uShoulderKnee;
     varying vec2 vUv;
     ${LUMA}
 
@@ -541,6 +736,22 @@ const GradeShader = {
       color = mgRRTAndODTFit( color );
       color = MG_ACES_OUT * color;
       return clamp( color, 0.0, 1.0 );
+    }
+
+    // Smooth version of max( x, 0 ): the hyperbola that osculates the corner.
+    // Monotonic, C-infinity, and it never returns a value two different inputs
+    // share, which is the whole point of it being here. k is the width of the
+    // rounded corner; the curve is within 1% of the identity by x = 3k.
+    vec3 mgSoftFloor( vec3 x, float k ) {
+      return 0.5 * ( x + sqrt( x * x + k * k ) );
+    }
+
+    // Soft floor at 0 and soft ceiling at 1, so a linear contrast stretch can
+    // run past both ends without a clamp welding a whole range of inputs onto
+    // one output.
+    vec3 mgSoftClip( vec3 x, float kLo, float kHi ) {
+      x = mgSoftFloor( x, kLo );
+      return 1.0 - mgSoftFloor( 1.0 - x, kHi );
     }
 
     // The LUT is a 32^3 cube stored as a horizontal strip of blue slices:
@@ -584,7 +795,32 @@ const GradeShader = {
       // --- display-referred -------------------------------------------------
       c = clamp( c * uGain + uLift, 0.0, 1.0 );
       c = pow( c, 1.0 / max( uGamma, vec3( 1e-3 ) ) );
-      c = clamp( ( c - 0.435 ) * uContrast + 0.435, 0.0, 1.0 );
+
+      // CONTRAST. This used to be a straight stretch in display-LINEAR about a
+      // pivot of 0.435, hard-clamped to [0,1]. Both halves of that were wrong
+      // and together they were the single worst thing in the grade:
+      //
+      //   - a linear stretch about a high pivot subtracts a constant 0.435 *
+      //     ( C - 1 ) from every value, which at C = 1.13 is 0.0566 -- larger
+      //     than everything ACES returns below 0.11;
+      //   - the clamp then welded that entire range onto exactly 0.
+      //
+      // Measured on the morning look: every scene radiance below 0.066 came
+      // out of here as the same number, so a chase frame ran ~12% of its
+      // pixels on one RGB triple and a car in shade was a silhouette. The fix
+      // is to stretch where contrast belongs -- a perceptual domain -- and to
+      // roll off instead of clamping. MG_PIVOT_ENC is 0.435 taken through the
+      // same encoding, so the pivot keeps its VALUE and only the shape of the
+      // curve changes: midtones and highlights land within a code value or two
+      // of where they did, while the crush threshold drops from a scene
+      // radiance of 0.066 to 0.023 and the slope through the shadows roughly
+      // doubles.
+      const float MG_ENC = 1.0 / 2.2;
+      const float MG_PIVOT_ENC = 0.685;
+      vec3 e = pow( max( c, vec3( 1e-6 ) ), vec3( MG_ENC ) );
+      e = ( e - MG_PIVOT_ENC ) * uContrast + MG_PIVOT_ENC;
+      e = mgSoftClip( e, uToeKnee, uShoulderKnee );
+      c = pow( max( e, vec3( 1e-6 ) ), vec3( 2.2 ) );
 
       // Film has no true black: a projected frame sits around 2% and the shadow
       // keeps the colour of whatever is filling it. Lifting the toe here — after
@@ -1031,6 +1267,9 @@ const _vp = new THREE.Matrix4();
 const _proj = new THREE.Vector3();
 const _cutPos = new THREE.Vector3();
 const _cutQuat = new THREE.Quaternion();
+const _planeN = new THREE.Vector3();
+const _camWorld = new THREE.Vector3();
+const _viewPos = new THREE.Vector3();
 
 // Camera-cut thresholds for the motion blur reprojection. 1 unit = 1 cm, and a
 // chase camera travels a few units per frame at racing speed, so 30 u (900 u²)
@@ -1088,6 +1327,21 @@ export class PostFX {
     this._focus = 0.52;
     this._focusOverride = null;
     this._focusTau = 0.13;
+    /** View depth of the plane of focus, damped. Seeded at a chase distance. */
+    this._focusDepth = 130;
+    /**
+     * Standing lens tilt, in degrees of band angle, applied on top of whatever
+     * the camera's own roll contributes. A shift lens is a physical object that
+     * is almost never square to the subject, and a band that is exactly
+     * horizontal in every frame reads as a screen-space gradient rather than as
+     * optics. Default-on because nothing outside this file has ever called
+     * setFocusTilt(); see the report note on a Director-driven version.
+     */
+    this.focusTiltBias = 2.0;
+    this._tiltOverride = null;
+    /** Sample the AO pass's G-buffer depth instead of the ground plane. Off:
+     *  see the measurement in build(). */
+    this.useGBufferDepth = false;
     /** Extra multiplier on uMaxRadius, from post.params.tiltShiftAmount. */
     this._dofAmount = 1;
     this._lookExposure = 1;
@@ -1202,20 +1456,32 @@ export class PostFX {
         const gtao = this._safe('gtao', () => {
           const p = new GTAOPass(scene, camera, dw, dh);
           p.output = GTAOPass.OUTPUT.Default;
-          p.blendIntensity = 0.95;
-          // Radius is world units: 1 u = 1 cm, so ~6 cm bites into panel gaps,
-          // kerb roots and the crevice where a tyre meets the surface without
-          // painting a grey halo around whole objects.
+          p.blendIntensity = 1.0;
+          // Radius is WORLD UNITS and 1 u = 1 cm, so this number has to be read
+          // against the things it is meant to occlude, not against a habit from
+          // metre-scale scenes. A wheel is 2.3 u across, a wheel arch clears the
+          // tyre by well under 1 u, and a tyre contact patch is a fraction of
+          // that. The 6.0 that shipped is two thirds of a whole car length: at
+          // the chase camera's ~0.065 u per pixel that is a 92 px gather, which
+          // does not occlude a crevice, it lays a soft grey band across the
+          // frame — which is exactly what the review saw. 1.5 u is a 23 px
+          // gather and lands in the gaps that actually exist here.
+          //
+          // thickness is the assumed depth of an occluder behind its visible
+          // surface; leaving it at 4.0 with a 1.5 radius would let a kerb occlude
+          // things the far side of it, so it moves with the radius.
           p.updateGtaoMaterial({
-            radius: 6.0,
-            distanceExponent: 1.0,
-            thickness: 4.0,
-            scale: 1.0,
+            radius: 1.5,
+            distanceExponent: 1.4,
+            thickness: 1.2,
+            scale: 1.15,
             samples: this.tier === 'ultra' ? 16 : 11,
             distanceFallOff: 1.0,
             screenSpaceRadius: false,
           });
-          p.updatePdMaterial({ lumaPhi: 8, depthPhi: 2.5, normalPhi: 3.5, radius: 6, samples: this.tier === 'ultra' ? 16 : 8 });
+          // Denoise radius is in pixels. A tighter AO gather is higher frequency
+          // but covers fewer pixels, so a 6 px blur smears it back out flat.
+          p.updatePdMaterial({ lumaPhi: 8, depthPhi: 2.5, normalPhi: 3.5, radius: 3.5, samples: this.tier === 'ultra' ? 16 : 8 });
           return p;
         });
         if (gtao) {
@@ -1269,13 +1535,48 @@ export class PostFX {
 
     /* -- 3. tilt-shift DOF ----------------------------------------------- */
     if (want.tiltShift !== false && tier.tilt) {
-      const tilt = this._safe('tiltShift', () => new TiltShiftPass(dw, dh, tier.dofTaps));
-      if (tilt && this._validate(tilt, 'tiltShift')) {
+      // DEPTH SOURCE. The AO pass renders a full-resolution G-buffer one pass
+      // earlier in the chain and at the same size, so borrowing its depth
+      // attachment looks free. It was wired that way and then measured, and it
+      // does not decode: on a paused chase frame a raycast through the bottom,
+      // middle and top of frame hits the table at 76.4, 92.1 and 115.8 u, the
+      // ground-plane model returns 75.5, 89.8 and 112.1, and the G-buffer path
+      // returns 44.7, 57.3 and 107.5. Hiding every fx layer and the backdrop
+      // changes none of those, so it is not a near occluder writing into the
+      // override pass; the G-buffer is simply not in the projection this
+      // reconstruction assumes. Saturating CoC everywhere is the failure mode
+      // that produces, and the whole frame came back as mush.
+      //
+      // So the plane model is the shipped path — it is within 2 u of the
+      // raycast, which is half the in-focus depth band — and the sampler stays
+      // behind a flag for whoever isolates the projection mismatch. Turn it on
+      // with postfx.useGBufferDepth = true before build().
+      const ao = this.useGBufferDepth ? this.passes.ao : null;
+      const aoDepth = (ao && (ao.normalRenderTarget?.depthTexture || ao.depthTexture)) || null;
+
+      let tilt = null;
+      if (aoDepth) {
+        tilt = this._safe('tiltShift', () => new TiltShiftPass(dw, dh, tier.dofTaps, aoDepth));
+        if (tilt && !this._validate(tilt, 'tiltShift')) {
+          tilt.dispose();
+          tilt = null;
+          this.disabled.delete('tiltShift');
+          console.warn('[MICRO GAUNTLET] postfx: DOF depth attachment unusable; using the ground-plane depth model.');
+        }
+      }
+      if (!tilt) {
+        tilt = this._safe('tiltShift', () => new TiltShiftPass(dw, dh, tier.dofTaps, null));
+        if (tilt && !this._validate(tilt, 'tiltShift')) {
+          tilt.dispose();
+          tilt = null;
+        }
+      }
+
+      if (tilt) {
         tilt.uniforms.uEdge.value = tier.edgeDefocus;
         this.passes.tiltShift = tilt;
         composer.addPass(tilt);
-      } else if (tilt) {
-        tilt.dispose();
+      } else {
         // This is the signature effect; losing it silently is how the frame ends
         // up uniformly sharp and nobody notices until a review.
         console.error('[MICRO GAUNTLET] postfx: tilt-shift unavailable — the miniature look is off.');
@@ -1519,14 +1820,7 @@ export class PostFX {
   applySettings(settings) {
     const params = settings && settings.post && settings.post.params;
     if (!params) return this;
-    this._dofAmount = clampNum(num(params.tiltShiftAmount, 1), 0, 2);
-    const t = this.passes.tiltShift;
-    if (t) {
-      const tier = POST_TIERS[this.tier] || POST_TIERS.ultra;
-      const dh = Math.max(1, Math.round(this.height * (this.ctx.renderer?.getPixelRatio?.() || 1)));
-      t.uniforms.uMaxRadius.value = Math.max(4, dh * tier.dofRadius) * this._dofAmount;
-    }
-    return this;
+    return this.setDofScale(num(params.tiltShiftAmount, 1));
   }
 
   /** Toggle the retro CRT/scanline grade. Off by default. */
@@ -1544,10 +1838,11 @@ export class PostFX {
    *
    * @param {?number} centre  uv.y of the in-focus band, or null to resume
    *                          tracking the player.
-   * @param {number} [width]  half-height of the sharp band in uv.y. Clamped to
-   *                          [0.040, 0.210]: above that the band swallows the
-   *                          frame and the miniature read goes with it, and the
-   *                          intro deliberately asks for 0.46.
+   * @param {number} [width]  half-height of the sharp band in uv.y. Compressed
+   *                          toward BAND_MIN and clamped to [0.030, 0.115]:
+   *                          Director asks for 0.172-0.22 and the intro for
+   *                          0.46, and anything over ~0.13 is half the frame in
+   *                          focus, which is a photograph of a large object.
    * @param {number} [falloff] ramp EXPONENT, matching what
    *                          Settings.post.params.tiltShiftFalloff documents
    *                          ("quadratic ramp away from the band", ships as 2).
@@ -1560,18 +1855,57 @@ export class PostFX {
     const t = this.passes.tiltShift;
     if (!t) return this;
     const u = t.uniforms;
-    if (Number.isFinite(width)) u.uBandWidth.value = clampNum(width, BAND_MIN, BAND_MAX);
+    if (Number.isFinite(width)) {
+      const w = BAND_MIN + Math.max(0, width - BAND_MIN) * BAND_SQUEEZE;
+      u.uBandWidth.value = clampNum(w, BAND_MIN, BAND_MAX);
+    }
     if (Number.isFinite(falloff)) u.uPower.value = clampNum(falloff, 1, 4);
     return this;
   }
 
-  /** Tilt the plane of focus off horizontal. `deg` is the band's screen angle. */
+  /**
+   * Pin the plane of focus off horizontal. `deg` is the band's screen angle;
+   * pass null (or nothing) to hand it back to the camera, which is the default
+   * and which tilts the band along the table's iso-depth lines — the same thing
+   * a shift lens does when it is aligned to a surface.
+   */
   setFocusTilt(deg) {
+    this._tiltOverride = Number.isFinite(deg) ? deg : null;
     const t = this.passes.tiltShift;
-    if (!t) return this;
-    const a = num(deg, 0) * Math.PI / 180;
+    if (!t || this._tiltOverride == null) return this;
+    const a = this._tiltOverride * Math.PI / 180;
     t.uniforms.uBandDir.value.set(Math.sin(a), Math.cos(a));
     return this;
+  }
+
+  /**
+   * Scale the blur radius without going through Settings. 0 disables the blur
+   * while leaving the pass in the chain; 1 is the tier's authored radius. This
+   * is the dial an establishing shot should reach for when it wants the frame
+   * readable, rather than asking for a band wide enough to defeat the effect.
+   */
+  setDofScale(x) {
+    this._dofAmount = clampNum(num(x, 1), 0, 2);
+    const t = this.passes.tiltShift;
+    if (t) {
+      const tier = POST_TIERS[this.tier] || POST_TIERS.ultra;
+      const dh = Math.max(1, Math.round(this.height * (this.ctx.renderer?.getPixelRatio?.() || 1)));
+      t.uniforms.uMaxRadius.value = Math.max(4, dh * tier.dofRadius) * this._dofAmount;
+    }
+    return this;
+  }
+
+  /**
+   * View depth of the table surface along the eye ray through an NDC point.
+   * The JS twin of mgViewDepth's plane branch — used to read the depth spread
+   * across the frame so the DOF ramps scale themselves to the shot instead of
+   * being authored for one camera. Returns -1 when the ray misses the table.
+   */
+  _planeDepth(ndcX, ndcY, tanX, tanY, planeD) {
+    const denom = _planeN.x * ndcX * tanX + _planeN.y * ndcY * tanY - _planeN.z;
+    if (Math.abs(denom) < 1e-5) return -1;
+    const s = -planeD / denom;
+    return s > 0 && Number.isFinite(s) ? s : -1;
   }
 
   onResize(w, h) {
@@ -1730,11 +2064,88 @@ export class PostFX {
         const k = 1 - Math.exp(-dt / this._focusTau);
         this._focus += (target - this._focus) * k;
       }
-      // One NaN reaching uFocusCenter would make every mgCoc() call NaN, every
-      // kernel weight NaN, and the whole pass output NaN — which composites as
-      // black, not as an error.
+      // One NaN reaching uFocusCenter would make every CoC NaN, every kernel
+      // weight NaN, and the whole pass output NaN — which composites as black,
+      // not as an error.
       if (!Number.isFinite(this._focus)) this._focus = 0.52;
-      p.tiltShift.uniforms.uFocusCenter.value = this._focus;
+      const u = p.tiltShift.uniforms;
+      u.uFocusCenter.value = this._focus;
+
+      /* --- the lens, in world units ------------------------------------- */
+      // Half-angles straight off the projection matrix rather than off
+      // camera.fov, so an off-square viewport or a zoom applied by the director
+      // through the matrix is picked up without a second source of truth.
+      const pe = camera.projectionMatrix.elements;
+      const tanX = Math.abs(pe[0]) > 1e-6 ? 1 / pe[0] : 0.60;
+      const tanY = Math.abs(pe[5]) > 1e-6 ? 1 / pe[5] : 0.33;
+      u.uTanHalf.value.set(tanX, tanY);
+      u.uNearFar.value.set(Math.max(0.01, num(camera.near, 2)), Math.max(1, num(camera.far, 4000)));
+
+      // The table surface expressed in view space. World up through the inverse
+      // of the camera's rotation is the second ROW of matrixWorld, and the plane
+      // offset is just how far the lens is above the table.
+      const me = camera.matrixWorld.elements;
+      _planeN.set(me[1], me[5], me[9]);
+      const nl = _planeN.length();
+      if (nl > 1e-6) _planeN.multiplyScalar(1 / nl);
+      else _planeN.set(0, 0, 1);
+      u.uPlaneN.value.copy(_planeN);
+      _camWorld.setFromMatrixPosition(camera.matrixWorld);
+      const planeD = num(_camWorld.y - this.motionPlaneY, 100);
+      u.uPlaneD.value = planeD;
+
+      /* --- plane of focus ------------------------------------------------ */
+      let zf = -1;
+      const heroPos =
+        (ctx.player && ctx.player.position) ||
+        (ctx.vehicles && ctx.vehicles[0] && ctx.vehicles[0].position) ||
+        null;
+      if (heroPos) {
+        _viewPos.copy(heroPos).applyMatrix4(camera.matrixWorldInverse);
+        if (Number.isFinite(_viewPos.z) && _viewPos.z < 0) zf = -_viewPos.z;
+      }
+      // No car (menu, intro orbit, replay seek): rack focus onto the table where
+      // the band is sitting instead of holding a stale distance.
+      if (!(zf > 0)) zf = this._planeDepth(0, this._focus * 2 - 1, tanX, tanY, planeD);
+      if (!(zf > 0)) zf = this._focusDepth;
+      // Same critically damped follow as the band centre: suspension travel
+      // moves the subject a unit or two per frame and the focus must not buzz.
+      const kz = 1 - Math.exp(-dt / 0.10);
+      this._focusDepth += (zf - this._focusDepth) * kz;
+      if (!Number.isFinite(this._focusDepth) || this._focusDepth <= 0) this._focusDepth = zf > 0 ? zf : 130;
+      u.uFocusDepth.value = this._focusDepth;
+
+      /* --- ramp spans, read off the shot --------------------------------- */
+      // How much depth the frame actually contains, top edge to bottom edge.
+      // Deriving the ramps from this is what makes one set of numbers work for
+      // a 55-degree chase (a +-25% depth spread) and a low establishing orbit
+      // (several hundred percent) without either turning to mush.
+      const fz = this._focusDepth;
+      const zTop = this._planeDepth(0, 0.92, tanX, tanY, planeD);
+      const zBot = this._planeDepth(0, -0.92, tanX, tanY, planeD);
+      const farSpan = clampNum(zTop > fz ? zTop - fz : fz * 1.2, fz * 0.10, fz * 1.60);
+      const nearSpan = clampNum(zBot > 0 && zBot < fz ? fz - zBot : fz * 0.35, fz * 0.06, fz * 0.55);
+      u.uFarSpan.value = farSpan;
+      u.uNearSpan.value = nearSpan;
+      u.uDepthBand.value = Math.min(nearSpan, farSpan) * DOF_DEPTH_BAND;
+
+      /* --- band angle ---------------------------------------------------- */
+      if (this._tiltOverride == null) {
+        // The band should lie along the table's iso-depth lines, and the screen
+        // direction of those is fixed by the plane normal in view space: with a
+        // level camera it is horizontal, and it rotates one-for-one with roll.
+        // The x half of the ray scaling cancels against the aspect divide the
+        // shader does, so this reduces to (-n.x, n.y).
+        let bx = -_planeN.x;
+        let by = _planeN.y;
+        if (by < 0) { bx = -bx; by = -by; }
+        const bl = Math.hypot(bx, by);
+        if (bl > 1e-4) { bx /= bl; by /= bl; } else { bx = 0; by = 1; }
+        const bias = this.focusTiltBias * Math.PI / 180;
+        const cb = Math.cos(bias);
+        const sb = Math.sin(bias);
+        u.uBandDir.value.set(bx * cb + by * sb, by * cb - bx * sb);
+      }
     }
 
     /* motion blur ---------------------------------------------------------- */

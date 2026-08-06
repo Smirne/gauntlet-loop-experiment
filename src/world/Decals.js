@@ -139,7 +139,33 @@ export const STAIN_KINDS = {
 };
 
 const ATLAS_COLS = 4;
+const ATLAS_ROWS = 4;
 const ATLAS_CELL = 1 / ATLAS_COLS;
+
+/**
+ * Texture-space origin of one atlas cell, matching how the canvas was drawn.
+ *
+ * The v flip is the whole point of this function existing. The atlas is a
+ * `CanvasTexture`, so `flipY` is true and texture v = 0 is the **bottom** row of
+ * the canvas — a cell painted at canvas row `r` counted from the top is sampled
+ * at `v = (ATLAS_ROWS - 1 - r) * ATLAS_CELL`. Writing the offset as `r *
+ * ATLAS_CELL` is invisible in code review and unmistakable on screen: every
+ * stain in the game renders as the artwork from the mirrored row. That is where
+ * the pale blue-grey "shadow" under the kitchen coffee mugs came from — a
+ * `coffeeRing` (row 1) was sampling row 2 and painting `chalkScuff`, which is a
+ * bright bloom, 43 luma levels *lighter* than the wood it was meant to stain.
+ * The `oil` slicks were drawing `pocket`, which is why they read as hard-edged
+ * holes cut in the ground.
+ */
+function atlasOrigin(cell, out) {
+  const col = cell % ATLAS_COLS;
+  const row = (cell / ATLAS_COLS) | 0;
+  out[0] = col * ATLAS_CELL;
+  out[1] = (ATLAS_ROWS - 1 - row) * ATLAS_CELL;
+  return out;
+}
+
+const _atlasUv = [0, 0];
 
 /** Hazard surfaces that imply a stain, so a definition gets one even if it
  *  ships no explicit `decals` array. */
@@ -865,6 +891,13 @@ export class Decals {
     });
 
     const cell = ATLAS_CELL.toFixed(6);
+    // Same floor the tyre-mark deposit uses. Nothing painted on the ground is
+    // allowed to reach zero albedo: a pure-black ellipse over a warm mid-tone
+    // table stops reading as a stain and starts reading as a hole cut in the
+    // surface, and being the darkest value in the frame it takes the eye
+    // straight to it. The floor is in linear working space, which is what
+    // diffuseColor already holds by the time map_fragment has run.
+    const floor = `vec3( ${MARK_FLOOR_R.toFixed(4)}, ${MARK_FLOOR_G.toFixed(4)}, ${MARK_FLOOR_B.toFixed(4)} )`;
     mat.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>
@@ -883,6 +916,10 @@ varying float vStainRough;
 varying float vStainOpacity;`)
         .replace('#include <map_fragment>', `#include <map_fragment>
 diffuseColor.a *= vStainOpacity;`)
+        // After color_fragment, so a track that tints a stain cannot dive under
+        // the floor either. This is the last write to diffuseColor.rgb.
+        .replace('#include <color_fragment>', `#include <color_fragment>
+diffuseColor.rgb = max( diffuseColor.rgb, ${floor} );`)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
 roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
     };
@@ -892,7 +929,13 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
     mesh.name = 'decals:stains';
     mesh.count = 0;
     mesh.castShadow = false;
-    mesh.receiveShadow = false;
+    // A lit decal that does not receive shadow is worse than an unlit one: the
+    // coffee ring under the kitchen mug is an 18 u quad centred on the prop, so
+    // it covers most of the prop's own cast shadow and renders that patch at
+    // full key. The shadow does not weaken, it is *erased* inside the decal's
+    // footprint — which is exactly the "the shadow under the mug is brighter
+    // than the table" reading, arrived at from the other direction.
+    mesh.receiveShadow = true;
     mesh.frustumCulled = false;
     mesh.renderOrder = 5;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -1032,10 +1075,9 @@ roughnessFactor = clamp( vStainRough, 0.03, 1.0 );`);
     mesh.setColorAt(i, _c0);
 
     const a = this.stainAttr.array;
-    const col = spec.cell % ATLAS_COLS;
-    const row = (spec.cell / ATLAS_COLS) | 0;
-    a[i * 4] = col * ATLAS_CELL;
-    a[i * 4 + 1] = row * ATLAS_CELL;
+    atlasOrigin(spec.cell, _atlasUv);
+    a[i * 4] = _atlasUv[0];
+    a[i * 4 + 1] = _atlasUv[1];
     a[i * 4 + 2] = entry.roughness;
     a[i * 4 + 3] = entry.opacity;
 

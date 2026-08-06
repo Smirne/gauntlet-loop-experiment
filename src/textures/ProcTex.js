@@ -1053,6 +1053,16 @@ function woodBase(B, cfg) {
   }
 
   // Knots, in texel coordinates, with wrapped distance queries.
+  //
+  // `phase` is load-bearing and used to be missing. The core's ring pattern
+  // reads `kn.phase`, and `undefined * 0.1` is NaN; that NaN went through the
+  // colour mix into every texel inside the knot radius, `clamp(NaN, 0, 1)` is
+  // NaN, and storing NaN in a Uint8Array writes 0. Every knot in every timber
+  // therefore baked as a hard-edged disc of pure black (D5) — which is what a
+  // reviewer reported as "desaturated blue dots", because a black hole in the
+  // albedo shows nothing but the environment term on top of it. Only the albedo
+  // was affected, since nothing else in the bake reads `phase`, which is why the
+  // height, roughness and AO around a knot were all correct.
   const knots = [];
   const nKnots = Math.round(cfg.knots);
   for (let i = 0; i < nKnots; i++) {
@@ -1061,11 +1071,20 @@ function woodBase(B, cfg) {
       y: rng.next() * size,
       r: (rng.range(cfg.knotMin, cfg.knotMax) / B.world) * size,
       pull: rng.range(0.6, 1.25),
-      dark: rng.range(0.6, 1),
+      dark: rng.range(0.62, 1),
       ringF: rng.range(9, 17),
+      phase: rng.next() * 100,
       dead: rng.bool(cfg.deadKnot ?? 0.25),
     });
   }
+
+  // Season-to-season variation in the ring, and how the two woods differ in
+  // gloss. Defaulted rather than required so the two timbers that do not set
+  // them (pine, laminate) keep working unchanged.
+  const lateRamp = cfg.lateRamp ?? 0.34;
+  const lateVary = cfg.lateVary ?? 0.16;
+  const lateGloss = cfg.lateGloss ?? 0.12;
+  const earlyRough = cfg.earlyRough ?? 0.06;
 
   // --- low-frequency fields -------------------------------------------------
   const archCells = Math.max(2, Math.round(cfg.archCells * B.detail));
@@ -1087,7 +1106,11 @@ function woodBase(B, cfg) {
   const poresOn = cfg.pores * poreFade;
 
   // --- main pass ------------------------------------------------------------
+  // One ring spans many texels, so the per-ring season hash is memoised on the
+  // last (ring, plank) pair rather than evaluated per texel: a scanline crosses
+  // a few dozen rings, not a few thousand.
   const invSize = 1 / size;
+  let lastRing = -1e9, lastPlank = -1, lateStart = 0, lateEnd = 1, seam = 1;
   for (let y = 0, i = 0; y < size; y++) {
     const v = y * invSize;
     for (let x = 0; x < size; x++, i++) {
@@ -1104,7 +1127,7 @@ function woodBase(B, cfg) {
 
       // Knot warp: push the grain coordinates radially outward and stretch
       // them along the trunk, which is what makes rings sweep around a knot.
-      let knotIn = 0, knotRing = 0, knotCore = 0;
+      let knotIn = 0, knotRing = 0, knotCore = 0, knotDark = 1, knotDead = 0;
       for (let k = 0; k < knots.length; k++) {
         const kn = knots[k];
         let dx = x - kn.x, dy = y - kn.y;
@@ -1120,8 +1143,15 @@ function woodBase(B, cfg) {
         along += dy * invd * push * 1.6;
         if (d < kn.r) {
           const cIn = 1 - smoothstep(kn.r * 0.72, kn.r, d);
-          knotCore = Math.max(knotCore, cIn);
-          knotRing = Math.max(knotRing, fract(d / kn.r * kn.ringF + kn.phase * 0.1));
+          // Take the strongest knot outright rather than mixing traits from two
+          // overlapping ones, so a knot's own darkness and its own ring phase
+          // stay together.
+          if (cIn > knotCore) {
+            knotCore = cIn;
+            knotRing = fract((d / kn.r) * kn.ringF + kn.phase);
+            knotDark = kn.dark;
+            knotDead = kn.dead ? 1 : 0;
+          }
         }
         knotIn = Math.max(knotIn, f);
       }
@@ -1131,11 +1161,38 @@ function woodBase(B, cfg) {
       const ringR = Math.sqrt(across * across + depth * depth);
       let ringPos = ringR * cfg.ringsPerCm + pk.phase + grainNoise[i] * cfg.ringJitter;
 
+      // Per-ring season. No two consecutive growth rings in real timber put the
+      // same share of themselves into latewood, and drawing them all the same
+      // width is most of why procedural wood reads as printed vinyl: the eye
+      // picks up a constant-width contour loop instantly. Hashing the ring index
+      // (with the plank folded in, so two planks never share a season) moves
+      // both the start and the end of the dark band from ring to ring.
+      const ringId = Math.floor(ringPos);
+      if (ringId !== lastRing || pi !== lastPlank) {
+        lastRing = ringId; lastPlank = pi;
+        const rh = hash2i(ringId, pi, B.seed ^ 0x71c05) / 4294967296;
+        const rh2 = hash2i(ringId, pi + 977, B.seed ^ 0x71c05) / 4294967296;
+        lateStart = cfg.lateStart + (rh - 0.5) * lateVary;
+        lateEnd = Math.min(0.99, cfg.lateEnd + (rh2 - 0.5) * lateVary * 0.6);
+        seam = Math.max(0.04, lateEnd - lateStart);
+      }
+
       const band = fract(ringPos);
-      // Latewood: the dense, dark late-season band. Real timber gives it about
-      // a third of the ring, with a hard inner edge and a soft outer one.
-      let lateW = smoothstep(cfg.lateStart, cfg.lateStart + 0.07, band) * (1 - smoothstep(cfg.lateEnd - 0.10, cfg.lateEnd, band));
-      lateW = clamp(lateW, 0, 1);
+      // Latewood: the dense, dark late-season band. Density does not step — it
+      // climbs through the growing season and falls off a cliff at the ring
+      // boundary — so the band is authored as two components rather than one
+      // plateau with two hard sides. `ramp` is the seasonal climb and carries
+      // the tone *inside* the band and the shading either side of it; `core` is
+      // the narrow dense fibre that carries the edge, and therefore nearly all
+      // of the derived normal. Separating them is what lets the band be soft to
+      // look at and still sharp enough to show relief.
+      const ramp = smoothstep(lateStart - lateRamp, lateEnd, band);
+      const core = smoothstep(lateStart, lateStart + seam * 0.34, band)
+        * (1 - smoothstep(lateEnd - seam * 0.30, lateEnd, band));
+      const lateW = clamp(ramp * 0.42 + core * 0.66, 0, 1);
+      // The densest fibre sits at the outer edge of the band. That gradient is
+      // why real latewood has a sheen across it instead of being a flat stripe.
+      const lateCore = core * smoothstep(lateStart, lateEnd, band);
 
       // Earlywood pore band sits immediately after the ring boundary.
       const earlyBand = 1 - smoothstep(0.0, cfg.poreBand, band);
@@ -1161,10 +1218,15 @@ function woodBase(B, cfg) {
         if (poreW > 0) mixC(col, poreCol, poreW * 0.9, col);
       }
 
-      // Knot colouring on top of everything.
+      // Knot colouring on top of everything. A live knot is resinous and only a
+      // little darker than the board around it; a dead one is a near-black plug
+      // ringed with bark. `cfg.deadKnot` is a *probability*, so the old test
+      // against it was true for every timber and every knot came out dead —
+      // the per-knot flag rolled from it is the one that means anything. The
+      // mix is capped short of 1 as well: a knot is figure, not a hole.
       if (knotCore > 0) {
-        const kc = knotCore * (cfg.deadKnot ? 1 : 0.9);
-        mixC(col, knotCol, kc * (0.55 + 0.45 * knotRing), col);
+        const kc = knotCore * knotDark * (knotDead ? 0.92 : 0.60);
+        mixC(col, knotCol, clamp(kc * (0.5 + 0.5 * knotRing), 0, 0.94), col);
       } else if (knotIn > 0) {
         mixC(col, knotCol, knotIn * knotIn * 0.28, col);
       }
@@ -1187,18 +1249,38 @@ function woodBase(B, cfg) {
       // --- height ---------------------------------------------------------
       // Latewood stands proud on a sanded board (earlywood abrades faster),
       // pores sink, rays sit fractionally high, joints are a groove.
+      //
+      // These amplitudes were roughly doubled after measuring the derived
+      // normal map: 60% of the oak tile encoded to the flat normal exactly, and
+      // the mean slope over the whole tile was 1.9 degrees against 2.6 for
+      // concrete. The grain was physically honest and visually absent, which is
+      // the other half of the "printed vinyl" read — a picture of wood with no
+      // surface under it.
+      //
+      // The weight goes on `lateCore`, not on `lateW`, because `lateW` carries
+      // the wide seasonal ramp: height there produces long smooth swells across
+      // the board — dunes, not grain — which raise the mean-slope statistic and
+      // look like melted plastic in a close-up. `lateCore` is the narrow dense
+      // fibre, so the same height there becomes actual slope.
       let hh = 0.5
-        + lateW * 0.16
-        - poreW * 0.42
-        + rayW * 0.05
-        + fibre[i] * 0.05
+        + lateW * 0.15
+        + lateCore * 0.26
+        - poreW * 0.46
+        + rayW * 0.08
+        + fibre[i] * 0.10
         + grainNoise[i] * 0.05
         - jj * 0.55
-        - knotCore * 0.10 * (cfg.deadKnot ? 1 : 0.4);
+        - knotCore * 0.16 * (knotDead ? 1 : 0.45);
 
       // --- roughness ------------------------------------------------------
+      // Earlywood and latewood are different substances, not one substance in
+      // two colours: the dense late fibre takes a polish and the open early
+      // fibre scatters. Without that split the whole board returns one lobe
+      // width and the grain can only ever be a printed pattern.
       let rr = cfg.rough
-        - lateW * 0.05
+        - lateW * lateGloss
+        - lateCore * lateGloss * 0.5
+        + earlyBand * earlyRough
         + poreW * 0.30
         - rayW * 0.12
         + patina[i] * 0.05
@@ -1350,9 +1432,12 @@ GEN.oak = (B) => {
     planks: 5, ringsPerCm: 1.35, ringJitter: 0.30, archCells: 5,
     pithMin: 1.6, pithMax: 5.5, archMin: 0.8, archMax: 2.6, depthDrift: 0.35,
     lateStart: 0.58, lateEnd: 0.94, poreBand: 0.30,
+    // Oak's ring boundary is the most abrupt of the four timbers, so its dense
+    // core stays narrow; the seasonal ramp ahead of it is what carries the tone.
+    lateRamp: 0.30, lateVary: 0.19, lateGloss: 0.13, earlyRough: 0.07,
     grainCells: 26, fibreCells: 96,
     early: rgb('#c39764'), late: rgb('#8d5f30'), pore: rgb('#4d3118'),
-    ray: rgb('#dcb987'), knotColor: rgb('#4a2c14'),
+    ray: rgb('#dcb987'), knotColor: rgb('#503016'),
     rays: 0.85, pores: 1, poreCellsU: 150, poreStretch: 6, poreSize: 0.40,
     knots: 3, knotMin: 0.7, knotMax: 2.4, deadKnot: 0.2,
     hueJitter: 4, satJitter: 0.10, valJitter: 0.07, patina: 0.10,
@@ -1398,14 +1483,31 @@ GEN.pine = (B) => {
   }
 };
 
+// This is the racing surface. It covers most of the lap on the kitchen table,
+// the chase camera looks straight down it, and — because a car sits 2 cm above
+// a horizontal plane — it is seen almost entirely at grazing incidence. That
+// makes it the one material in the library where the *grazing* response, not
+// the head-on response, is what the game actually looks like.
+//
+// The palette below is deliberately a mid walnut rather than the near-black one
+// it used to be. A dark albedo does not read as dark wood at a grazing angle:
+// it reads as whatever the specular term is reflecting, because the specular is
+// an additive constant and the albedo is what has to out-vote it. Measured on
+// the road ribbon, the old bake went from blue-red 16 apart (warm) at the
+// camera's feet to 7 apart the *other* way (blue) at the horizon — the wood
+// colour simply lost.
 GEN.varnishedWood = (B) => {
   woodBase(B, {
     planks: 3, ringsPerCm: 2.1, ringJitter: 0.34, archCells: 6,
     pithMin: 2.2, pithMax: 7.0, archMin: 0.6, archMax: 2.0, depthDrift: 0.25,
     lateStart: 0.62, lateEnd: 0.95, poreBand: 0.26,
+    // A film finish evens the gloss out, so the early/late split is smaller
+    // here than on the bare board next to it — but not zero, and that residual
+    // difference is what stops the varnish reading as a sheet of laminate.
+    lateRamp: 0.36, lateVary: 0.17, lateGloss: 0.07, earlyRough: 0.045,
     grainCells: 32, fibreCells: 112,
-    early: rgb('#6b4326'), late: rgb('#3c2312'), pore: rgb('#241408'),
-    ray: rgb('#8a5c37'), knotColor: rgb('#2a1608'),
+    early: rgb('#8a5c34'), late: rgb('#57371c'), pore: rgb('#33200f'),
+    ray: rgb('#a5754a'), knotColor: rgb('#40270f'),
     rays: 0.35, pores: 0.55, poreCellsU: 152, poreStretch: 7, poreSize: 0.34,
     knots: 1, knotMin: 0.6, knotMax: 1.6, deadKnot: 0.1,
     hueJitter: 3, satJitter: 0.08, valJitter: 0.06, patina: 0.07,
@@ -1413,23 +1515,29 @@ GEN.varnishedWood = (B) => {
   });
 
   const { size, n } = B;
-  // The varnish wets the timber: deeper, more saturated, and it fills the
-  // pores so the height relief collapses to almost nothing.
+  // The varnish wets the timber: deeper and more saturated. It does *not* fill
+  // the grain flat — a wiped varnish is an open-pore finish and the pores stay
+  // visible as depressions, which at 0.18 retention they did not: the derived
+  // normal came out with a peak slope of 3 degrees across the whole tile, i.e.
+  // a mirror-flat plane with a picture of wood on it.
   const tmp = [0, 0, 0];
   for (let i = 0; i < n; i++) {
-    tint(tmp, B.r[i], B.g[i], B.b[i], 2, 1.24, 0.94);
+    tint(tmp, B.r[i], B.g[i], B.b[i], 2, 1.14, 0.99);
     B.r[i] = tmp[0]; B.g[i] = tmp[1]; B.b[i] = tmp[2];
-    B.h[i] = 0.5 + (B.h[i] - 0.5) * 0.18;
-    // Satin, not a mirror. A kitchen table is a hand-applied wiping varnish
-    // that has been eaten by ten years of plates: a roughness floor of 0.16
-    // still throws a long soft highlight, but it no longer reproduces the sky
-    // and the window sharply enough to alias against its own normal map.
-    B.rough[i] = clamp(0.16 + (B.rough[i] - 0.10) * 0.34, 0.14, 0.56);
+    B.h[i] = 0.5 + (B.h[i] - 0.5) * 0.45;
+    // Satin, and a long way from a mirror. This is the grazing-angle clamp:
+    // three's split-sum DFG approximation returns about 63% of the environment
+    // radiance at grazing incidence for roughness 0.16 and about 29% at the
+    // 0.33 this now bakes to, so widening the lobe removes more than half the
+    // reflected sky from the surface that fills the frame. A ten-year-old
+    // kitchen table that has had plates dragged across it every day sits here
+    // anyway; the old 0.16 floor was a showroom finish nobody owns.
+    B.rough[i] = clamp(0.34 + (B.rough[i] - 0.10) * 0.55, 0.29, 0.78);
   }
 
   // Orange peel: the long-wavelength ripple every sprayed finish has.
   const peel = B.field(Math.round(clamp(size / 26, 6, size / 5)), (nz) => (x, y) => nz.fbm(x, y, 2, 2, 0.5), { samples: 6, seed: 33 });
-  for (let i = 0; i < n; i++) B.h[i] += peel[i] * 0.30;
+  for (let i = 0; i < n; i++) B.h[i] += peel[i] * 0.50;
   B.give(peel);
 
   // Airborne dust caught in the coat, then handled: prints and fine swirls.
@@ -2154,17 +2262,29 @@ GEN.brushedAluminium = (B) => {
   const s3 = B.aniso(Math.max(2, Math.round(fineV * 0.008)), Math.round(fineV * 0.16), (nz) => (x, y) => nz.fbm(x, y, 3, 2, 0.5), { samples: 5, seed: 3 });
   const cloud = B.field(4, (nz) => (x, y) => nz.fbm(x, y, 4, 2, 0.5), { samples: 10, seed: 4 });
 
-  const base = rgb('#e6e8ea');
+  // Aluminium's reflectance is very slightly cool, and authoring it that way is
+  // correct in isolation and wrong in context: a metal is nothing but tinted
+  // environment, the environment here is a daylight sky, and the two cool casts
+  // compound into the "matte blue paint" of D4. A hair on the warm side of
+  // neutral costs nothing physically and puts the material back in the kitchen.
+  const base = rgb('#e8e4dd');
   const metal = B.wantMetal();
   for (let i = 0; i < n; i++) {
+    // The finest of the three grit octaves sits at ~1.9 texels per cell, which
+    // is past what the tile can carry, so `bakeLayer` correctly fades it to a
+    // few percent of its amplitude. Weighting the height toward the two coarser
+    // octaves is therefore not a stylistic choice — it is putting the relief
+    // where the bake can actually represent it. Before this the measured peak
+    // slope over the whole tile was 2 degrees: no brush marks at all.
     const streak = s1[i] * 0.5 + s2[i] * 0.32 + s3[i] * 0.18;
+    const relief = s1[i] * 0.30 + s2[i] * 0.44 + s3[i] * 0.26;
     const lit = 1 + streak * 0.10 + cloud[i] * 0.035;
     B.r[i] = clamp(base[0] * lit, 0, 1);
     B.g[i] = clamp(base[1] * lit, 0, 1);
     B.b[i] = clamp(base[2] * lit, 0, 1);
-    B.h[i] = 0.5 + streak * 0.5;
+    B.h[i] = 0.5 + relief * 0.62;
     // Roughness follows the grit: a scratch trough scatters more than a plateau.
-    B.rough[i] = clamp(0.30 - streak * 0.09 + cloud[i] * 0.04, 0.14, 0.52);
+    B.rough[i] = clamp(0.26 - streak * 0.10 + cloud[i] * 0.04, 0.13, 0.46);
     metal[i] = 1;
   }
   B.give(s1); B.give(s2); B.give(s3); B.give(cloud);
@@ -2239,13 +2359,26 @@ GEN.chromePlate = (B) => {
   for (let i = 0; i < n; i++) {
     B.r[i] = base[0]; B.g[i] = base[1]; B.b[i] = base[2];
     B.h[i] = 0.5 + peel[i] * 0.46 + micro[i] * 0.06;
-    B.rough[i] = clamp(0.035 + Math.abs(micro[i]) * 0.02, 0.02, 0.14);
+    // Buffed, not optically flat.
+    //
+    // At 0.035 this map returned nothing at all in game, and the reason is a
+    // sampling argument rather than an aesthetic one. A metal has no diffuse
+    // term: every pixel of it is an image of the environment, and a lobe that
+    // narrow on a 9 cm fork at race distance integrates roughly one texel of
+    // the probe. On a horizontal table the direction it happens to point at is
+    // the sky, so a polished steel fork rendered as a flat blue-grey card —
+    // exactly the thing it should never look like. Widening the lobe to a
+    // hand-buffed 0.25-0.35 makes it integrate the key light as well, and a
+    // broad bright highlight over a bright base is what actually reads as
+    // metal. The remaining sharpness lives in the normal map's orange peel,
+    // which is where a real plated finish keeps it.
+    B.rough[i] = clamp(0.255 + Math.abs(micro[i]) * 0.09 + peel[i] * 0.05, 0.20, 0.40);
     metal[i] = 1;
   }
   B.give(peel); B.give(micro);
 
   // Polishing swirls and the occasional pit in the plating.
-  addScratches(B, { count: 260, lenMin: size * 0.015, lenMax: size * 0.10, width: size / 2600, depth: 0.05, rough: 0.05, seed: 5 });
+  addScratches(B, { count: 260, lenMin: size * 0.015, lenMax: size * 0.10, width: size / 2600, depth: 0.05, rough: 0.09, seed: 5 });
   const rng = makeRng(B.seed ^ 0xc470);
   const pts = scatterPoints(B, Math.round(size * 0.14), 616);
   for (let p = 0; p < pts.length; p += 2) {
@@ -2759,10 +2892,20 @@ GEN.sawdust = (B) => {
 // caps the memory a kind is allowed to ask for: a chalk line does not need the
 // same budget as the table the race is run on.
 
+// A note on the timber relief numbers, because they look too large next to a
+// caliper. `relief` is the peak-to-trough height of the *whole* height buffer,
+// and on a plank surface most of that budget is spent on the joint grooves
+// (0.55 of the buffer range) rather than on the grain (about 0.4 of it). Sizing
+// `relief` so the grain is physically correct therefore sizes the grain to
+// nothing: the measured mean slope of the old oak tile was 1.9 degrees, with
+// 60% of its texels encoding to the flat normal exactly, against 2.6 degrees
+// for concrete. These values put the grain where a raking key light can find
+// it and leave the grooves deeper than a caliper would like, which is the right
+// trade for a surface the camera only ever sees at a grazing angle.
 export const GEN_DEF = {
-  oak:               { tileWorld: 60, relief: 0.045, maxRes: 2048 },
-  pine:              { tileWorld: 58, relief: 0.055, maxRes: 2048 },
-  varnishedWood:     { tileWorld: 70, relief: 0.020, maxRes: 2048 },
+  oak:               { tileWorld: 60, relief: 0.062, maxRes: 2048 },
+  pine:              { tileWorld: 58, relief: 0.065, maxRes: 2048 },
+  varnishedWood:     { tileWorld: 70, relief: 0.034, maxRes: 2048 },
   laminate:          { tileWorld: 80, relief: 0.030, maxRes: 2048 },
   poolFelt:          { tileWorld: 24, relief: 0.030, maxRes: 2048 },
   carpet:            { tileWorld: 34, relief: 0.340, maxRes: 2048 },
@@ -2777,7 +2920,7 @@ export const GEN_DEF = {
   concrete:          { tileWorld: 90, relief: 0.105, maxRes: 2048 },
   ceramicTile:       { tileWorld: 60, relief: 0.200, maxRes: 2048 },
   linoleum:          { tileWorld: 70, relief: 0.022, maxRes: 1024 },
-  brushedAluminium:  { tileWorld: 40, relief: 0.006, maxRes: 1024 },
+  brushedAluminium:  { tileWorld: 40, relief: 0.026, maxRes: 1024 },
   galvanisedSteel:   { tileWorld: 60, relief: 0.050, maxRes: 1024 },
   chromePlate:       { tileWorld: 8,  relief: 0.0035, maxRes: 1024 },
   plasticMatte:      { tileWorld: 6,  relief: 0.0055, maxRes: 512 },

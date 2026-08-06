@@ -90,14 +90,19 @@ Then read the PNG off disk. `shots/` is gitignored.
 The repo is fully self-contained: vendored Three.js, zero npm dependencies, no build step,
 all art generated procedurally in code. Nothing is machine-specific except `server.ps1`.
 
-There is **no git remote configured**. To move it, either:
+The remote is `https://github.com/Smirne/gauntlet-loop-experiment` and `main` tracks
+`origin/main`, so on another machine it is just:
 
 ```bash
-git remote add origin <your-repo-url> && git push -u origin main
+git clone https://github.com/Smirne/gauntlet-loop-experiment
 ```
 
-or copy the folder directly (it's ~15 MB, mostly `vendor/`). Then on the new machine, serve
-the root with any static server as above.
+Copying the folder directly also works (~15 MB, mostly `vendor/`). Either way, serve the root
+with any static server as above — there is nothing to install.
+
+**Do not commit or push while a fix workflow is in flight.** Agents edit files in the working
+tree as they go, so a commit taken mid-wave captures half-written modules. Wait for the wave
+to report, boot the game, confirm 34 modules and zero failures, then commit.
 
 A faster machine is worth it. This one is a 2-core i7-7500U, which capped parallel agents at
 `min(16, cores-2)` = **2 at a time**. A 8+ core machine would run 6+ agents concurrently and

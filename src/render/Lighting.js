@@ -66,6 +66,21 @@ const DEG = Math.PI / 180;
  *    always reads flatter than the objects standing on it. The fill is set for
  *    the flanks and the tabletop is allowed to be the low-contrast part of the
  *    frame, which is also how a real macro set behaves.
+ *
+ *    That argument was taken far too far. Measured on kitchen/morning before
+ *    this pass: on lit oak the fill alone produced luma 80 of the final 114, so
+ *    **70% of the tabletop came from light with no direction at all**, and the
+ *    deepest a cast shadow could possibly go — key removed entirely, shadow
+ *    intensity 1.0 — was 0.69 of the unshadowed value. A car's shadow measured
+ *    0.73. No amount of shadow tuning can fix that, because the number being
+ *    tuned is 30% of the pixel. Every daylight preset now runs a key roughly
+ *    40% stronger against a hemi cut by roughly 40%, which lands the same
+ *    tabletop level and takes a cast shadow to ~0.52 of unshadowed. The flanks
+ *    are paid back out of `bounce`, which is deliberately the right lever: it
+ *    sits below the horizon, so it lights a car's sides and undersides and
+ *    contributes nothing to an up-facing tabletop, and therefore cannot lift
+ *    the shadow it is compensating for. `rim` comes down instead, because it
+ *    *does* light the tabletop and it casts no shadow.
  *  - **shadow.intensity.** How much of the key still reaches a fully shadowed
  *    fragment. Never 1.0: a cast shadow that removes 100% of the key leaves
  *    only the fill, and a chase camera looking into a large shadow returns a
@@ -90,16 +105,16 @@ export const LIGHT_PRESETS = {
   morning: {
     id: 'morning',
     look: 'morning',
-    exposure: 0.82,
-    sun: { color: 0xffd8ae, intensity: 3.05, elevation: 34, azimuth: -52 },
-    fill: { sky: 0x9dbcf0, ground: 0x7a5f42, intensity: 0.74 },
-    bounce: { color: 0xffc79a, intensity: 0.38, elevation: -16, azimuth: 128 },
-    rim: { color: 0xa9c8ff, intensity: 0.32, elevation: 30, azimuth: 142 },
-    ambient: { color: 0x38455e, intensity: 0.17 },
-    shadow: { intensity: 0.88 },
+    exposure: 0.84,
+    sun: { color: 0xffd8ae, intensity: 4.30, elevation: 34, azimuth: -52 },
+    fill: { sky: 0x9dbcf0, ground: 0x7a5f42, intensity: 0.42 },
+    bounce: { color: 0xffc79a, intensity: 0.46, elevation: -16, azimuth: 128 },
+    rim: { color: 0xa9c8ff, intensity: 0.26, elevation: 30, azimuth: 142 },
+    ambient: { color: 0x38455e, intensity: 0.11 },
+    shadow: { intensity: 0.95 },
     lamp: { intensity: 0 },
     fog: { color: 0xd7ddea, density: 0.00085 },
-    env: { intensity: 0.85 },
+    env: { intensity: 0.60 },
     contact: { strength: 0.74, tint: 0x2a2620 },
     backdrop: {
       zenith: 0x54739f, horizon: 0xb8c3d1, ground: 0x38322b, ceiling: 0x9aa7b9,
@@ -121,16 +136,16 @@ export const LIGHT_PRESETS = {
   noon: {
     id: 'noon',
     look: 'noon',
-    exposure: 0.86,
-    sun: { color: 0xfff4e2, intensity: 2.95, elevation: 56, azimuth: -22 },
-    fill: { sky: 0x88b4ff, ground: 0x8a7758, intensity: 0.86 },
-    bounce: { color: 0xffd9b0, intensity: 0.24, elevation: -22, azimuth: 158 },
-    rim: { color: 0xbcd7ff, intensity: 0.22, elevation: 24, azimuth: 150 },
-    ambient: { color: 0x3a4763, intensity: 0.17 },
-    shadow: { intensity: 0.90 },
+    exposure: 0.88,
+    sun: { color: 0xfff4e2, intensity: 4.05, elevation: 56, azimuth: -22 },
+    fill: { sky: 0x88b4ff, ground: 0x8a7758, intensity: 0.50 },
+    bounce: { color: 0xffd9b0, intensity: 0.30, elevation: -22, azimuth: 158 },
+    rim: { color: 0xbcd7ff, intensity: 0.18, elevation: 24, azimuth: 150 },
+    ambient: { color: 0x3a4763, intensity: 0.11 },
+    shadow: { intensity: 0.95 },
     lamp: { intensity: 0 },
     fog: { color: 0xdfe6f0, density: 0.0007 },
-    env: { intensity: 0.92 },
+    env: { intensity: 0.66 },
     contact: { strength: 0.80, tint: 0x231f1a },
     backdrop: {
       zenith: 0x4a7cc8, horizon: 0xcbd9ea, ground: 0x4a453c, ceiling: 0x7ea6e0,
@@ -153,16 +168,16 @@ export const LIGHT_PRESETS = {
   goldenHour: {
     id: 'goldenHour',
     look: 'goldenHour',
-    exposure: 1.04,
-    sun: { color: 0xffb070, intensity: 3.20, elevation: 14, azimuth: -78 },
-    fill: { sky: 0x86ace8, ground: 0x8a5f34, intensity: 0.90 },
-    bounce: { color: 0xffa066, intensity: 0.50, elevation: -13, azimuth: 102 },
-    rim: { color: 0x9fc0ff, intensity: 0.48, elevation: 22, azimuth: 116 },
-    ambient: { color: 0x3a3048, intensity: 0.30 },
-    shadow: { intensity: 0.82 },
+    exposure: 1.00,
+    sun: { color: 0xffb070, intensity: 4.90, elevation: 14, azimuth: -78 },
+    fill: { sky: 0x86ace8, ground: 0x8a5f34, intensity: 0.56 },
+    bounce: { color: 0xffa066, intensity: 0.60, elevation: -13, azimuth: 102 },
+    rim: { color: 0x9fc0ff, intensity: 0.38, elevation: 22, azimuth: 116 },
+    ambient: { color: 0x3a3048, intensity: 0.20 },
+    shadow: { intensity: 0.93 },
     lamp: { intensity: 0 },
     fog: { color: 0xf0c69a, density: 0.0016 },
-    env: { intensity: 1.05 },
+    env: { intensity: 0.80 },
     contact: { strength: 0.66, tint: 0x2c2118 },
     backdrop: {
       zenith: 0x3f5a96, horizon: 0xf2c491, ground: 0x3c2f24, ceiling: 0x8f7a86,
@@ -185,15 +200,15 @@ export const LIGHT_PRESETS = {
     id: 'overcast',
     look: 'overcast',
     exposure: 1.02,
-    sun: { color: 0xe4eaf4, intensity: 1.05, elevation: 46, azimuth: -30 },
-    fill: { sky: 0xc7d4e6, ground: 0x968f80, intensity: 1.60 },
-    bounce: { color: 0xcfd6dd, intensity: 0.28, elevation: -20, azimuth: 150 },
-    rim: { color: 0xdfe8f5, intensity: 0.20, elevation: 26, azimuth: 148 },
-    ambient: { color: 0x515a6b, intensity: 0.30 },
-    shadow: { intensity: 0.62 },
+    sun: { color: 0xe4eaf4, intensity: 1.60, elevation: 46, azimuth: -30 },
+    fill: { sky: 0xc7d4e6, ground: 0x968f80, intensity: 1.18 },
+    bounce: { color: 0xcfd6dd, intensity: 0.34, elevation: -20, azimuth: 150 },
+    rim: { color: 0xdfe8f5, intensity: 0.16, elevation: 26, azimuth: 148 },
+    ambient: { color: 0x515a6b, intensity: 0.24 },
+    shadow: { intensity: 0.80 },
     lamp: { intensity: 0 },
     fog: { color: 0xd2d9e2, density: 0.0022 },
-    env: { intensity: 1.10 },
+    env: { intensity: 0.95 },
     contact: { strength: 0.54, tint: 0x2f3238 },
     backdrop: {
       zenith: 0x93a3b8, horizon: 0xc8d0da, ground: 0x4c4a46, ceiling: 0xa9b4c2,
@@ -215,15 +230,15 @@ export const LIGHT_PRESETS = {
     id: 'dusk',
     look: 'dusk',
     exposure: 1.12,
-    sun: { color: 0xff9068, intensity: 1.40, elevation: 11, azimuth: -96 },
-    fill: { sky: 0x51649f, ground: 0x453648, intensity: 0.86 },
-    bounce: { color: 0xff7f5a, intensity: 0.34, elevation: -12, azimuth: 96 },
-    rim: { color: 0x7f9dff, intensity: 0.56, elevation: 26, azimuth: 98 },
-    ambient: { color: 0x2b3352, intensity: 0.36 },
-    shadow: { intensity: 0.78 },
+    sun: { color: 0xff9068, intensity: 2.10, elevation: 11, azimuth: -96 },
+    fill: { sky: 0x51649f, ground: 0x453648, intensity: 0.56 },
+    bounce: { color: 0xff7f5a, intensity: 0.42, elevation: -12, azimuth: 96 },
+    rim: { color: 0x7f9dff, intensity: 0.46, elevation: 26, azimuth: 98 },
+    ambient: { color: 0x2b3352, intensity: 0.26 },
+    shadow: { intensity: 0.90 },
     lamp: { intensity: 0 },
     fog: { color: 0x59547e, density: 0.0026 },
-    env: { intensity: 1.05 },
+    env: { intensity: 0.86 },
     contact: { strength: 0.60, tint: 0x1a1a2a },
     backdrop: {
       zenith: 0x1e2a55, horizon: 0x7d6392, ground: 0x1c1a26, ceiling: 0x2b3260,
@@ -244,21 +259,21 @@ export const LIGHT_PRESETS = {
     id: 'nightLamp',
     look: 'nightLamp',
     exposure: 1.20,
-    sun: { color: 0x7286c8, intensity: 0.32, elevation: 34, azimuth: 122 },
-    fill: { sky: 0x3a4874, ground: 0x2a221b, intensity: 0.38 },
-    bounce: { color: 0xffb473, intensity: 0.18, elevation: -18, azimuth: -40 },
-    rim: { color: 0x89a7ff, intensity: 0.32, elevation: 24, azimuth: -70 },
-    ambient: { color: 0x1a2135, intensity: 0.26 },
-    shadow: { intensity: 0.76 },
+    sun: { color: 0x7286c8, intensity: 0.44, elevation: 34, azimuth: 122 },
+    fill: { sky: 0x3a4874, ground: 0x2a221b, intensity: 0.26 },
+    bounce: { color: 0xffb473, intensity: 0.22, elevation: -18, azimuth: -40 },
+    rim: { color: 0x89a7ff, intensity: 0.26, elevation: 24, azimuth: -70 },
+    ambient: { color: 0x1a2135, intensity: 0.18 },
+    shadow: { intensity: 0.92 },
     // `irradiance` is the target lux-equivalent at the target point; the actual
     // three intensity is derived as irradiance * distance^2 because punctual
     // lights are physically falling off since r155.
     lamp: {
-      color: 0xffc27a, irradiance: 5.0, offset: [-118, 205, -92],
+      color: 0xffc27a, irradiance: 5.6, offset: [-118, 205, -92],
       angle: 0.66, penumbra: 0.58, shadow: true,
     },
     fog: { color: 0x1b2138, density: 0.0030 },
-    env: { intensity: 0.85 },
+    env: { intensity: 0.70 },
     contact: { strength: 0.82, tint: 0x14131c },
     backdrop: {
       zenith: 0x0d1226, horizon: 0x2a2c47, ground: 0x0d0c12, ceiling: 0x151a33,
@@ -351,7 +366,16 @@ export function installCsmShaderPatch(splits, blendFrac = 0.06) {
 
   // --- 1. last cascade fades its shadow out before the shadow far plane so
   //        distant geometry stays lit rather than snapping to unshadowed.
-  const fadeStart = f(splits[cascades] * 0.80);
+  //
+  // 0.80 was spending a fifth of the whole shadow range on the fade, which at
+  // shadowFar 620 means everything past 496 u is already losing its shadow —
+  // and 496 u is *inside* the establishing shot, where the camera sits ~420 u
+  // back from a 460 u table. The far half of the set therefore stood on wood
+  // with no cast shadow at all, which reads as flat ambient lighting rather
+  // than as a fade. The band only has to be wide enough that the boundary is
+  // not a visible line, and at 620 u a 62 u ramp is about ten times the width
+  // of the softest penumbra in frame.
+  const fadeStart = f(splits[cascades] * 0.90);
   const fadeEnd = f(splits[cascades]);
   const shadowPatch =
     `#if ( UNROLLED_LOOP_INDEX == ${cascades - 1} )\n` +
@@ -444,6 +468,15 @@ void main() {
 /** Instance pool sizing. Grows on demand between these, in powers of two. */
 const CONTACT_CAPACITY_MIN = 64;
 const CONTACT_CAPACITY_MAX = 384;
+
+/**
+ * How far a blob may be raised to meet the surface its owner claims to be
+ * standing on. Sized against what actually goes wrong — a prop's oriented
+ * bounding box dipping through the tabletop, worst case ~3.8 u on the kitchen
+ * toast ramp — and no larger, so a blob parked next to a 20 u kerb still stays
+ * on the floor rather than climbing it.
+ */
+const CONTACT_SINK_MAX = 5;
 
 /* ========================================================================== */
 /* Scratch                                                                    */
@@ -540,10 +573,19 @@ export class Lighting {
     this.preset = LIGHT_PRESETS[this.presetName] || LIGHT_PRESETS.morning;
 
     this.cascadeCount = Math.max(2, Math.min(4, opts.cascades || 3));
-    // Must cover the establishing shot, not just the chase: the camera pulls
-    // back to ~420 u to frame the whole 460 x 340 u playfield, which puts the
-    // far edge of the table around 600 u of view depth.
-    this.shadowFar = opts.shadowFar || 620;
+    // Must cover the establishing shot, not just the chase. Measured on kitchen
+    // with the camera 400 u back at 250 u up, framing the whole 500 x 383 u
+    // playfield: the near edge of the table is at 264 u of view depth and the
+    // far corner at 726. At the old 620 that corner had no cast shadow at all.
+    this.shadowFar = opts.shadowFar || 760;
+    // ...but the *detail* range is a separate decision, and conflating the two
+    // is what makes extending the reach expensive. The interior split
+    // boundaries are placed against this, so pushing shadowFar out stretches
+    // only the last cascade — which is looking at a car ten pixels wide — and
+    // leaves cascade 0, the one the chase camera lives in, at exactly the
+    // texel density it had. Deriving the splits from shadowFar instead cost
+    // cascade 0 40% of its resolution for range nothing near the camera used.
+    this.shadowDetail = opts.shadowDetail || 620;
     this.shadowNear = opts.shadowNear || 2;
     this.casterExtrusion = opts.casterExtrusion || 160;
     this.fitPadding = opts.fitPadding || 1.06;
@@ -616,14 +658,18 @@ export class Lighting {
       const n = this.cascadeCount;
       const near = this.shadowNear;
       const far = this.shadowFar;
+      // Interior boundaries are placed against the detail range, never against
+      // the reach — see the constructor. Only the last cascade absorbs the
+      // difference, and it is the one nobody is looking closely at.
+      const detail = Math.max(near + 1, Math.min(this.shadowDetail, far));
       const lambda = 0.72;
       this.splits = [near];
       for (let i = 1; i < n; i++) {
         const p = i / n;
-        const logS = near * Math.pow(far / near, p);
-        const uniS = near + (far - near) * p;
+        const logS = near * Math.pow(detail / near, p);
+        const uniS = near + (detail - near) * p;
         // Pull the first boundary out: nothing interesting lives within ~40 u.
-        this.splits.push(lerp(uniS, logS, lambda) + far * 0.03 * (n - i));
+        this.splits.push(lerp(uniS, logS, lambda) + detail * 0.03 * (n - i));
       }
       this.splits.push(far);
     }
@@ -1489,13 +1535,17 @@ export class Lighting {
     const base = _blobPos.y - e.baseOffset;
     const grounded = e.vehicle ? e.vehicle.isAirborne === false : e.grounded === true;
 
+    // The surface the track itself claims is here. NaN when there is no track
+    // or no heightAt; every test below is written so a NaN falls through.
+    const surf = this._groundHeight(_blobPos.x, _blobPos.z);
+
     let gy;
     if (e.groundY != null) {
       gy = e.groundY;
     } else if (grounded) {
       gy = base;
     } else {
-      gy = this._groundHeight(_blobPos.x, _blobPos.z);
+      gy = surf;
       // heightAt may be absent, may return 0 for an elevated ribbon, or may put
       // the surface above the object. Each of those buries the blob under the
       // road, which is precisely how a working system renders nothing at all.
@@ -1503,6 +1553,25 @@ export class Lighting {
       const usable = gy <= base + 0.25 && base - gy <= e.maxHeight * 4;
       if (!usable) gy = e._gy != null ? e._gy : base;
     }
+
+    // Floor the plane at that surface.
+    //
+    // Every caller that knows where its object touches the ground hands that
+    // height in — and a *model's* lowest point is not the same thing as the
+    // plane it rests on. A bevelled base, a cube modelled around its centre, a
+    // prop tilted until a corner of its oriented box dips through the wood: all
+    // of them register a contact plane below the table, and depthTest then
+    // rejects the whole quad. The failure is silent in both directions —
+    // contactShadowStats still counts the instance as drawn and nothing is
+    // logged — so it presents as "the contact shadows are too weak" rather than
+    // as "these props have none at all". Measured on kitchen before this guard:
+    // 221 of 264 blobs sat below the surface, by up to 3.8 u.
+    //
+    // This only ever raises the plane and is capped, so a blob standing beside
+    // a kerb or a ramp cannot be dragged up onto it, and it is a no-op on the
+    // branch that already took `surf` — including for an airborne car, whose
+    // blob must stay on the ground it left.
+    if (surf > gy && surf - gy <= CONTACT_SINK_MAX) gy = surf;
 
     const h = base - gy > 0 ? base - gy : 0;
     // Remember the last plane this object was actually near, for the frames

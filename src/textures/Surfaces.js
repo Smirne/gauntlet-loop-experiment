@@ -124,26 +124,44 @@ export const SURFACE_DEFS = {
   // sealed film has far less to key into than on open grain.
   //
   // Visually this is the most dangerous material in the game: it is the surface
-  // the race is actually run on, it covers most of the frame, and it is seen
-  // almost entirely at grazing angles. At clearcoat 1.0 / roughness 0.055 it
-  // was a mirror, and a mirror at a grazing angle sweeps the whole environment
-  // across a handful of pixels — which is precisely how the sky's zenith and a
-  // window key end up as red and blue combing over the wood instead of as a
-  // highlight. A satin wiping varnish is both the honest reading of a kitchen
-  // table and a lobe wide enough to be resolvable: partial coat, an order of
-  // magnitude more coat roughness, and the coat allowed to pick up the scuffs
-  // and dust in the base roughness map.
+  // the race is actually run on, it covers most of the frame, and a car sits
+  // 2 cm above a horizontal plane, so the chase camera sees it almost entirely
+  // at grazing incidence.
+  //
+  // An earlier pass took this from clearcoat 1.0 / roughness 0.055 to 0.55/0.16
+  // and recorded the mirror as fixed. It was not, and the reason is worth
+  // keeping. A clearcoat is an *additive* second layer: three attenuates the
+  // layer under it by (1 - clearcoat * Fcc) and adds clearcoat * its own
+  // reflection on top. At grazing incidence Fresnel drives Fcc to 1 whatever
+  // the coat's index, so at clearcoat 0.55 the wood was down to 45% of itself
+  // with 55% of the sky laid over it — and 55% of a daylight sky over 45% of a
+  // dark walnut is, arithmetically, blue. Measured across the ribbon, red minus
+  // blue ran +16 (warm) at the camera's feet, 0 at mid distance and -7 (blue)
+  // at the horizon: the wood lost as the angle got shallower. Halving the
+  // coat's *roughness* cannot touch that; only its *weight* can.
+  //
+  // So the coat is now a residue rather than a layer, it inherits almost all of
+  // the substrate's scatter, and the real work is done by the base roughness
+  // map in ProcTex (0.29 floor, 0.33 mean, up from 0.14/0.16), because three's
+  // split-sum DFG returns ~63% of the environment at grazing incidence for
+  // roughness 0.16 and ~29% at 0.33. Roughness is the only grazing-angle clamp
+  // reachable from this side of the file, and it is a strong one. After both
+  // changes the same three samples read +74, +47 and +27 — warm all the way to
+  // the horizon.
   varnishedWood: def('varnishedWood', {
     label: 'Varnished top',
     category: 'wood',
     grip: 0.92, rollDrag: 0.008,
-    particleColor: 0x6b4326,
+    particleColor: 0x8a5c34,
     audio: { timbre: 'polished', rollGain: 0.42, rollFilter: 0.78, rollGrain: 0.06, skidGain: 1.05, skidFilter: 0.86, impact: 'knock' },
     material: {
       type: 'physical',
-      clearcoat: 0.55, clearcoatRoughness: 0.16, ccFromRough: 0.62,
-      ior: 1.52, envMapIntensity: 0.95,
-      saaVariance: 0.28, saaMax: 0.26,
+      clearcoat: 0.10, clearcoatRoughness: 0.34, ccFromRough: 0.92,
+      ior: 1.5, envMapIntensity: 0.80,
+      // Widest filter in the library. This is the surface that runs to the
+      // horizon under a long lens, so it is the one where a single pixel spans
+      // the most normal sweep and needs the most help holding its lobe together.
+      saaVariance: 0.38, saaMax: 0.34,
     },
     macro: { colorAmount: 0.05, roughAmount: 0.16, scale: 0.0032 },
   }),
@@ -294,7 +312,16 @@ export const SURFACE_DEFS = {
     material: {
       type: 'physical',
       metalness: 1, roughness: 1,
-      anisotropy: 0.85, anisotropyRotation: Math.PI * 0.5,
+      // 0.85 was the real cause of D4's "matte blue paint", not the albedo or
+      // the roughness map — both of those measure fine (albedo 230/232/234,
+      // roughness mean 0.30). three builds the stretched lobe as
+      // alphaT = mix(roughness^2, 1, anisotropy^2), so 0.85 gave alphaT 0.75,
+      // i.e. an effective roughness of 0.93 along the brush direction. That is
+      // a fully matte lobe, and a matte lobe on a metal returns the average of
+      // the environment — which, under a daylight probe, is flat blue. 0.42
+      // keeps a 3:1 stretch, which still reads unmistakably as brushed while
+      // leaving the cross-brush lobe tight enough to resolve the key light.
+      anisotropy: 0.42, anisotropyRotation: Math.PI * 0.5,
       envMapIntensity: 1.25,
       // A metal has no diffuse term to hide behind, so all of its aliasing is
       // specular and it needs the widest antialiasing ceiling in the library.
