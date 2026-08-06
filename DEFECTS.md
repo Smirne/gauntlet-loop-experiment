@@ -175,10 +175,15 @@ likely satisfies the crossing test on every tick and increments the lap counter 
 - A metallic sphere in a scene with a dark environment map reads as near-black and looks
   "missing". Judge metals against a lit floor before calling them broken — this produced one
   false positive before the re-test with an oak floor disambiguated it.
-- **Pause the engine before any A/B capture.** The sim keeps running between two
-  `MG.capture()` calls, so the camera has moved and you are comparing two different shots. I
-  burned several isolation passes on this before pausing: `engine.pause()` and
-  `ctx.director.enabled = false`, then toggle one thing at a time.
+- **`MG.capture()` now pauses the engine for you** and resumes it afterwards, so two captures
+  in a row are the same moment and an A/B between them is meaningful. Before that it did not,
+  and I burned several isolation passes comparing two different shots without noticing. It
+  also cured the radial streaks: a capture that repositioned the camera while the loop ran came
+  back smeared, while the identical camera captured paused was clean — verified both ways with
+  motion blur on and off. I reached that through three wrong explanations (a scene effect, then
+  excessive blur strength, then the aspect change during the capture resize) before measuring
+  it. If you ever need the old behaviour, note that `ctx.director.enabled = false` is still
+  yours to set.
 - **Backticks cannot appear in a `/* glsl */` comment.** They terminate the template literal
   and the module fails to parse. This has now bitten three times (c483289, and again in the
   commit that introduced the D9 fix). If a shader module suddenly reports a `SyntaxError` on

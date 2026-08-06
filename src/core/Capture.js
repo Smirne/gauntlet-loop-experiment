@@ -25,9 +25,33 @@ export function installCapture(engine) {
     const prevSize = renderer.getSize(new Vector2());
     const prevPR = renderer.getPixelRatio();
 
+    // Hold the simulation still for the duration.
+    //
+    // Two reasons, and the second cost a lot of time to pin down. The obvious
+    // one: two captures in a row otherwise show different moments, so any A/B
+    // between them compares two different shots and is worthless. The subtle
+    // one: with the loop running, a capture that repositions the camera comes
+    // back with the frame smeared into radial streaks, while the identical
+    // camera captured with the engine paused is clean — verified both ways,
+    // motion blur on and off. I chased that through three wrong explanations
+    // (a scene effect, then blur strength, then the aspect change on resize)
+    // before settling it by measurement. Pausing removes the whole class.
+    const wasPaused = engine.paused;
+    if (!wasPaused) engine.pause?.('capture');
+
     renderer.setPixelRatio(1);
     renderer.setSize(w, h, false);
     engine.onResize?.(w, h);
+
+    // The resize just changed the camera's aspect, which changes the projection
+    // matrix — and to the motion blur's reprojection that is indistinguishable
+    // from the camera having lurched sideways, so it smears the frame into
+    // radial streaks. It has to be signalled AFTER the resize: a caller that
+    // does it before, which is the obvious place, is undone by this line. The
+    // streaks fooled me twice, first as a scene effect and then as excessive
+    // blur strength, before I noticed live frames were clean and only captures
+    // were not.
+    engine.ctx?.postfx?.notifyCameraCut?.();
 
     // Two frames: the first settles anything sized off the new viewport
     // (post-processing render targets, temporal history buffers).
@@ -39,6 +63,8 @@ export function installCapture(engine) {
     renderer.setPixelRatio(prevPR);
     renderer.setSize(prevSize.x, prevSize.y, false);
     engine.onResize?.(prevSize.x, prevSize.y);
+    engine.ctx?.postfx?.notifyCameraCut?.();   // the restore is a jump too
+    if (!wasPaused) engine.resume?.('capture');
 
     const res = await fetch('/__shot?name=' + encodeURIComponent(name), {
       method: 'POST',

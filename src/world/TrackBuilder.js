@@ -33,6 +33,9 @@ import {
   fbm2DTiled, ridged2DTiled, worley2DTiled, worleyFbm2D, warpFbm2DTiled, value2DTiled,
 } from '../core/Random.js';
 import { KERB_WIDTH, KERB_HEIGHT, KERB_CURV_MIN, wrap01, cyclicDelta } from './Track.js';
+// For tileWorld: the metric size a surface's bake was authored at. See
+// metricScaleFor() for why the texture scale is asked for rather than declared.
+import { GEN_DEF } from '../textures/ProcTex.js';
 
 /* ------------------------------------------------------------------ tuning */
 
@@ -980,21 +983,22 @@ export class TrackBuilder {
     this.matCache = new Map();
     this.roadMaterials = track.surfaceNames.map((s) => this.surfaceMaterial(s, {
       vertexColors: true,
-      texScale: ROAD_TEX_SCALE,
+      texScale: this.metricScaleFor(s, ROAD_TEX_SCALE),
     }));
     // The shoulder is off-track terrain, so it uses whatever surfaceAt() reports
     // out there — grip, particles and pixels then all agree about what the car
     // just put two wheels on.
     this.offMaterial = this.surfaceMaterial(track.offTrackSurface, {
       vertexColors: true,
-      texScale: GROUND_TEX_SCALE,
+      texScale: this.metricScaleFor(track.offTrackSurface, GROUND_TEX_SCALE),
     });
     // The slab beyond the shoulder defaults to the same surface as the shoulder
     // so the two are literally one material, and there is no line in the world
     // where the verge stops being the verge. A definition can still override it.
-    this.groundMaterial = this.surfaceMaterial(track.def.groundSurface || track.offTrackSurface, {
+    const groundKind = track.def.groundSurface || track.offTrackSurface;
+    this.groundMaterial = this.surfaceMaterial(groundKind, {
       vertexColors: true,
-      texScale: GROUND_TEX_SCALE,
+      texScale: this.metricScaleFor(groundKind, GROUND_TEX_SCALE),
     });
     this.wallMaterial = this.surfaceMaterial(track.themeSurfaces.wall || 'plasticMatte', {
       vertexColors: true,
@@ -1127,6 +1131,24 @@ export class TrackBuilder {
     const r = mat.map?.repeat;
     const k = r && Number.isFinite(r.x) && r.x > 0 ? r.x : 1;
     return worldScale * k;
+  }
+
+  /**
+   * World units per repeat for a surface, taken from the surface's own declared
+   * `tileWorld` where it has one.
+   *
+   * The constants below were authored independently of the bake, so the ground
+   * asked for 96 cm per repeat while oak declares 60 — a 1.6x stretch applied
+   * to every grain feature on the table, on top of the pore density already
+   * being dropped deliberately for aliasing. Asking the surface is the only way
+   * these two numbers cannot drift apart again.
+   *
+   * Falls back to the caller's constant when a kind declares nothing, so an
+   * unlisted surface behaves exactly as before.
+   */
+  metricScaleFor(kind, fallback) {
+    const w = GEN_DEF?.[kind]?.tileWorld;
+    return Number.isFinite(w) && w > 0 ? w : fallback;
   }
 
   /* ----------------------------------------------------------------- ground */

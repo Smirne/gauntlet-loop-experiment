@@ -105,14 +105,20 @@ export default {
   // would have done, and it hides the material seam.
   surfaceSpans: [
     { from: 0.000, to: 0.115, surface: 'varnishedWood' },
-    { from: 0.115, to: 0.215, surface: 'oak' },          // worn patch, the varnish is gone
+    // Worn patches where the varnish is gone. These were 'oak' — which is also
+    // groundSurface, so for a fifth of the lap the road was made of the table
+    // and simply vanished. Two critics reported that independently, one as "an
+    // entire hairpin has no road" and one as "the kerbs have detached from the
+    // road edge"; the kerbs were fine, the road they bordered was invisible.
+    // Pine keeps the bare-timber read and is a different timber from the table.
+    { from: 0.115, to: 0.215, surface: 'pine' },
     { from: 0.215, to: 0.335, surface: 'varnishedWood' },
     { from: 0.335, to: 0.430, surface: 'paper' },        // yesterday's newspaper
     { from: 0.430, to: 0.500, surface: 'crumbs' },       // and where the toast was cut
     { from: 0.500, to: 0.625, surface: 'varnishedWood' },
     { from: 0.625, to: 0.715, surface: 'ceramicTile' },  // the trivet under the chicane
     { from: 0.715, to: 0.800, surface: 'varnishedWood' },
-    { from: 0.800, to: 0.905, surface: 'oak' },
+    { from: 0.800, to: 0.905, surface: 'pine' },   // second worn patch; see above
     { from: 0.905, to: 1.000, surface: 'varnishedWood' },
   ],
 
