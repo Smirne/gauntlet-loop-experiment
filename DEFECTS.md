@@ -63,6 +63,43 @@ neither — a raycast finds the road present, and they survive with `shadowMap.e
 and low-angle cameras use, fog has already taken everything to near-flat. Whatever is built
 behind the table will not be visible until this is retuned.
 
+## D14 — A single cut warning removes a car from the race permanently — CRITICAL — OPEN
+`game/Race.js` [A12]. `_advanceEntry`'s third branch — "more than one gate away: the car is
+somewhere it did not drive to" — deliberately refuses to move `e.cp`. That makes it a one-way
+trap. Once `e.cp` is frozen at gate *k* and the car drives past gate *k+1*, `delta` can never
+be 1 again, so `e.gates` never increments again for the whole race. `e.score` is
+`e.gates * gateLength + capped`, so the ordering scalar freezes too, while `e.t` keeps
+reporting real progress.
+
+Measured on `?track=kitchen&skipmenu=1&t=16&quality=ultra&autopilot=1&seed=20260730`:
+
+| car | road position | gates | cp | score | cut | eliminated |
+|---|---|---|---|---|---|---|
+| car2 | 0.558 | 11 | 9 | 1080.3 | | |
+| car1 | 0.600 | 11 | 10 | 1066.4 | | |
+| **car0** | **0.735** | **4** | **3** | **556.2** | **✓** | **✓** |
+
+car0 is **second on the road** and dead last by score, on one cut warning. The elimination
+rule then takes it out — correctly, given the numbers it is shown — and because car0 is the
+player, `_checkRaceOver` reads `player.eliminated` as "player done", enters FINISHED, DNFs
+the field and closes the books. Seven cars still circulating, none past lap 1.
+
+This one bug accounts for the whole family of "the race ends instantly" symptoms, including
+the original D8, and for standings that disagree with what the frame shows. It is also why
+every review frame so far was shot from a race that had already stopped.
+
+The design intent in ARCHITECTURE.md — cutting is impossible, you must go back for the gate —
+is worth keeping. Freezing the ordering scalar forever is not part of it. A fix has to let a
+car re-sync to the gate ring once it returns, while still denying it the lap.
+
+## D15 — The sim does not run while the browser pane is hidden — HARNESS — DOCUMENTED
+`core/Engine.js` pauses itself on `visibilitychange` when `document.hidden`, which is correct
+for a game and a trap for automated review: an agent-driven pane is hidden most of the time,
+so every progress sample reads frozen and the simulation looks broken. Two boots of the same
+seeded URL appeared to diverge for this reason alone — the pane had been hidden for different
+amounts of wall-clock, not the game behaving differently. `captureSet()` now tests
+`document.hidden` and `engine.paused` before it concludes anything about the field.
+
 ## D9 — Screen-filling black wedge and radial streaks in every frame — CRITICAL — FIXED
 
 `fx/Trails.js` [A9]. Every round-2 capture carried two headline artifacts: a pure-black

@@ -10,6 +10,11 @@ professional art director would raise in a review.
 2. Drive the page to the state you want to inspect via URL params:
    - `?track=kitchen|garden|workbench|pool|bedroom`
    - `?skipmenu=1` — straight into the race
+   - `?autopilot=1` — **required.** Nobody is holding the keyboard during a review, so
+     without it car0 never moves, gets eliminated at ~10 s for trailing the field, and
+     that ends the race: engine parked, `raceTime` frozen, every car flagged finished on
+     lap 0. Rounds 1 and 2 were both scored on frames captured after that had happened.
+     `captureSet()` now refuses to shoot unless `race.state === 'racing'`.
    - `?t=12` — fast-forward 12 s of simulation before rendering (field spread out,
      effects active, skid marks laid down). This is the most useful shot for judging.
    - `?quality=ultra`, `?nohud=1`, `?cars=8`, `?seed=N`

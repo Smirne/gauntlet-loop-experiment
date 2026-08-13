@@ -3,13 +3,9 @@
   "configurations": [
     {
       "name": "micro-gauntlet",
-      "runtimeExecutable": "powershell",
+      "runtimeExecutable": "node",
       "runtimeArgs": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "server.ps1"
+        "server.js"
       ],
       "port": 8791
     }

@@ -8,8 +8,9 @@
 // Load and run:
 //   const m = await import('/tools/capture-set.js'); await m.captureSet('r2');
 //
-// Boot with the matching URL or the sim state won't line up:
-//   /?track=kitchen&skipmenu=1&t=16&quality=ultra
+// Boot with the matching URL or the sim state won't line up. `autopilot=1` is
+// NOT optional — see the guard below:
+//   /?track=kitchen&skipmenu=1&t=16&quality=ultra&autopilot=1
 //
 // t=16 puts the leaders around 55% of the opening lap with the field strung
 // out, which is what a review frame should show. Rounds 1 and 2 used t=6, but
@@ -21,9 +22,88 @@
 // Pass a suffix to namespace a round: captureSet('r2') writes
 // shots/crit-1-gameplay-r2.png etc. No suffix overwrites the round-1 names.
 
-export async function captureSet(suffix = '') {
+/**
+ * Liveness: measure motion, never trust `race.state`.
+ *
+ * Rounds 1 and 2 were both scored on frames of a race that had already
+ * stopped, and the state flag is not sufficient to catch it. Two boots of the
+ * identical URL failed in opposite directions:
+ *
+ *   Boot A — collapsed to `results` at t=9.7. Nobody drives car0 without
+ *   `autopilot=1`, so it sat on the grid, trailed the field by a screen and was
+ *   eliminated (correctly — that is what the rule is for). But
+ *   `Race._checkRaceOver` reads an eliminated player as "player done", goes to
+ *   FINISHED, and after the AI grace period DNFs the rest and closes the books.
+ *   Leader was 8.6% around lap 0 with seven of eight cars flagged finished.
+ *
+ *   Boot B — every car finished or eliminated, `running === 0`, and the state
+ *   sat at `racing` for 66 s with the clock still ticking. Both branches of
+ *   `_checkRaceOver` that should have ended it did not fire.
+ *
+ * So `state === 'racing'` spans everything from a real race to eight parked
+ * cars, and `state !== 'racing'` would have rejected boot A but waved boot B
+ * straight through. The only trustworthy signal is that the field is actually
+ * moving: sample leader progress twice and require it to advance.
+ *
+ * Deliberately not a fix to Race.js. The state machine is unreliable in at
+ * least two directions and that is its own investigation; this is the capture
+ * harness refusing to produce evidence it cannot stand behind.
+ */
+async function assertMoving(ms = 900) {
+  const race = window.MG.ctx?.race;
+  const engine = window.MG.engine;
+
+  // Check this FIRST or the answer is always "not moving" for the wrong reason.
+  // core/Engine.js pauses itself on `visibilitychange` when document.hidden —
+  // and an automated browser pane is hidden most of the time, so the loop stops
+  // and every progress sample reads frozen. That artifact is what made two
+  // boots of the same seeded URL look like they diverged; the pane had simply
+  // been hidden for different amounts of wall-clock. Say so plainly rather than
+  // let the next agent conclude the simulation is broken.
+  if (document.hidden || engine?.paused) {
+    return {
+      moving: false,
+      why: document.hidden
+        ? 'document.hidden — Engine has paused itself; the sim is not running while the pane is hidden'
+        : 'engine is paused',
+      paused: !!engine?.paused,
+      hidden: document.hidden,
+    };
+  }
+
+  const lead = () => {
+    let best = -1;
+    for (const e of race?.entries ?? []) {
+      if (e.finished || e.eliminated) continue;
+      best = Math.max(best, (e.lap ?? 0) + (e.t ?? 0));
+    }
+    return best;
+  };
+  const before = lead();
+  await new Promise((r) => setTimeout(r, ms));
+  const after = lead();
+
+  if (before < 0) return { moving: false, why: 'no car is still running — every entry is finished or eliminated' };
+  if (after - before < 1e-4) return { moving: false, why: `leader progress did not advance in ${ms} ms (${after.toFixed(4)})` };
+  return { moving: true, advanced: +(after - before).toFixed(5) };
+}
+
+export async function captureSet(suffix = '', opts = {}) {
   const s = window.MG?.status;
   if (!s) return { booting: true, msg: document.querySelector('#boot .boot-msg')?.textContent };
+
+  const live = await assertMoving();
+  if (!live.moving && !opts.force) {
+    const race = window.MG.ctx?.race;
+    return {
+      refused: 'the field is not moving — these frames would not show a race',
+      why: live.why,
+      state: race?.state,
+      raceTime: race?.raceTime,
+      running: race?.entries?.filter((e) => !e.finished && !e.eliminated).length,
+      fix: 'reboot with &autopilot=1, or pass { force: true } if you meant it',
+    };
+  }
 
   const THREE = window.MG.THREE;
   const ctx = window.MG.ctx;
@@ -70,7 +150,9 @@ export async function captureSet(suffix = '') {
 
   return {
     shots,
+    live,
     race: ctx.race?.state,
+    running: ctx.race?.entries?.filter((e) => !e.finished && !e.eliminated).length,
     cars: ctx.vehicles.length,
     // The HUD is DOM, not canvas — it can never appear in these captures.
     // Critiquing it needs a separate DOM-reading pass.
