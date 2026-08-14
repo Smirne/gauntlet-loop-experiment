@@ -248,11 +248,20 @@ async function boot() {
   ctx.carModels = CAR_MODELS;
   ctx.vehicleVisualMod = vVisual;
 
-  const modelIds = Array.isArray(CAR_MODELS)
+  // Build the field from the promoted roster only (CarModels.ROSTER), not from
+  // every authored chassis. Eight chassis exist and all of them work; three are
+  // what a wave can carry to a die-cast finish, so the other five are out of
+  // the quality budget rather than out of the repo. `?cars=N` still sets the
+  // grid size — the roster wraps.
+  const allModelIds = Array.isArray(CAR_MODELS)
     ? CAR_MODELS.map((m) => m.id ?? m.name)
     : CAR_MODELS && typeof CAR_MODELS === 'object'
       ? Object.keys(CAR_MODELS)
       : [];
+  const roster = pick(vModels, 'ROSTER');
+  const modelIds = Array.isArray(roster) && roster.length
+    ? roster.filter((id) => allModelIds.includes(id))
+    : allModelIds;
 
   const FIELD = Number(params.get('cars') ?? 8);
   ctx.drivers = [];

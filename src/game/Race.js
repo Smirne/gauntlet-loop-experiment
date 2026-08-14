@@ -732,12 +732,28 @@ export class Race {
         e.cp = idx;
       } else {
         // More than one gate away: the car is somewhere it did not drive to.
-        // Refuse to move the counter and mark the lap ineligible for a PB.
+        //
+        // This used to refuse to move `e.cp` at all, which made it a one-way
+        // trap (D14). With cp frozen at gate k and the car already past k+1,
+        // delta can never be 1 again, so `e.gates` — and with it the ordering
+        // scalar — never advanced again for the rest of the race, while `e.t`
+        // went on reporting real progress. Measured: a car second on the road
+        // scoring dead last on four gates against the leaders' eleven, then
+        // eliminated for it. Because that car is usually the player, the race
+        // ended there too.
+        //
+        // Re-sync so ordering keeps tracking reality, and credit nothing for
+        // the span that was skipped. The cut costs exactly what it skipped,
+        // permanently, and the lap it happened on cannot set a personal best.
+        // Cutting therefore still gains nothing — which is the rule section 5
+        // of ARCHITECTURE.md exists to protect. Freezing a car out of the
+        // classification was never part of that rule.
         if (!e.lapInvalid) {
           e.lapInvalid = true;
           e.cutWarnings++;
           this.ctx?.bus?.emit?.('race:cut', { vehicle: v, entry: e, from: e.cp, to: idx });
         }
+        e.cp = idx;
       }
     }
 
@@ -1001,6 +1017,21 @@ export class Race {
     if (this.ctx?.settings?.gameplay?.elimination === false) return;
     if (this.raceTime - this.elimination.lastAt < ELIM_COOLDOWN) return;
 
+    // NOTE (D14, second order): this judges "who is off the back" on the
+    // validated score, which carries the cut penalty. A car that takes one
+    // moderate cut loses more score than the elimination gap on this circuit,
+    // so it can be eliminated while sitting mid-pack in plain view.
+    //
+    // The obvious fix — judge on road position (`lap + t`) instead, since
+    // elimination is a spatial rule — does not work as written: cars are
+    // gridded BEHIND the line, so before their first crossing `t` is ~0.98 with
+    // `lap` still 0, and they read as nearly a full lap AHEAD of anyone who has
+    // already crossed. That inverts leader and last on the opening lap and
+    // eliminates half the field inside 30 s. Measured, not predicted.
+    //
+    // Doing this properly needs a monotone distance-travelled signal rather
+    // than a wrapped parameter. Left alone deliberately until that is
+    // established; the freeze that made this acute is fixed above.
     const order = this.standings;
     let running = 0;
     let last = null;
@@ -1364,8 +1395,16 @@ export class Race {
     const delta = ((idx - e.cp) % n + n) % n;
     // Respawning always puts a car back where it already was, so a small
     // backwards correction is legitimate and a large forward jump is not.
+    //
+    // The re-sync is unconditional (D14). This was the second site of the same
+    // one-way trap, and the more likely trigger of the two: the old `else` left
+    // cp frozen on exactly the large-jump case, so a car that went off and
+    // respawned was silently removed from the classification for the rest of
+    // the race. Flag the lap for a big forward jump — that part was right — but
+    // always let the gate ring track where the car actually is. It earns no
+    // gate credit for the jump either way, so nothing is gained by taking one.
     if (delta > 1 && delta < n - 2) e.lapInvalid = true;
-    else e.cp = idx;
+    e.cp = idx;
   }
 
   dispose() {
@@ -1378,11 +1417,28 @@ export class Race {
 
 /* ------------------------------------------------------------------ statics */
 
+/**
+ * Classification tier. Elimination assigns a `finishOrder` just as finishing
+ * does, so testing that field alone conflated the two and sorted an eliminated
+ * car *above* every car still circulating — which put a car with two gates and
+ * one lap-zero cut in P1, and made `this.leader` (standings[0]) that same car.
+ * Every elimination gap is then measured against a wrong leader.
+ */
+function classRank(e) {
+  if (e.eliminated) return 2;    // out of the race: always below the runners
+  if (e.finishOrder) return 0;   // took the flag
+  return 1;                      // still circulating
+}
+
 function compareEntries(a, b) {
-  if (a.finishOrder && b.finishOrder) return a.finishOrder - b.finishOrder;
-  if (a.finishOrder) return -1;
-  if (b.finishOrder) return 1;
-  return b.score - a.score;
+  const ra = classRank(a);
+  const rb = classRank(b);
+  if (ra !== rb) return ra - rb;
+  // Runners are ordered by validated progress; both settled tiers are already
+  // numbered in finishing order (eliminations count down from the back, so the
+  // car that survived longest carries the lowest number of the group).
+  if (ra === 1) return b.score - a.score;
+  return a.finishOrder - b.finishOrder;
 }
 
 function resolveLaps(ctx) {

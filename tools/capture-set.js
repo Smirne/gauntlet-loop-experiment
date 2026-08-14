@@ -49,27 +49,9 @@
  * least two directions and that is its own investigation; this is the capture
  * harness refusing to produce evidence it cannot stand behind.
  */
-async function assertMoving(ms = 900) {
+function assertMoving(steps = 60) {
   const race = window.MG.ctx?.race;
   const engine = window.MG.engine;
-
-  // Check this FIRST or the answer is always "not moving" for the wrong reason.
-  // core/Engine.js pauses itself on `visibilitychange` when document.hidden —
-  // and an automated browser pane is hidden most of the time, so the loop stops
-  // and every progress sample reads frozen. That artifact is what made two
-  // boots of the same seeded URL look like they diverged; the pane had simply
-  // been hidden for different amounts of wall-clock. Say so plainly rather than
-  // let the next agent conclude the simulation is broken.
-  if (document.hidden || engine?.paused) {
-    return {
-      moving: false,
-      why: document.hidden
-        ? 'document.hidden — Engine has paused itself; the sim is not running while the pane is hidden'
-        : 'engine is paused',
-      paused: !!engine?.paused,
-      hidden: document.hidden,
-    };
-  }
 
   const lead = () => {
     let best = -1;
@@ -79,20 +61,51 @@ async function assertMoving(ms = 900) {
     }
     return best;
   };
-  const before = lead();
-  await new Promise((r) => setTimeout(r, ms));
-  const after = lead();
 
-  if (before < 0) return { moving: false, why: 'no car is still running — every entry is finished or eliminated' };
-  if (after - before < 1e-4) return { moving: false, why: `leader progress did not advance in ${ms} ms (${after.toFixed(4)})` };
-  return { moving: true, advanced: +(after - before).toFixed(5) };
+  const before = lead();
+  if (before < 0) {
+    return { moving: false, why: 'no car is still running — every entry is finished or eliminated' };
+  }
+
+  // DRIVE the simulation, do not observe it.
+  //
+  // Waiting on wall-clock and sampling twice does not work here: Engine pauses
+  // itself on `visibilitychange` when document.hidden, and an agent-driven
+  // browser pane is hidden almost all the time, so a sampled progress delta is
+  // always zero and the guard rejects every race including healthy ones. (That
+  // same pause is why two boots of one seeded URL looked non-deterministic —
+  // the pane had been hidden for different amounts of wall-clock.)
+  //
+  // Stepping the loop directly sidesteps visibility entirely and is what the
+  // fast-forward path already does. Half a second of simulation, rendering
+  // suppressed so it costs nothing.
+  const real = engine?.renderFrame;
+  if (engine) engine.renderFrame = () => {};
+  try {
+    for (let i = 0; i < steps; i++) engine?.stepOnce?.();
+  } finally {
+    if (engine) {
+      delete engine.renderFrame;
+      if (engine.renderFrame !== real) engine.renderFrame = real;
+    }
+  }
+
+  const after = lead();
+  if (after - before < 1e-4) {
+    return {
+      moving: false,
+      why: `leader progress did not advance across ${steps} simulation steps (${after.toFixed(4)})`,
+      state: race?.state,
+    };
+  }
+  return { moving: true, advanced: +(after - before).toFixed(5), steps };
 }
 
 export async function captureSet(suffix = '', opts = {}) {
   const s = window.MG?.status;
   if (!s) return { booting: true, msg: document.querySelector('#boot .boot-msg')?.textContent };
 
-  const live = await assertMoving();
+  const live = assertMoving();
   if (!live.moving && !opts.force) {
     const race = window.MG.ctx?.race;
     return {

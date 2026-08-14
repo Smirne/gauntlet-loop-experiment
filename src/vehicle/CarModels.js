@@ -2962,6 +2962,24 @@ export const LIVERIES = {
   ],
 };
 
+/**
+ * The promoted roster — the only chassis the field is built from.
+ *
+ * Eight chassis are authored below and all eight still work; this is a scope
+ * decision, not a deletion. Finishing one car to a die-cast standard — bevels
+ * that catch a highlight, glazing with real depth, a livery that survives a
+ * macro shot — is most of a wave's work, and three is what can be carried to
+ * that bar. The three are chosen for silhouette separation, so a glance at a
+ * pack reads as three different cars and not three palettes of one: a long
+ * bonnet and a fastback (muscle), a doorstop with a high tail (wedge), and a
+ * short, tall, boxy hatch on visible suspension travel (rally).
+ *
+ * Field assignment is `roster[i % 3]` with `livery: i`, and with five liveries
+ * per chassis that yields eight distinct (chassis, livery) pairs across a
+ * default grid — no two cars on track are the same object.
+ */
+export const ROSTER = ['muscle', 'wedge', 'rally'];
+
 /** Resolve a livery for a model, wrapping the index. */
 export function liveryFor(modelId, index = 0) {
   const set = LIVERIES[modelId] || LIVERIES.muscle;

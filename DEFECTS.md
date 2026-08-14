@@ -63,7 +63,7 @@ neither — a raycast finds the road present, and they survive with `shadowMap.e
 and low-angle cameras use, fog has already taken everything to near-flat. Whatever is built
 behind the table will not be visible until this is retuned.
 
-## D14 — A single cut warning removes a car from the race permanently — CRITICAL — OPEN
+## D14 — A single cut warning removes a car from the race permanently — CRITICAL — FIXED
 `game/Race.js` [A12]. `_advanceEntry`'s third branch — "more than one gate away: the car is
 somewhere it did not drive to" — deliberately refuses to move `e.cp`. That makes it a one-way
 trap. Once `e.cp` is frozen at gate *k* and the car drives past gate *k+1*, `delta` can never
@@ -89,8 +89,58 @@ the original D8, and for standings that disagree with what the frame shows. It i
 every review frame so far was shot from a race that had already stopped.
 
 The design intent in ARCHITECTURE.md — cutting is impossible, you must go back for the gate —
-is worth keeping. Freezing the ordering scalar forever is not part of it. A fix has to let a
-car re-sync to the gate ring once it returns, while still denying it the lap.
+is worth keeping. Freezing the ordering scalar forever is not part of it.
+
+**Fixed** at both sites. `_advanceEntry` now re-syncs `e.cp` to the current gate and credits
+nothing for the skipped span, so the cut costs exactly what it skipped, permanently, and the
+lap cannot set a personal best — but the score resumes advancing immediately. `_onRespawn`
+carried the same one-way `else` and was the likelier trigger of the two: a car that went off
+and respawned was silently removed from the classification for the rest of the race.
+
+Two further things fell out of verifying it:
+
+- **`compareEntries` ranked eliminated cars first.** Elimination assigns a `finishOrder` just
+  as finishing does, and the sort tested only that field, so `if (a.finishOrder) return -1`
+  promoted an eliminated car above every car still circulating. A car with two gates and one
+  lap-zero cut held P1 — and since `this.leader` is `standings[0]`, every elimination gap was
+  then measured against it. Now tiered: finishers, then runners by score, then eliminated.
+- **Elimination is still judged on the cut-penalised score**, so one moderate cut can still
+  put a mid-pack car out. Left alone deliberately. The obvious fix — judge on road position,
+  since elimination is a spatial rule — is wrong as written: cars grid *behind* the line, so
+  before their first crossing `t` is ~0.98 with `lap` still 0 and they read as nearly a lap
+  *ahead* of anyone who has crossed. Measured: it inverts leader and last on the opening lap
+  and eliminates half the field inside 30 s. Doing it properly needs a monotone
+  distance-travelled signal rather than a wrapped parameter.
+
+Verified with a full race, seed 20260730: car7 wins on lap 3 at 83.62 s, the player finishes
+P2 at 88.98 s, fastest lap 25.09 by car1, and the five eliminated cars rank 4–8 in the order
+they went out. Before the fix this race was over at 9.7 s with every car on lap 0.
+
+## D16 — The trail ribbons paint a black wedge across the table — MAJOR — OPEN
+`fx/Trails.js` [A9]. Isolated, not inferred. Hiding `fx:skidRibbon` and `fx:speedRibbon` and
+re-capturing the identical paused moment removes the wedge; everything else in the frame is
+unchanged. Compare `shots/wedge-shadows-off.png` with `shots/wedge-no-trails.png`.
+
+The elimination order matters, because the two obvious explanations are both wrong:
+
+- **Not geometry.** A raycast through the wedge hits `track:ground` (material `track:oak`) at
+  132–134 units — the same mesh, material and distance as clean table 20° away. The road is
+  present underneath. It is an overlay, not a hole, which also matches the round-2 measurement
+  that the band has identical RGB over wood and over concrete.
+- **Not a shadow.** With `shadowMap.enabled = false` the band is still there, hard-edged and
+  black. Sampling the live framebuffer in that region returns RGB(153,85,22) — ordinary warm
+  wood — which is the trap: the artifact is in the capture path's composite, so probing the
+  live frame says "nothing wrong here" and sends you looking in the wrong place. That is the
+  same shape of mistake as the motion-blur streaks.
+
+`fx:skidRibbon` draws with `blending: 1` (NormalBlending) and `transparent: true`, and the
+round-2 adjudication measured its tint at `0x1a1a1a`, unlit, at `uOpacity 0.92`. A near-black,
+unlit, all-but-opaque normal-blended ribbon laid on the table is a black band by construction.
+A rubber mark should darken what is under it, not replace it.
+
+This was correctly diagnosed in round 2 and never fixed — the fx agent that owned it was one
+of the four that did not run before the session limit. A narrower band survives hiding both
+ribbons, so there is a second, smaller contributor still to find.
 
 ## D15 — The sim does not run while the browser pane is hidden — HARNESS — DOCUMENTED
 `core/Engine.js` pauses itself on `visibilitychange` when `document.hidden`, which is correct
