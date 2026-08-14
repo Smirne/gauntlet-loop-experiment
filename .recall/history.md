@@ -285,3 +285,123 @@ Scope. The circuit picks itself — **kitchen** is the only one any fix wave has
 The chassis count is the real question, and it's on the page as three options. My recommendation is **3 chassis, 8 cars, 8 liveries** — three silhouettes to model and light to a die-cast standard, but a grid that still reads as a varied field. Worth knowing before you choose: every frame in the baseline shows a *single lonely car*, because the field strings out and the camera follows one of them. Option B (4 cars) is the one that fixes that, at the cost of Micro Machines chaos.
 
 Tell me which, and wave 1 goes out: one agent on D14, because nothing downstream is judgeable until a race actually finishes.
+
+**You:** ok for circuit and the 3 car.
+
+**Claude:** Locked: kitchen, 3 chassis / 8 cars / 8 liveries. Starting wave 1.
+  - `Bash: grep -n "^export const CAR_MODELS\|^const CAR_MODELS\|^ [a-zA-Z0-9_]*: {" src/vehicle/CarModels.js | head -40; echo "=== keys ==="; grep -n "CAR_MODELS\s*=" src`
+  - `Bash: sed -n '255,300p' src/main.js`
+  - `Bash: sed -n '240,258p' src/main.js; echo "=== modelIds source ==="; grep -n "modelIds" src/main.js`
+  - `Bash: grep -n "LIVERIES\|livery" src/vehicle/CarModels.js | head -30`
+  - `Bash: grep -n "export const LIVERIES\|^export function pickLivery\|LIVERY_" src/vehicle/CarModels.js; echo "---"; grep -n "liveries\s*[:=]" src/vehicle/CarModels.js s`
+  - `Bash: sed -n '2906,2980p' src/vehicle/CarModels.js`
+  - `Bash: sed -n '755,830p' src/game/Race.js`
+  - `Bash: grep -n "_onRespawn" -A 22 src/game/Race.js | head -30`
+  - `Bash: sed -n '1357,1380p' src/game/Race.js`
+
+**Claude:** Two sites share the trap — `_onRespawn` has the same freeze. Fixing both:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js`
+
+**Claude:** Now the scope lock — the three-chassis roster:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/vehicle/CarModels.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/main.js`
+  - `Bash: grep -n "^function pick\|const pick" -A 12 src/main.js | head -20`
+  - `mcp__Claude_Browser__preview_start: micro-gauntlet`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?skipmenu=1&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Roster is live. Now the decisive test — a full 3-lap race via the deterministic fast-forward path (immune to the hidden-pane pause):
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?skipmenu=1&quality=ultra&autopilot=1&seed=20260730&t=60`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Two problems remain. Let me look at elimination and the sort:
+  - `Bash: sed -n '996,1050p' src/game/Race.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?skipmenu=1&quality=ultra&autopilot=1&seed=20260730&t=60`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** That made it worse — `lap + t` inverts at the grid, since cars gridded *behind* the line read as nearly a lap ahead. Reverting that hunk; the cut-penalty concern needs a monotone distance signal I haven't verified exists, and it's not worth iterating blind inside wave 1.
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?skipmenu=1&quality=ultra&autopilot=1&seed=20260730&t=60`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Race is alive: leader on lap 2, player P3 and running, standings correctly tiered. Now the real proof — stepping past the fast-forward cap to see an actual finish:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** A real result: car7 wins on lap 3 at 83.62s, player P2, fastest lap 25.09 by car1, eliminated cars correctly ranked 4–8 by when they went out. That's D14 closed.
+
+But my guard has a flaw I introduced — it refuses whenever the pane is hidden, which is always for an agent. It should *drive* the sim rather than watch it:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/tools/capture-set.js`
+  - `Bash: grep -n "const live = await assertMoving" src/../tools/capture-set.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/tools/capture-set.js`
+
+**Claude:** Now the full end-to-end: boot, guard passes, shoot the first genuinely valid critic set.
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-1-gameplay-r3.png`
+
+**Claude:** Two cars in frame now — but there's a hard-edged black wedge over the lower-left third. Previous sessions burned three diagnoses guessing at these; let me just measure it.
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Same mesh, same material, same distance as the clean region — the ground is present and rendering black. That's shading, not geometry. Testing shadows:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** The live frame at those coordinates isn't black — so the wedge is capture-path specific, like the old motion-blur streaks. Testing it where it actually appears:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/wedge-shadows-off.png`
+
+**Claude:** Shadows off and it's still there — a hard-edged band, not a shadow. That shape matches the skid ribbon the round-2 adjudication identified but whose fix agent never ran. Isolating it:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/wedge-no-trails.png`
+
+**Claude:** The wedge is the trail ribbons. Logging it precisely so the fx wave doesn't have to re-derive it:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/DEFECTS.md`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/DEFECTS.md`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/DEFECTS.md`
+  - `Bash: git add -A && git commit -q -F - <<'EOF' && git log --oneline -1 Wave 1: a race that finishes, and a three-car roster D14 fixed at both sites. _advanceEntry re-`
+
+**Claude:** Now updating the page with the wave-1 result:
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Artifact: /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-`
+
+**Claude:** Wave 1 is done — page updated at the same URL: https://claude.ai/code/artifact/41a6f0af-c1d8-410f-b95a-cc2c96b66666
+
+**The race finishes.** Seed 20260730, three laps: car7 wins at 83.62s, the player takes P2 at 88.98s, fastest lap 25.09 by car1, and the five eliminated cars rank 4–8 in the order they went out. The same race before the fix was over at 9.7s with every car on lap 0.
+
+D14 needed fixing at **two** sites, not one. `_onRespawn` carried the identical one-way branch and is the likelier original trigger — a car that went off and respawned was silently deleted from the classification for the rest of the race.
+
+Verifying it turned up two more:
+
+- **The standings sort ranked eliminated cars first.** Elimination assigns a `finishOrder` exactly as finishing does, and `compareEntries` tested only that field — so a car that was out of the race outranked everyone still circulating. And since `leader` is `standings[0]`, every elimination gap was being measured against a car that had already been removed.
+- **One I tried, measured, and reverted.** Elimination is judged on the cut-penalised score, so a cut can still put a mid-pack car out. Judging on road position instead is the obvious fix and is wrong: cars grid *behind* the line, so before their first crossing they read as nearly a lap *ahead* of anyone who has crossed — it inverted the order and eliminated half the field inside 30s. That needs a monotone distance signal, and the comment now says so where the next person will look.
+
+**Scope locked:** `CarModels.ROSTER = ['muscle', 'wedge', 'rally']`, picked for silhouette separation. Five liveries each gives eight distinct chassis-and-paint pairs, so no two cars on the grid are the same object.
+
+I also had to rewrite the capture guard a third time. It now *drives* the simulation rather than watching it — stepping the loop directly, rendering suppressed. Sampling across wall-clock could never work: `Engine` pauses itself whenever the pane is hidden, which for an agent is nearly always, so the guard was refusing healthy races.
+
+**One new finding, and it's the headline for the next wave.** The first round-3 frames still had a hard-edged black wedge over a third of the shot. I isolated it rather than guessing: same paused moment, ribbons hidden, wedge gone. Both obvious explanations are wrong — a raycast finds `track:ground` at the same distance as clean table, so it's an overlay not a hole, and it survives `shadowMap.enabled = false`, so it's not a shadow. Sampling the *live* framebuffer there returns ordinary warm wood, which is the trap: the artifact lives in the capture composite. It's `fx:skidRibbon` drawing NormalBlending at 0.92 opacity, unlit, tinted `0x1a1a1a` — a near-opaque black ribbon painted on the table. Round 2 diagnosed this correctly and the fix agent never ran.
+
+Committed locally as `8dd860d`, nothing pushed.
+
+Wave 2 is queued and well-briefed: kill the wedge (execution, not investigation — though a narrower band survives hiding both ribbons, so there's a second contributor to find). Say go and I'll run it.
+
+**You:** yes keep going
+
+**Claude:** Wave 2. Let me get the brief precise before spawning anything.
+  - `Bash: grep -n "skidRibbon\|0x1a1a1a\|uOpacity\|blending\|Blending\|tint" src/fx/Trails.js | head -40`
+  - `Bash: sed -n '255,295p' src/fx/Trails.js; echo "=== tintFor ==="; sed -n '818,840p' src/fx/Trails.js`
+
+**Claude:** The mechanism is exact: `NormalBlending` at `uOpacity 0.92` means the mark **replaces** the road with near-black instead of darkening it. Wave 2 — four agents on disjoint files, and I verify centrally afterwards so they don't contend for the single browser pane.
+  - `Workflow: false`
+  - `Workflow: export const meta = { name: 'micro-gauntlet-wave-2', description: 'Four independent source-level fixes: skid ribbon, macro focus, surfaces, director', phases: [`
+
+**Claude:** Wave 2 is running — four agents on disjoint files. I'll report when they land and verify each visually.

@@ -2290,9 +2290,35 @@ GEN.brushedAluminium = (B) => {
   B.give(s1); B.give(s2); B.give(s3); B.give(cloud);
 
   // Individual deep scores along the brush direction.
+  //
+  // `dir` is the scratch's heading in texel space and `addScratches` walks it
+  // as (cos dir, sin dir), so Math.PI * 0.5 pointed every score straight down
+  // +y — square across the three grit octaves above, which are cellsX-sparse
+  // and cellsY-dense and therefore run along +x. The comment said "along the
+  // brush direction" and the code drew the exact opposite, which is the one
+  // thing in the tile with enough contrast to set the material's read: the
+  // scores are the sharpest features in the roughness map, so they decided its
+  // direction. Measured over the 1024 tile, mean |d rough/dy| : |d rough/dx|
+  // was 0.78 — a roughness map that varied *faster across* the brush than
+  // along it, i.e. cross-hatched, not brushed. At dir 0 the same ratio is 6.9,
+  // the albedo 13.9 and the encoded normal 5.3.
+  //
+  // This matters beyond the tile. render/Materials.js hands the surface an
+  // anisotropyRotation of PI/2 so three's alphaT lands on the bitangent, which
+  // is the correct wide axis only if the grooves run along the tangent. Half
+  // the tile disagreeing with that is a large part of why D4 still had no
+  // brushed read after the albedo and roughness were already measuring fine.
+  //
+  // Worth noting what this does *not* do: it redistributes the encoded normal
+  // rather than amplifying it. Mean |nx-128| falls 1.23 -> 0.50 while |ny-128|
+  // rises 2.21 -> 2.67, so the combined magnitude moves under a tenth and the
+  // geometric specular AA in Materials — which widens the lobe from the screen
+  // -space derivative of the shading normal — sees essentially the same load.
+  // A directional normal is also the case the texture's own anisotropic
+  // filtering handles best, so this should minify cleaner than it did.
   addScratches(B, {
     count: 220, lenMin: size * 0.08, lenMax: size * 0.6, width: size / 2400,
-    depth: 0.30, rough: 0.10, bright: 0.02, dir: Math.PI * 0.5, dirBias: 0.045, seed: 31,
+    depth: 0.30, rough: 0.10, bright: 0.02, dir: 0, dirBias: 0.045, seed: 31,
   });
   addFingerprints(B, 3, 0.20, 77);
   B.aoStrength = 0.35;

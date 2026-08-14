@@ -232,6 +232,18 @@ const SpecularHighPassShader = {
  *     shipped (band 0.115 / ramp 0.175 / depth on)   45.4%
  *     as it shipped before (band 0.210 / ramp 0.200) 20.1%, sharp strip 45% of
  *     frame height -- which is a photograph of a large object.
+ *
+ * WHAT A CLOSE CAMERA BREAKS. Everything above sizes itself off the frame: the
+ * band is a fraction of frame height, the depth slab a fraction of the frame's
+ * depth spread. Both assume the subject is small in frame, which stops being
+ * true at about 30 u from a 9 u car -- the review set's macro shot. There the
+ * frame holds ~7 u of depth below the subject and 13 u of height at it, so a
+ * slab of 0.28 * 7 = 1.9 u is thinner than the car is long and a 23% sharp
+ * strip is narrower than the car is tall. The lens ends up defocusing its own
+ * subject while the table around it stays sharp. So both quantities now carry a
+ * floor in WORLD units, taken from the car (DOF_SUBJECT_HALF, CAR_LENGTH and
+ * CAR_HEIGHT below); by construction each floor is already met on the chase and
+ * establishing cameras and binds only when the shot is genuinely close.
  */
 
 /**
@@ -442,6 +454,36 @@ const DOF_RAMP = 0.175;
  *  the shorter of the two ramp spans. 0.28 is ~6 u on a chase camera, which is
  *  a car length: the subject stays sharp nose to tail. */
 const DOF_DEPTH_BAND = 0.28;
+
+/**
+ * Floor under that slab, in world units, so a close camera cannot end up with a
+ * plane of focus thinner than the thing it is focused on.
+ *
+ * A fraction of the frame's own depth spread is the right basis while the
+ * subject is small in frame, and it falls apart when it is not. On the review
+ * set's macro shot the camera is 9 u above the table and 28 u from the car, the
+ * frame holds only ~7 u of depth between the car and the bottom edge, and 0.28
+ * of that is a 1.9 u slab — a fifth of a car length. A car is 9 u long
+ * (ARCHITECTURE section 2), so on a three-quarter view its nose and tail sit
+ * ~4.3 u either side of its centre and both fell outside the slab. 5.0 covers
+ * that with a little over for body roll and suspension travel.
+ *
+ * Sized to bind only when the shot is genuinely close. Solved through the same
+ * equations for all three cameras in tools/capture-set.js — arithmetic, not
+ * measured off a frame — the fraction alone already gives 5.70 u on the chase
+ * and 115.8 u on the establishing shot, so neither of those moves at all; the
+ * macro shot's 1.96 u is the only one this catches. There the car's nose sat at
+ * coc 0.39, i.e. 6.6 px of blur out of a 16.7 px kernel, and lands at 0.
+ */
+const DOF_SUBJECT_HALF = 5.0;
+/** Ramp left either side of the slab when that floor binds, as a multiple of
+ *  the slab. Without it the shader's (span - band) denominator collapses onto
+ *  its 1e-3 guard and the edge of the slab becomes a step instead of a lens. */
+const DOF_SUBJECT_RAMP = 1.30;
+/** The die-cast body box, world units, from ARCHITECTURE section 2. Used to
+ *  work out how much of frame height the subject actually covers. */
+const CAR_LENGTH = 9.0;
+const CAR_HEIGHT = 2.8;
 
 /**
  * Separable tilt-shift DOF with a real depth term.
@@ -1346,6 +1388,9 @@ export class PostFX {
 
     this._focus = 0.52;
     this._focusOverride = null;
+    /** True once a camera cut has happened under a pin nobody has refreshed
+     *  since — the pin then loses to a subject that is actually in shot. */
+    this._focusPinStale = false;
     this._focusTau = 0.13;
     /** View depth of the plane of focus, damped. Seeded at a chase distance. */
     this._focusDepth = 130;
@@ -1391,16 +1436,31 @@ export class PostFX {
   }
 
   /**
-   * Tell the motion blur that the camera teleported, so it skips reprojection
-   * for one frame instead of smearing the cut across the screen.
+   * Tell the pass chain that the camera teleported: the motion blur skips
+   * reprojection for one frame instead of smearing the cut across the screen,
+   * and the tilt-shift snaps its plane of focus onto the new subject distance
+   * instead of racking toward it over the next tenth of a second.
    *
-   * The pose heuristic in update() catches cuts on its own, but it can only
-   * guess from a threshold. Anything that knowingly repositions the camera —
-   * a director cut, a respawn, a replay seek, the review capture rig — should
+   * The pose heuristic in _updateUniforms() catches cuts on its own, but it can
+   * only guess from a threshold. Anything that knowingly repositions the camera
+   * — a director cut, a respawn, a replay seek, the review capture rig — should
    * call this and not rely on the guess.
    */
   notifyCameraCut() {
     this._cutPending = true;
+
+    // Demote any pinned band centre. A pin is a uv.y, i.e. a statement about
+    // ONE camera's framing, and whoever teleported the camera has invalidated
+    // it: Director pins the band every frame and re-pins on its next
+    // lateUpdate, so it loses nothing, but the review rig disables the Director
+    // and then drives the camera by hand — which left the last director frame's
+    // centre pinned across the tight chase, the macro and the establishing
+    // shot, three cameras it knew nothing about. Demoted rather than dropped
+    // because a pin is also how the showroom holds the band while the hero car
+    // is nine hundred units away and off camera: see the fallback in
+    // _updateUniforms, which only overrules a stale pin when there is actually
+    // a subject in shot to track instead.
+    this._focusPinStale = true;
 
     // Consume it here too, not only in update(). The capture pipeline calls
     // renderFrame() directly without an update(), so a flag alone never got
@@ -1459,6 +1519,14 @@ export class PostFX {
     this._sig = sig;
 
     this._teardown();
+
+    // A rebuild can hand the chain a motion blur pass it did not have a frame
+    // ago (a quality switch mid-race), and _prevVP is only ever written by that
+    // pass, so the new one would reproject through a matrix of unknown age.
+    // Forcing a cut makes its first frame hold instead of smear, and costs the
+    // focus nothing: it snaps to the subject it is already looking at.
+    this._camHistory = false;
+    this._cutPending = true;
 
     const tier = POST_TIERS[this.tier] || POST_TIERS.ultra;
     const want = Object.assign(
@@ -1532,6 +1600,7 @@ export class PostFX {
           return p;
         });
         if (gtao) {
+          this._excludeTranslucentFromAO(gtao, scene);
           this.passes.ao = gtao;
           composer.addPass(gtao);
         }
@@ -1719,6 +1788,75 @@ export class PostFX {
     return composer;
   }
 
+  /**
+   * Keep translucent FX out of the AO G-buffer (D16).
+   *
+   * GTAOPass builds its own depth and normal buffers by re-rendering the scene
+   * through `scene.overrideMaterial`. An override REPLACES the material, so a
+   * mesh's own `depthWrite: false` and `transparent: true` do not travel with
+   * it — every additive ribbon is written into that G-buffer as though it were
+   * opaque geometry. `fx:speedRibbon` is a wide sheet flying just above the
+   * road, so AO reads it as an enormous near occluder and shades everything
+   * behind it down to ambient: a hard-edged dark navy wedge across a third of
+   * the frame, and the worst artifact in the game.
+   *
+   * How this was settled, because two plausible stories were wrong first:
+   *   - Hiding the mesh removed the wedge but `material.colorWrite = false` did
+   *     NOT. That gap is the entire tell: something draws this mesh without
+   *     using its material, which is what an override pass is.
+   *   - Not the blend. Forcing alpha to stop accumulating changed nothing. Not
+   *     shadows either — castShadow was already false on all three ribbons.
+   *     Disabling passes one at a time landed on GTAOPass: with AO off the same
+   *     pixels go 30,36,55 -> 142,79,57 while a control pixel outside the
+   *     ribbon does not move at all.
+   *
+   * The earlier D16 entry blamed `fx:skidRibbon`'s near-opaque normal blend.
+   * That isolation hid BOTH ribbons at once and pinned it on the wrong one.
+   *
+   * Hide-and-restore rather than layers: giving these meshes their own layer
+   * means taking them off layer 0, which silently changes what every Raycaster
+   * in the project can hit — and raycasts are how half this codebase's defects
+   * were diagnosed. The list is cached and re-scanned occasionally, since fx
+   * meshes are built once at boot and then persist.
+   */
+  _excludeTranslucentFromAO(pass, scene) {
+    if (!pass || typeof pass.render !== 'function' || pass.__mgAOExcluded) return;
+    pass.__mgAOExcluded = true;
+
+    const RESCAN = 300;              // frames between cache rebuilds
+    let cache = null;
+    let age = RESCAN;
+
+    const collect = () => {
+      const list = [];
+      scene.traverse((o) => {
+        if (!o.isMesh && !o.isPoints && !o.isLine) return;
+        const m = o.material;
+        if (!m) return;
+        // An occluder is something light cannot pass through. Anything that
+        // asked not to write depth is, by its own declaration, not that.
+        const mats = Array.isArray(m) ? m : [m];
+        if (mats.some((x) => x && x.transparent === true && x.depthWrite === false)) list.push(o);
+      });
+      return list;
+    };
+
+    const inner = pass.render.bind(pass);
+    pass.render = (...args) => {
+      if (!cache || ++age >= RESCAN) { cache = collect(); age = 0; }
+      const hidden = [];
+      for (let i = 0; i < cache.length; i++) {
+        const o = cache[i];
+        if (o.visible) { o.visible = false; hidden.push(o); }
+      }
+      try {
+        return inner(...args);
+      } finally {
+        for (let i = 0; i < hidden.length; i++) hidden[i].visible = true;
+      }
+    };
+  }
+
   _safe(key, factory) {
     try {
       return factory();
@@ -1899,6 +2037,8 @@ export class PostFX {
    */
   setFocusBand(centre, width, falloff) {
     this._focusOverride = Number.isFinite(centre) ? clampNum(centre, 0.06, 0.94) : null;
+    // Whoever just pinned it is describing the camera as it is now.
+    this._focusPinStale = false;
     const t = this.passes.tiltShift;
     if (!t) return this;
     const u = t.uniforms;
@@ -2095,9 +2235,36 @@ export class PostFX {
       camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
     }
 
+    /* did the camera teleport? --------------------------------------------- */
+    // This test used to live inside the motion-blur block, which is two things
+    // wrong: focus has to know about a cut as well (a cut is not a rack — see
+    // the plane of focus below), and on the tiers with no motion blur pass
+    // nothing was watching the camera at all, so _prevCamPos never advanced and
+    // the pose heuristic could not fire even for the passes that survive.
+    // Read once here, consumed by everything downstream.
+    let cut = false;
+    if (camera) {
+      _cutPos.setFromMatrixPosition(camera.matrixWorld);
+      camera.getWorldQuaternion(_cutQuat);
+      cut =
+        this._cutPending ||
+        !this._camHistory ||
+        _cutPos.distanceToSquared(this._prevCamPos) > CUT_DIST_SQ ||
+        Math.abs(_cutQuat.dot(this._prevCamQuat)) < CUT_DOT;
+      this._cutPending = false;
+      this._camHistory = true;
+      this._prevCamPos.copy(_cutPos);
+      this._prevCamQuat.copy(_cutQuat);
+    }
+
     /* tilt-shift band tracks the player in screen space -------------------- */
     if (p.tiltShift && camera) {
-      let target = this._focusOverride;
+      const pin = this._focusOverride;
+      // A pin that has survived a camera cut without being refreshed describes
+      // a camera that no longer exists (see notifyCameraCut), so a subject
+      // actually in shot outranks it. It still wins over nothing at all, which
+      // is what the showroom depends on.
+      let target = this._focusPinStale ? null : pin;
       if (target == null) {
         const hero =
           (ctx.player && ctx.player.position) ||
@@ -2110,11 +2277,13 @@ export class PostFX {
             target = Math.min(0.86, Math.max(0.14, _proj.y * 0.5 + 0.5));
           }
         }
+        if (target == null && pin != null) target = pin;
       }
       if (Number.isFinite(target)) {
         // Critically damped, frame-rate independent: the band must never
-        // overshoot or the whole frame breathes.
-        const k = 1 - Math.exp(-dt / this._focusTau);
+        // overshoot or the whole frame breathes. Across a cut it snaps, for the
+        // same reason the plane of focus below does.
+        const k = cut ? 1 : 1 - Math.exp(-dt / this._focusTau);
         this._focus += (target - this._focus) * k;
       }
       // One NaN reaching uFocusCenter would make every CoC NaN, every kernel
@@ -2163,7 +2332,25 @@ export class PostFX {
       if (!(zf > 0)) zf = this._focusDepth;
       // Same critically damped follow as the band centre: suspension travel
       // moves the subject a unit or two per frame and the focus must not buzz.
-      const kz = 1 - Math.exp(-dt / 0.10);
+      //
+      // ACROSS A CUT IT SNAPS, and not doing so is what made the macro review
+      // frame focus behind its subject. A cut is not a rack: the camera is
+      // somewhere else and its subject is at a completely different distance,
+      // so damping toward the new distance means the opening frames of the new
+      // shot keep the plane of focus at the OLD shot's distance. Capture.js
+      // renders exactly two frames per shot, and at tau 0.10 with dt 1/60 those
+      // two frames cover 28% of the gap — so the macro shot, whose subject is
+      // 28.4 u away, inherited whatever the chase before it left behind (itself
+      // lagging, 50-90 u) and closed a quarter of the distance. Solved out:
+      //   uFocusDepth 50 -> slab 42..58 u, car at coc 0.64 (10.8 px of 16.7)
+      //   uFocusDepth 71 -> slab 60..82 u, car at coc 1.00 (the full kernel)
+      // The table was in focus and the subject was not, on the one shot whose
+      // whole job is the subject. Nothing else in the pass was wrong.
+      //
+      // Live gameplay never showed it because the director's camera moves
+      // continuously and 0.1 s of rack is invisible; it only bites where the
+      // camera teleports, which is every review capture and every director cut.
+      const kz = cut ? 1 : 1 - Math.exp(-dt / 0.10);
       this._focusDepth += (zf - this._focusDepth) * kz;
       if (!Number.isFinite(this._focusDepth) || this._focusDepth <= 0) this._focusDepth = zf > 0 ? zf : 130;
       u.uFocusDepth.value = this._focusDepth;
@@ -2176,10 +2363,8 @@ export class PostFX {
       const fz = this._focusDepth;
       const zTop = this._planeDepth(0, 0.92, tanX, tanY, planeD);
       const zBot = this._planeDepth(0, -0.92, tanX, tanY, planeD);
-      const farSpan = clampNum(zTop > fz ? zTop - fz : fz * 1.2, fz * 0.10, fz * 1.60);
-      const nearSpan = clampNum(zBot > 0 && zBot < fz ? fz - zBot : fz * 0.35, fz * 0.06, fz * 0.55);
-      u.uFarSpan.value = farSpan;
-      u.uNearSpan.value = nearSpan;
+      let farSpan = clampNum(zTop > fz ? zTop - fz : fz * 1.2, fz * 0.10, fz * 1.60);
+      let nearSpan = clampNum(zBot > 0 && zBot < fz ? fz - zBot : fz * 0.35, fz * 0.06, fz * 0.55);
 
       // How much this shot should behave like a miniature. 0 = a chase frame
       // sitting on the table, 1 = an establishing shot of the whole playfield.
@@ -2198,8 +2383,21 @@ export class PostFX {
                             (BAND_WIDE_FAR - BAND_WIDE_NEAR), 0, 1);
 
       // Hold far more depth fully sharp as the shot opens out.
-      const depthBand = DOF_DEPTH_BAND + (DOF_DEPTH_BAND_WIDE - DOF_DEPTH_BAND) * wide;
-      u.uDepthBand.value = Math.min(nearSpan, farSpan) * depthBand;
+      const depthFrac = DOF_DEPTH_BAND + (DOF_DEPTH_BAND_WIDE - DOF_DEPTH_BAND) * wide;
+      let depthBand = Math.min(nearSpan, farSpan) * depthFrac;
+      // ...and never less depth than the subject itself occupies. The frame's
+      // depth spread collapses faster than the car does as the camera closes
+      // in, so on a macro shot this fraction lands under a car length and the
+      // hero's nose and tail fall outside the plane of focus. See
+      // DOF_SUBJECT_HALF: it binds on the macro camera and on nothing else.
+      if (depthBand < DOF_SUBJECT_HALF) {
+        depthBand = DOF_SUBJECT_HALF;
+        nearSpan = Math.max(nearSpan, depthBand * DOF_SUBJECT_RAMP);
+        farSpan = Math.max(farSpan, depthBand * DOF_SUBJECT_RAMP);
+      }
+      u.uNearSpan.value = nearSpan;
+      u.uFarSpan.value = farSpan;
+      u.uDepthBand.value = depthBand;
       // ...and take the peak blur radius down with it, so whatever does fall
       // outside the slab softens rather than smears.
       if (Number.isFinite(this._dofRadiusBase)) {
@@ -2245,10 +2443,35 @@ export class PostFX {
       const squeeze = BAND_SQUEEZE + (1 - BAND_SQUEEZE) * wide;
       const maxW = BAND_MAX + (BAND_MAX_WIDE - BAND_MAX) * wide;
       const req = this._bandRequested;
+      let bandW = u.uBandWidth.value;
       if (Number.isFinite(req)) {
-        u.uBandWidth.value = clampNum(BAND_MIN + Math.max(0, req - BAND_MIN) * squeeze,
-                                      BAND_MIN, maxW);
+        bandW = clampNum(BAND_MIN + Math.max(0, req - BAND_MIN) * squeeze, BAND_MIN, maxW);
       }
+
+      // ...but never narrower than the subject's own footprint in the frame.
+      // The band is a fraction of FRAME height, which is only ever a stand-in
+      // for "the subject is small in frame" — true on a chase, false on a macro
+      // shot where the car covers a third of the picture and a 23% sharp strip
+      // therefore cuts the roof off it. A lens does not put half its subject
+      // out of focus, so measure the subject instead of assuming: its vertical
+      // silhouette is CAR_LENGTH foreshortened by the camera pitch plus
+      // CAR_HEIGHT standing up, and the pitch is already in hand — _planeN is
+      // world up in view space, so its z is sin(pitch).
+      //
+      // Solved for the three cameras in tools/capture-set.js — arithmetic, not
+      // measured off a frame: 0.080 on the chase and 0.013 on the establishing
+      // shot, both under the width already in force, so neither moves; 0.195 on
+      // the macro shot, where the car's top edge was taking band coc 0.21, i.e.
+      // 3.5 px of a 16.7 px kernel, and now takes none. Capped at BAND_MAX_WIDE
+      // so this can never open the band further than a wide shot is allowed to.
+      const sinP = Math.min(1, Math.abs(_planeN.z));
+      const cosP = Math.sqrt(Math.max(0, 1 - sinP * sinP));
+      const frameH = 2 * this._focusDepth * tanY;
+      if (frameH > 1e-3) {
+        const subjectW = (CAR_LENGTH * sinP + CAR_HEIGHT * cosP) * 0.5 / frameH;
+        if (Number.isFinite(subjectW)) bandW = Math.max(bandW, Math.min(subjectW, BAND_MAX_WIDE));
+      }
+      u.uBandWidth.value = bandW;
     }
 
     /* motion blur ---------------------------------------------------------- */
@@ -2264,19 +2487,10 @@ export class PostFX {
       // between angles during a race, so this ships unless it is caught.
       //
       // Held for a frame rather than fixed up: with no trustworthy previous
-      // view there is no correct blur to draw, and none is right.
-      _cutPos.setFromMatrixPosition(camera.matrixWorld);
-      camera.getWorldQuaternion(_cutQuat);
-      const jumped =
-        this._cutPending ||
-        !this._camHistory ||
-        _cutPos.distanceToSquared(this._prevCamPos) > CUT_DIST_SQ ||
-        Math.abs(_cutQuat.dot(this._prevCamQuat)) < CUT_DOT;
-      this._cutPending = false;
-      this._camHistory = true;
-      this._prevCamPos.copy(_cutPos);
-      this._prevCamQuat.copy(_cutQuat);
-      if (jumped) this._prevVP.copy(_vp);
+      // view there is no correct blur to draw, and none is right. The test
+      // itself now runs at the top of this function, because the plane of focus
+      // needs the same answer.
+      if (cut) this._prevVP.copy(_vp);
 
       u.uPrevViewProj.value.copy(this._prevVP);
       // World position, not .position: the camera may be parented to a rig.

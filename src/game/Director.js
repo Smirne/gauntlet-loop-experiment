@@ -259,10 +259,14 @@ export class Director {
     this.frameY = new Damped(FRAME_Y_REST);
     this.frameX = new Damped(0);
 
-    /* --- boom scratch (written by _boom, read by _composeLook) ------------ */
+    /* --- solved-pose scratch, each rewritten once a frame ------------------ */
+    // _boomPitch is written by _boom and read by _composeLook, which needs the
+    // pitch the boom actually used — it is clamped, and the ground-clearance
+    // branch can reach it, so it is not always this.pitch.value.
+    // _lead is written by _composeLook and read only by snapshot().
+    // _distCap is written by _solveDistance and read by screenSpan(), and Race
+    // sizes the elimination gap from that — this one is gameplay state.
     this._boomPitch = this.basePitch * DEG;
-    this._boomHoriz = 0;
-    this._boomHeight = 0;
     this._lead = 0;
     this._distCap = this.distance.value;
 
@@ -516,6 +520,20 @@ export class Director {
    * body lies flat, so its length is foreshortened by sin(pitch) while its
    * height projects by cos(pitch); at 55 degrees a 9.0 x 2.8 u die-cast gives
    * 9.0*0.819 + 2.8*0.574 = 8.98 u.
+   *
+   * DELIBERATELY NOT ORIENTATION-AWARE, and the omission is the interesting
+   * part. It assumes the car's long axis lies along the camera azimuth, which
+   * the chase rig makes true up to the slip angle, because the yaw damper
+   * tracks _travel. Folding the slip angle psi in —
+   * (L*|cos psi| + W*|sin psi|)*sin(pitch) + H*cos(pitch) — is geometrically
+   * more correct and worse to watch: at a 30 degree drift it gives 9.63 instead
+   * of 8.98, so the auto-zoom would pull back 7% and settle again every time the
+   * player flicks the car sideways. That is the camera pumping on steering
+   * input, which is exactly what the damping in here exists to prevent. It also
+   * leaks: screenSpan() is built on this distance solve and Race sizes the
+   * elimination gap from screenSpan(), so a drift angle would move a gameplay
+   * threshold. Keeping the extent a function of pitch and lens only keeps the
+   * distance solve as slow as the two dampers that feed it, which is the point.
    */
   _subjectExtent(v, pitchRad) {
     const L = num(v?.spec?.bodyLength, 9);
@@ -701,8 +719,6 @@ export class Director {
 
     outPos.set(this.anchor.x - sy * horiz, this.anchor.y + height, this.anchor.z - cy * horiz);
     this._boomPitch = pitchRad;
-    this._boomHoriz = horiz;
-    this._boomHeight = height;
     return Math.sqrt(horiz * horiz + height * height);
   }
 

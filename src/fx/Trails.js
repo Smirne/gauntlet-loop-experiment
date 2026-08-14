@@ -57,8 +57,37 @@ const _col = new THREE.Color();
 /** Half width of a tyre's contact patch at reference load, world units. */
 const TYRE_HALF = 0.62;
 
-/** Lift above the contact point, so the ribbon clears the permanent decal. */
-const SKID_LIFT = 0.055;
+// Lift above the contact point, so the ribbon clears the permanent decal.
+// world/Decals.js lifts its own marks 0.06, so this has to be above that and
+// not below it — the polygon offset was carrying the whole separation on its
+// own, which is not what the header claims this layer does.
+const SKID_LIFT = 0.075;
+
+/**
+ * The skid ribbon is a raw ShaderMaterial with no lighting in it, so a deposit
+ * *albedo* cannot go straight into the frame — it would be graded against
+ * nothing. Lighting.js's own measurement note puts lit oak at luma ~114/255
+ * (≈0.16 linear after ACES, ≈0.13 before) against an oak albedo near 0.28, so
+ * a horizontal surface on this table renders at roughly 0.46 of its own albedo.
+ * That factor is a conversion, not a taste knob: it is what makes a deposit
+ * written here sit at the same level as the identical deposit world/Decals.js
+ * writes through a lit MeshStandardMaterial.
+ */
+const DEPOSIT_IRRADIANCE = 0.46;
+
+// Deposit albedo band, linear. Decals clamps its rubber to 0.032–0.55 for the
+// same two reasons: a mark must darken the surface and never annihilate it, and
+// a pale deposit — milk, chalk — must stay a pale streak rather than a light.
+const DEPOSIT_MIN = 0.030;
+const DEPOSIT_MAX = 0.55;
+
+// Coverage caps. Strictly below 1, which is the whole safety argument: the road
+// keeps at least (1 - cap) of itself in every marked pixel, so however many
+// marks stack the layer converges on the deposit colour instead of on black.
+// The accent cap is the smaller one because Decals is already drawing the
+// permanent mark underneath; the owned cap has to carry the mark by itself.
+const COVER_MAX_ACCENT = 0.34;
+const COVER_MAX_OWNED = 0.62;
 
 // Segment length. 1.15 u is a tenth of a car and a ninth of the widest smoke
 // puff, so the strip reads as a smooth curve, while keeping the worst case —
@@ -224,10 +253,16 @@ uniform float uLife;
 
 varying vec2  vUv;
 varying float vFade;
+varying float vAge;
 varying vec3  vTint;
 
 void main() {
   float age = uTime - aLife.x;
+  // Absolute seconds, alongside the uLife-normalised fade. The skid shader
+  // needs both: how far through its life a quad is (vFade) and how long ago it
+  // was actually laid (vAge), which are the same number only when uLife happens
+  // to be the 1.5 s of a fresh mark.
+  vAge = age;
   float f = 1.0 - clamp(age / max(uLife, 1e-3), 0.0, 1.0);
   // An expired quad collapses to a point rather than being skipped on the CPU:
   // the ring buffer stays contiguous and the draw range never fragments.
@@ -265,9 +300,11 @@ const SKID_FRAG = /* glsl */`
 
 uniform sampler2D uMap;
 uniform float uOpacity;
+uniform float uMaxCover;
 
 varying vec2  vUv;
 varying float vFade;
+varying float vAge;
 varying vec3  vTint;
 
 void main() {
@@ -275,16 +312,48 @@ void main() {
   // Across the strip: dense in the middle, ragged at the shoulders, exactly
   // like the edge of a real contact patch.
   float across = tex.a;
-  float a = across * vFade * uOpacity;
-  if (a < 0.004) discard;
+
+  // COVERAGE, not opacity: what fraction of this pixel the rubber has taken
+  // over. The cap is the load-bearing part. The road always keeps at least
+  // (1 - uMaxCover) of itself, so the layer converges on the deposit colour
+  // however many marks stack, and — the actual defect — a single mark can never
+  // stand in for the surface it is lying on.
+  //
+  // This term used to be a flat opacity of 0.92 against a near-black tint.
+  // Normal blending computes col*a + dst*(1-a), so at 0.92 the deposit simply
+  // *is* the pixel: the mark measured the same RGB over pale oak as over dark
+  // concrete and the racing line painted a hard black wedge across the table
+  // (DEFECTS.md D16). A rubber mark darkens what is under it; it never replaces
+  // it, and the only way to guarantee that in a forward blend is to keep the
+  // road's share of the pixel large enough to still read.
+  float cover = min(across * vFade * uOpacity, uMaxCover);
+  if (cover < 0.004) discard;
+
+  // Why this is not a multiply, which is the textbook model for a thin film:
+  // r180 only implements THREE.MultiplyBlending for premultipliedAlpha
+  // materials (three.module.js — the non-premultiplied branch logs an error and
+  // leaves the previous draw's blend func in place), and, more importantly, a
+  // multiply has no fixed point above zero. Overlapping quads darken by gain^N,
+  // and a hairpin where six cars have slid inside one ribbon lifetime reaches
+  // black on its own. world/Decals.js hit exactly that and backed out; this is
+  // the same floored, capped deposit it settled on.
+  //
+  // vTint arrives as radiance, not albedo — the ribbon is unlit, so _tintFor()
+  // has already done that conversion and clamped it. tex.r only ever darkens
+  // the deposit by up to 28% for tread structure, so the floor survives it.
+  vec3 dep = vTint * (0.72 + 0.28 * tex.r);
 
   // Fresh rubber is wet-looking: it darkens the road AND catches a faint sheen
-  // down the middle of the patch. Cubing the fade keeps that highlight to the
-  // first fraction of a second — it is the "just laid" cue, not a paint stripe.
-  float sheen = tex.g * pow(1.0 - abs(vUv.x * 2.0 - 1.0), 3.0) * pow(vFade, 3.0);
-  vec3 col = vTint * (0.55 + 0.45 * tex.r) + vec3(sheen * 0.085);
+  // down the middle of the patch, for the first fraction of a second only —
+  // it is the "just laid" cue, not a paint stripe. That has to key off the
+  // absolute age, not off vFade: vFade is normalised by uLife, and uLife is
+  // 240 s when this layer owns the ground marks, which left the highlight
+  // sitting on every mark for the whole race.
+  float fresh = 1.0 - clamp(vAge / 1.6, 0.0, 1.0);
+  float sheen = tex.g * pow(1.0 - abs(vUv.x * 2.0 - 1.0), 3.0) * pow(fresh, 3.0);
+  vec3 col = dep + vec3(sheen * 0.085);
 
-  gl_FragColor = vec4(col, a);
+  gl_FragColor = vec4(col, cover);
   #include <fog_fragment>
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -300,6 +369,7 @@ uniform float uTime;
 
 varying vec2  vUv;
 varying float vFade;
+varying float vAge;   // written by the shared vertex stage; unused here
 varying vec3  vTint;
 
 void main() {
@@ -341,6 +411,7 @@ uniform float uTime;
 
 varying vec2  vUv;
 varying float vFade;
+varying float vAge;   // written by the shared vertex stage; unused here
 varying vec3  vTint;
 
 void main() {
@@ -489,8 +560,12 @@ export class Trails {
       speedLife: 0.34,
       hazeLife: 0.42,
       // Layered over the permanent decal, this is an accent; owning the marks
-      // outright makes it the only mark on the road, so it has to carry.
-      skidOpacity: 0.48,
+      // outright makes it the only mark on the road, so it has to carry. Both
+      // are set so that a full-strength mark lands just under its coverage cap
+      // — the cap is a rail, not the normal operating point, or every mark
+      // would sit at the same flat value and read as a painted band again.
+      skidOpacity: 0.40,
+      skidOpacityOwned: 0.72,
       speedOpacity: 0.55,
       hazeOpacity: 0.16,
     };
@@ -527,7 +602,10 @@ export class Trails {
             uMap: { value: null },
             uTime: { value: 0 },
             uLife: { value: this.ownsGroundMarks ? this.persistentLife : this.skidLife },
-            uOpacity: { value: this.ownsGroundMarks ? 0.92 : this.tuning.skidOpacity },
+            uOpacity: {
+              value: this.ownsGroundMarks ? this.tuning.skidOpacityOwned : this.tuning.skidOpacity,
+            },
+            uMaxCover: { value: this.ownsGroundMarks ? COVER_MAX_OWNED : COVER_MAX_ACCENT },
           },
         ]),
         vertexShader: RIBBON_VERT,
@@ -647,7 +725,8 @@ export class Trails {
     const u = this.skid?.mesh?.material?.uniforms;
     if (u) {
       u.uLife.value = this.persistentLife;
-      u.uOpacity.value = 0.92;
+      u.uOpacity.value = this.tuning.skidOpacityOwned;
+      u.uMaxCover.value = COVER_MAX_OWNED;
     }
     return this;
   }
@@ -816,18 +895,31 @@ export class Trails {
   }
 
   /**
-   * Colour of the mark. Rubber on wood is not the same black as rubber on
-   * tile, and a tyre dragging through milk leaves a pale streak, so the tint
-   * comes from the surface library rather than from a constant.
+   * The deposit this mark leaves, in the units the shader actually writes.
+   *
+   * Two conversions, and both of them matter.
+   *
+   * Rubber on wood is not the same black as rubber on tile, and a tyre dragging
+   * through milk leaves a pale streak, so the albedo comes from the surface
+   * library rather than from a constant — then it is clamped into the band a
+   * real deposit could have. The floor is what guarantees this layer can never
+   * drive a pixel to black however many marks stack on it; the ceiling is what
+   * stops a pale deposit turning into a light source, since nothing here is lit
+   * and nothing here can be shadowed.
+   *
+   * Then the albedo is converted to radiance. The ribbon is a plain
+   * ShaderMaterial, so whatever goes in here lands in the frame unmodified —
+   * writing an albedo straight out would put the mark at roughly twice the
+   * level of the identical deposit world/Decals.js draws through a lit
+   * MeshStandardMaterial, and would make it drift against every lighting preset
+   * instead of tracking one. See DEPOSIT_IRRADIANCE.
    */
   _tintFor(surface) {
     const rec = surfaceRecord(surface);
-    _col.setHex(rec.skidTint ?? 0x1a1a1a);
-    // Lift it fractionally off pure black: a mark that crushes to zero reads as
-    // a hole in the road, which is DEFECTS.md D3 in miniature.
-    _col.r = Math.max(_col.r, 0.012);
-    _col.g = Math.max(_col.g, 0.012);
-    _col.b = Math.max(_col.b, 0.014);
+    _col.setHex(rec.skidTint ?? 0x1a1a1a);   // -> linear working space
+    _col.r = clamp(_col.r, DEPOSIT_MIN, DEPOSIT_MAX) * DEPOSIT_IRRADIANCE;
+    _col.g = clamp(_col.g, DEPOSIT_MIN, DEPOSIT_MAX) * DEPOSIT_IRRADIANCE;
+    _col.b = clamp(_col.b, DEPOSIT_MIN, DEPOSIT_MAX) * DEPOSIT_IRRADIANCE;
     return _col;
   }
 

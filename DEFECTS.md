@@ -116,31 +116,52 @@ Verified with a full race, seed 20260730: car7 wins on lap 3 at 83.62 s, the pla
 P2 at 88.98 s, fastest lap 25.09 by car1, and the five eliminated cars rank 4–8 in the order
 they went out. Before the fix this race was over at 9.7 s with every car on lap 0.
 
-## D16 — The trail ribbons paint a black wedge across the table — MAJOR — OPEN
-`fx/Trails.js` [A9]. Isolated, not inferred. Hiding `fx:skidRibbon` and `fx:speedRibbon` and
-re-capturing the identical paused moment removes the wedge; everything else in the frame is
-unchanged. Compare `shots/wedge-shadows-off.png` with `shots/wedge-no-trails.png`.
+## D16 — A dark navy wedge over a third of the frame — MAJOR — FIXED
+`render/PostFX.js` [A2]. **The first two attributions in this entry were both wrong.** The
+history is kept because the wrong turns are the useful part.
 
-The elimination order matters, because the two obvious explanations are both wrong:
+**What it actually is.** `GTAOPass` builds its own depth and normal buffers by re-rendering the
+scene through `scene.overrideMaterial`. An override *replaces* the material, so a mesh's own
+`depthWrite: false` and `transparent: true` do not travel with it: every additive ribbon is
+written into that G-buffer as if it were opaque geometry. `fx:speedRibbon` is a wide sheet
+flying just above the road, so AO reads it as an enormous near occluder and shades everything
+behind it down to ambient. Fixed by hiding materials that declared `transparent && !depthWrite`
+for the duration of the AO pass only.
 
-- **Not geometry.** A raycast through the wedge hits `track:ground` (material `track:oak`) at
-  132–134 units — the same mesh, material and distance as clean table 20° away. The road is
-  present underneath. It is an overlay, not a hole, which also matches the round-2 measurement
-  that the band has identical RGB over wood and over concrete.
-- **Not a shadow.** With `shadowMap.enabled = false` the band is still there, hard-edged and
-  black. Sampling the live framebuffer in that region returns RGB(153,85,22) — ordinary warm
-  wood — which is the trap: the artifact is in the capture path's composite, so probing the
-  live frame says "nothing wrong here" and sends you looking in the wrong place. That is the
-  same shape of mistake as the motion-blur streaks.
+**Wrong attribution 1 — `fx:skidRibbon`.** The original isolation hid `fx:skidRibbon` *and*
+`fx:speedRibbon` together, and the wedge went away. I pinned it on skid because the round-2
+adjudication had already described a near-black normal-blended ribbon and the story fit. A fix
+agent then spent its whole slot rewriting that shader. Its work is a genuine improvement to the
+skid marks and is kept — but it changed the wedge not at all, which is what exposed the error.
+Two variables, one observation, and the wrong one got the blame.
 
-`fx:skidRibbon` draws with `blending: 1` (NormalBlending) and `transparent: true`, and the
-round-2 adjudication measured its tint at `0x1a1a1a`, unlit, at `uOpacity 0.92`. A near-black,
-unlit, all-but-opaque normal-blended ribbon laid on the table is a black band by construction.
-A rubber mark should darken what is under it, not replace it.
+**Wrong attribution 2 — the capture pipeline.** Probing the live framebuffer where the wedge
+was returned ordinary warm wood, at both the live size and 1920×1080, which looked like proof
+that the artifact was introduced by `toDataURL`. It was not: the capture set disables the
+director and repositions the camera for shots 2–4, and the sim keeps advancing between tool
+calls, so *every one of those probes was a different camera looking at a different frame*.
+Freezing the engine and doing framebuffer read, `toDataURL` decode and disk write inside a
+single uninterrupted call showed all three agreeing to the byte. The capture path was always
+faithful.
 
-This was correctly diagnosed in round 2 and never fixed — the fx agent that owned it was one
-of the four that did not run before the session limit. A narrower band survives hiding both
-ribbons, so there is a second, smaller contributor still to find.
+**What finally settled it,** after `visible = false` removed the wedge but
+`material.colorWrite = false` did not — that gap is the whole tell, because it means something
+draws the mesh *without using its material*:
+
+| | 900,950 | 700,1000 | control 300,900 |
+|---|---|---|---|
+| baseline | 31,36,55 | 30,35,54 | 176,114,59 |
+| `fx:speedRibbon` hidden | **148,91,73** | **143,81,63** | 177,116,62 |
+| GTAO pass disabled | **142,79,57** | **152,98,84** | 179,119,69 |
+
+Also ruled out by measurement, not by argument: alpha accumulation (forcing alpha to stop
+accumulating changed nothing) and shadows (`castShadow` was already false on all three ribbons).
+
+**Note for anyone touching additive FX here.** `Renderer.js:180` sets
+`premultipliedAlpha: true`, and r180's premultiplied branch uses `gl.blendFunc(ONE, ONE)` for
+AdditiveBlending. `SPEED_FRAG`'s comment claims "additive blending is (SrcAlpha, One), so the
+alpha channel already scales the contribution" — that is false for this renderer. It is not
+what caused D16, but it is a live trap.
 
 ## D15 — The sim does not run while the browser pane is hidden — HARNESS — DOCUMENTED
 `core/Engine.js` pauses itself on `visibilitychange` when `document.hidden`, which is correct
