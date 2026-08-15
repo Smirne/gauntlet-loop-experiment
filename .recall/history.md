@@ -614,3 +614,84 @@ parallel[3] failed: agent stalled on all 6 attempts (no progress for 180000ms ea
 </task-notification>
 
 **You:** [Request interrupted by user]
+
+**You:** Continue from where you left off.
+
+**Claude:** No response requested.
+
+**You:** resume. tell me when the game is up so I can try it
+
+**Claude:** Wave 3 mostly failed — 3 of 4 agents errored, and two of them died mid-edit, which is the exact failure mode that leaves half-written modules. Let me check the tree before anything else.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git diff --stat echo "=== syntax ==`
+
+**Claude:** All four parse. Sky.js is untouched, so the room itself never got built — the headline task didn't run. Let me boot and see what state the tree is actually in.
+  - `mcp__Claude_Browser__preview_start: micro-gauntlet`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Boot is hanging at "lighting the fuse". Reading the console **unfiltered**:
+  - `mcp__Claude_Browser__read_console_messages: seed`
+
+**Claude:** Exactly the failure mode RESUME.md warns about. Both stalled agents wrote **calls to methods they never defined**:
+
+- `TrackBuilder.js` → `this.tableEdged(...)`
+- `Props.js` → `this._composeStory(...)`, `this._blocked(...)`
+
+The files parse; they just reference functions that don't exist. Reverting both — incomplete and unverifiable — and keeping the one agent that finished.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git checkout -- src/world/Props.js`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `mcp__Claude_Browser__read_console_messages: seed`
+
+**Claude:** Boot is clean again — 34 modules, 0 failures (those console lines are stale from the previous load; the `boot complete` after them is the current one). Verifying the scene actually built:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Scene is healthy — 302 meshes, road, ground, 27 prop meshes, 8 cars, racing. One capture to confirm nothing regressed visually:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-1-gameplay-r6.png`
+
+**Claude:** Frame is clean — no regression. Let me get you the controls right:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -n "'Key\|'Arrow\|'Space\|'Shi`
+
+**Claude:** Now loading the playable build in the pane so you can drive it:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&quality=ultra`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git add -A && git commit -q -F - <<`
+
+**Claude:** **The game is up — it's loaded in the Browser pane now, sitting on the menu.** Press Enter to start.
+
+```
+W / ↑        accelerate
+S / ↓        brake, reverse
+A D / ← →    steer
+Space        handbrake  (this is a Micro Machines game — you'll want it)
+Shift        boost
+R            respawn
+V            change camera
+B            look back
+Esc          pause
+\            restart race
+```
+
+If the pane closes, it's at `http://localhost:8791`. Useful variants:
+
+```bash
+open "http://localhost:8791/?track=kitchen&quality=ultra&cars=8"
+```
+
+Other circuits still load — `?track=garden|workbench|pool|bedroom` — but only kitchen has had quality work spent on it.
+
+One thing to expect while driving: **elimination is aggressive.** Drop about a fifth of a lap behind the leader and you're out, and being out ends the race. That's the rule working as designed, but it's tuned harshly and it's on the open list.
+
+## Wave 3 mostly failed, and I reverted most of it
+
+Three of four agents died. Two had written **calls to methods they never defined** — `TrackBuilder` called `this.tableEdged()`, `Props` called `this._composeStory()` and `this._blocked()`. The files still *parsed*; boot just hung at "lighting the fuse". A syntax check says nothing about that class of damage, which is why I booted it rather than trusting the parse. I reverted both files wholesale — half a feature referencing functions nobody wrote isn't a foundation for the next wave.
+
+**Sky.js was never touched, so the room — the entire point of the wave — didn't happen.** D12 is exactly where it was.
+
+What survived is worth having, though. The lighting agent found that **no preset ever set `backdrop.windowDir` or `sunDir`**, so all six fell back to a default direction: the window the player can see has been sitting 86° round the room from where the shadows come from, on every track, in every frame reviewed so far. It also declined D13 as written and showed the arithmetic — the backdrop sets `fog: false` and is locked to the camera at a fixed 1400u, so fog can't touch it at any density. D13 is real, but on `workbench`, `bedroom` and `nightLamp`, not on the track it was logged against.
+
+One caveat I want to flag rather than bury: after the revert I measured sun elevation on kitchen at **34.2°, not the 24° the agent intended**. Its own report notes that `kitchen.js` applies its ambient block *after* the preset switch, so the track's numbers win. The preset work may not reach this track at all. I haven't verified either way.
+
+Committed as `e526ddb`. Have a drive and tell me what you notice — then I'll take another run at the room, with agents scoped small enough that one dying can't leave a module calling into nothing.

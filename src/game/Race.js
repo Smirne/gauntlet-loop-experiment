@@ -57,10 +57,25 @@ const ANALYSIS_HZ = 30;         // ranking / wrong-way / elimination cadence
 const WRONGWAY_ARM = 0.55;      // seconds pointing backwards before we say so
 const ATTRACT_AUTOSTART = 7.5;  // seconds of establishing shot when there is no menu
 
+// Elimination tuning. Playtested and softened: the shipped numbers took five of
+// eight cars out inside 60 s of a 3-lap race, and a player who made one ordinary
+// mistake was gone before they had learned the circuit. Micro Machines-style
+// elimination should be a threat you can feel closing, not a coin flip on the
+// opening lap.
+//
+// The gap was max(span*3, trackLength*0.2) = 371 u on kitchen, i.e. a fifth of
+// the lap, with a 6 s cooldown and no grace period at all.
 const ELIM_MIN_REMAINING = 3;   // never eliminate down to a two-car procession
-const ELIM_COOLDOWN = 6.0;      // seconds between eliminations
+const ELIM_COOLDOWN = 9.0;      // seconds between eliminations
 const ELIM_HIDE_DELAY = 1.1;    // the car is already off-screen; this is just a beat
-const ELIM_SCREENS = 3.0;       // how many camera-fulls behind counts as "a screen ahead"
+const ELIM_SCREENS = 4.5;       // how many camera-fulls behind counts as "a screen ahead"
+const ELIM_LAP_FRACTION = 0.34; // ...or this much of the lap, whichever is larger
+// No elimination at all until the leader has a lap in. A bad start is the most
+// recoverable thing in a race and the least fair thing to be knocked out for:
+// on the opening lap the field is still bunched from the grid, so a spin that
+// costs two seconds can read as a third of a lap of "gap" that simply is not
+// there yet.
+const ELIM_GRACE_LAPS = 1;
 
 /* -------------------------------------------------------------------- helpers */
 
@@ -1005,9 +1020,9 @@ export class Race {
     try { span = Number(this.ctx?.director?.screenSpan?.()) || 0; } catch (_) { span = 0; }
     if (!(span > 0)) span = 56;   // widest framing of the default chase camera
     const trackLength = Number(this.ctx?.track?.length) || 1800;
-    // Never less than a fifth of the lap, or a short circuit would eliminate
+    // Never less than a third of the lap, or a short circuit would eliminate
     // cars that are simply in traffic.
-    return Math.max(span * ELIM_SCREENS, trackLength * 0.2);
+    return Math.max(span * ELIM_SCREENS, trackLength * ELIM_LAP_FRACTION);
   }
 
   _checkElimination() {
@@ -1016,6 +1031,9 @@ export class Race {
     if (this.state !== RaceState.RACING) return;
     if (this.ctx?.settings?.gameplay?.elimination === false) return;
     if (this.raceTime - this.elimination.lastAt < ELIM_COOLDOWN) return;
+    // Opening-lap grace. Measured against the LEADER's lap, not the clock, so
+    // it scales with the circuit instead of assuming a lap length.
+    if ((this.leader?.lap ?? 0) < ELIM_GRACE_LAPS) return;
 
     // NOTE (D14, second order): this judges "who is off the back" on the
     // validated score, which carries the cut penalty. A car that takes one

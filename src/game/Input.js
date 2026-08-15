@@ -192,10 +192,23 @@ export class Input {
       stickOuter: 0.95,        // treat anything past this as full deflection
       stickExpo: 0.35,         // 0 linear, 1 heavily eased around centre
       triggerDeadzone: 0.06,
-      steerAttackSlow: 0.085,  // seconds to full lock, parked
-      steerAttackFast: 0.26,   // seconds to full lock, at top speed
+      // Playtest: "a small press makes a huge turn". Measured at 52 u/s, half
+      // top speed: the command ramped linearly to full lock in 178 ms, so a
+      // 100 ms tap — an ordinary correction on a keyboard — already commanded
+      // 61% of lock, 14.6 of 24 degrees. `steerPos` tracked the command
+      // exactly, so the vehicle's own rate limiter never engaged; this ramp was
+      // the entire steering feel.
+      steerAttackSlow: 0.13,   // seconds to full lock, parked
+      steerAttackFast: 0.34,   // seconds to full lock, at top speed
       steerReturn: 0.075,      // seconds back to centre
       steerCounter: 0.055,     // seconds to cross centre when countersteering
+      // Shape the command so the first half of the travel is gentler than the
+      // second. Slowing the ramp alone buys time but keeps the response
+      // linear, and linear means there is no fine region near centre at all —
+      // every small input is a scaled-down version of a big one. This is the
+      // curve that gives a keyboard a trim range: out = x*(k + (1-k)*x*x),
+      // exact at full lock, so nothing is taken away at the extremes.
+      steerExpo: 0.45,         // 1 = linear; lower = finer around centre
       rumble: 1,
       invertSteer: false,
     };
@@ -351,7 +364,8 @@ export class Input {
     c.brake = this.raw.brake;
     c.handbrake = this.raw.handbrake;
     c.boost = this.raw.boost;
-    c.steer = this.options.invertSteer ? -this._steer : this._steer;
+    const shaped = this._shapeSteer(this._steer);
+    c.steer = this.options.invertSteer ? -shaped : shaped;
 
     this._wroteZero = false;
     if (player?.setControls) player.setControls(c);
@@ -387,6 +401,22 @@ export class Input {
 
     this._steer = approach(this._steer, target, 1 / Math.max(0.02, time), dt);
     if (Math.abs(this._steer) < 1e-4) this._steer = 0;
+  }
+
+  /**
+   * Command shaping. Applied to the resolved command, not to the raw key, so
+   * the ramp above stays a pure "how fast may this move" and this stays a pure
+   * "how much lock does that mean" — the two are independently tunable.
+   *
+   * Only the human is shaped. The AI drivers and the autopilot call
+   * `vehicle.setControls()` directly and never pass through here, so their
+   * racing line is untouched by a change to player feel.
+   */
+  _shapeSteer(x) {
+    const k = clamp(this.options.steerExpo ?? 1, 0.15, 1);
+    if (k >= 1) return x;
+    const a = Math.abs(x);
+    return Math.sign(x) * a * (k + (1 - k) * a * a);
   }
 
   /* ------------------------------------------------------------- resolution */
