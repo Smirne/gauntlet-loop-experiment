@@ -695,3 +695,122 @@ What survived is worth having, though. The lighting agent found that **no preset
 One caveat I want to flag rather than bury: after the revert I measured sun elevation on kitchen at **34.2°, not the 24° the agent intended**. Its own report notes that `kitchen.js` applies its ambient block *after* the preset switch, so the track's numbers win. The preset work may not reach this track at all. I haven't verified either way.
 
 Committed as `e526ddb`. Have a drive and tell me what you notice — then I'll take another run at the room, with agents scoped small enough that one dying can't leave a module calling into nothing.
+
+**You:** the server seems to be down. Anyway keep going and keep me updated. 
+First impressions: 
+steering is too sensible, a small press makes a huge turn. 
+Yes, the elimination is too harsh
+
+**Claude:** Both are real and both are gameplay, not looks — that's the right thing to fix next. Restarting the server first.
+  - `mcp__Claude_Browser__preview_start: micro-gauntlet`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -n "STEER\|steerRate\|steerSpe`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '362,392p' src/game/Input.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '190,205p' src/game/Input.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '985,1012p' src/vehicle/Vehi`
+
+**Claude:** Let me measure the actual response before touching numbers — "too sensitive" could be the input ramp, the vehicle ramp, or the lock itself.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '124,140p' src/vehicle/Vehic`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&quality=ultra&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Measured at 52 u/s (half top speed), and it's clear:
+
+| held for | command | lock angle |
+|---|---|---|
+| 50 ms | 0.33 | 7.9° |
+| 100 ms | 0.61 | **14.6°** |
+| 150 ms | 0.89 | 22.2° |
+| 183 ms | 1.00 | 26.7° (full) |
+
+`steerPos` tracks the command *exactly*, so the vehicle's own rate limiter never engages — the input ramp is the whole story. A 100 ms tap already gives you 61% of full lock, and the command→angle map is perfectly linear, so there's no fine-control region near centre at all. That's exactly what you felt.
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Input.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Input.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '360,372p' src/game/Input.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Input.js`
+
+**Claude:** Now elimination. Let me check what the current rule actually produces before changing it:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '56,64p' src/game/Race.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js`
+
+**Claude:** Now measuring both changes — steering response first:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&quality=ultra&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Steering, measured before vs after at the same speed:
+
+| key held | before | after |
+|---|---|---|
+| 50 ms | 7.9° | **2.8°** |
+| 100 ms | 14.6° | **5.9°** |
+| 150 ms | 22.2° | **10.4°** |
+| 200 ms | full lock | 17.1° |
+| 242 ms | — | full lock |
+
+2.5× less angle on a typical tap, and full lock is still reachable — you just have to ask for it. Now the elimination change, over a full race:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&quality=ultra&autopilot=1&seed=20260730&t=60`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Elimination, same seed, before vs after:
+
+| | before | after |
+|---|---|---|
+| first elimination | 7.97 s | **30 s** |
+| eliminated by 60 s | 5 of 8 | **3 of 8** |
+| gap threshold | 371 u | 630 u |
+
+You now get a full lap of grace and roughly a third of a lap of rope instead of a fifth.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 node --input-type=module --check <`
+
+**Claude:** Server's back up and both fixes are in. Loading it fresh for you:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&quality=ultra`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** **Server's back up and the game is loaded in the pane** — 34 modules, 0 failures, sitting on the menu. Press Enter. Same controls as before.
+
+If the pane drops again:
+
+```bash
+node server.js
+```
+
+Both of your notes are fixed, and both were exactly right.
+
+**Steering.** You diagnosed it precisely — a small press *was* making a huge turn. At half top speed the command ramped linearly to full lock in 178 ms, so a 100 ms tap already commanded 61% of lock. And because the map was perfectly linear, there was no fine region near centre at all: every small input was just a scaled-down big one. I did two things — slowed the ramp, and added a shaping curve so the first half of the travel is gentler than the second. A 100 ms tap now gives 5.9° instead of 14.6°, and full lock is still there at ~240 ms if you actually ask for it. The curve is exact at full lock, so nothing is taken away at the extremes.
+
+The shaping only touches you — the AI drivers call `setControls()` directly and never pass through the player input path, so their racing line is unchanged.
+
+**Elimination.** Worse than I'd realised. The old rule had *no grace period whatsoever*: gap of a fifth of a lap, 6 s cooldown, live from the green light. Five of eight cars were gone inside 60 s of a three-lap race, first at 7.97 s. Now the gap is a third of a lap, the cooldown is 9 s, and there's no elimination at all until the leader has a full lap in — measured against the leader's lap rather than a clock, so it scales with the circuit. Same seed: first elimination moved from 8 s to 30 s, and three out by 60 s instead of five.
+
+Committed as `2b09eea`.
+
+Two things I want to flag rather than let you discover them the hard way:
+
+- **The room still doesn't exist.** Wave 3's headline task never ran — `Sky.js` was never touched. The table still runs to a flat horizon. That's the biggest remaining gap and it's what I'll take another run at.
+- **The player can still be eliminated late** and that ends everyone's race. In my test run the autopilot got knocked out on lap 2. For a human that may play very differently, but if it happens to you, tell me — it may mean the rule needs to spare the player specifically rather than just be more generous to everyone.
+
+Drive it and tell me what else is off. I'll take the room next, with agents scoped small enough that one dying can't leave a module calling into functions nobody wrote.
+
+**You:** go on with the loop
+
+**Claude:** Wave 4 — the room again. Last time 3 of 4 agents died mid-edit; I'm scoping each one narrower and adding an explicit rule that killed us last time: define the helper before you call it, so a death can never leave a dangling call.
+  - `Workflow: export const meta = { name: 'micro-gauntlet-wave-4', description: 'Build the room: kitchen backdrop, table edge, prop composition', phases: [{ title: 'Room', de`
+
+**Claude:** Backticks inside a template literal — the very trap this project has documented three times. Fixing:
+  - `Workflow: export const meta = { name: 'micro-gauntlet-wave-4', description: 'Build the room: kitchen backdrop, table edge, prop composition', phases: [{ title: 'Room', de`
+
+**Claude:** Wave 4 running — Sky (the room), TrackBuilder (table edge only), Props (composition). Three narrow agents instead of four broad ones, each told to define helpers before calling them, since that's precisely what killed the last attempt.
+
+While it runs, let me update the status page with the playtest fixes:
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Artifact: /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-`
+
+**Claude:** Wave 4 is running and the page is current: https://claude.ai/code/artifact/41a6f0af-c1d8-410f-b95a-cc2c96b66666
+
+**Wave 4** is the room, retried with three narrower agents instead of four broad ones — Sky.js (the room itself), TrackBuilder.js (table edge *only*, with the road material job deferred to keep the scope small), and Props.js (composition). Every brief now carries the rule that would have prevented last wave's damage: write the helper complete first, then the call site, so an agent dying can never leave a module calling into a function nobody wrote. And acceptance is now *booting*, not parsing — parsing is exactly what let the broken tree through last time.
+
+The page now records the playtest findings with the before/after measurements, and a section on wave 3's failure and what it cost. I've also closed **D5** — it turned out to be already fixed and the log was stale. The real cause is documented at [ProcTex.js:1057](src/textures/ProcTex.js:1057): a missing `phase` made `undefined * 0.1` → NaN, and storing NaN in a `Uint8Array` writes 0, so every knot baked as a disc of pure black. It got reported as "blue dots" because a hole in the albedo shows only the environment term. That's why the surfaces agent correctly changed nothing.
+
+Current state, honestly: the game is playable and the frames are clean, but **the room still doesn't exist** — that's the one thing standing between this and the bar the brief set, and it's now failed once. I'll report as soon as the wave lands, and I'll boot it before I tell you anything about whether it worked.

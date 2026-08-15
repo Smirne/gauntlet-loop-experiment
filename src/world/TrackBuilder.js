@@ -82,6 +82,50 @@ const WALL_HEIGHT = 4.2;
 const WALL_THICK = 2.4;
 const WALL_CURV_MIN = 1 / 150;
 
+/* -------------------------------------------------------------- table edge */
+//
+// The surrounding surface used to run to the horizon, so nothing in the frame
+// ever said "this is a piece of furniture". A tabletop's thickness is a scale
+// every viewer knows by hand, which makes the rim worth more to the miniature
+// read than anything else this file draws — so the top now stops at a rectangle
+// and rolls over a moulded lip into an underside.
+
+const GROUND_N = 129;          // ground grid resolution. The rim samples its
+                               // perimeter at exactly these positions, which is
+                               // what lets the two meshes weld without a crack.
+const TABLE_MARGIN = 58;       // bare surface beyond the outermost thing on it
+const TABLE_PROP_ALLOW = 22;   // footprint allowance around a hand-placed prop
+const TABLE_THICK = 3.4;       // 34 mm board — a real kitchen tabletop
+const TABLE_LIP_QUADS = 3;     // profile quads carrying the worn-lip material
+
+// Which themes stand on furniture. A lawn and a bedroom floor have no edge to
+// find — they run to a fence or a skirting board, which is the room's business,
+// not this file's. A definition can force the question either way with
+// `tableEdge: true|false`.
+const EDGED_THEMES = new Set(['kitchen', 'workbench', 'pool']);
+
+// The rim is not always the same material as the top: a pool table is felt on
+// top and varnished hardwood at the rail, and that change of material at the
+// lip is most of what makes it read as a pool table rather than a green field.
+const TABLE_EDGE_SURFACE = { kitchen: 'oak', workbench: 'pine', pool: 'varnishedWood' };
+
+// Cross-section of the moulding, in world units: `o` is outward from the
+// tabletop rectangle, `d` is down from its surface. It rolls out to a bullnose
+// at a third of the board's depth, tucks back under, and finishes with a hard
+// arris at the underside — which is the fold that catches the light and tells
+// you how thick the board is.
+const TABLE_PROFILE = [
+  { o: 0.00, d: 0.00 },
+  { o: 0.62, d: -0.07 },
+  { o: 1.06, d: -0.44 },
+  { o: 1.25, d: -1.05 },
+  { o: 1.14, d: -1.72 },
+  { o: 0.72, d: -2.52 },
+  { o: 0.30, d: -3.10 },
+  { o: 0.10, d: -TABLE_THICK, hard: true },
+  { o: -1.2, d: -TABLE_THICK },
+];
+
 /* ------------------------------------------------------------ module scratch */
 
 const _p = new THREE.Vector3();
@@ -774,6 +818,21 @@ function expandProfile(pts) {
   };
 }
 
+/**
+ * Distance to offset a perimeter sample by, given the sample's miter scale.
+ *
+ * Outward offsets take the miter unconditionally, which is what makes a
+ * moulding meet itself cleanly at a corner. Inward ones are capped: a mitred
+ * corner pulled inward travels along *both* of its sides as well as across
+ * them, so once it passes the sample spacing it overtakes its own neighbours
+ * and the ring doubles back over itself — an inverted triangle at every corner.
+ * Measured at 2.09 u of overlap per corner on the kitchen table before the cap.
+ */
+function ringOffset(r, o) {
+  if (o >= 0) return o * r.miter;
+  return -Math.min(-o * r.miter, r.maxIn ?? Infinity);
+}
+
 /** Add a uv1 channel (three's aoMap reads channel 1) and clean up. */
 function finaliseGeometry(geo, { tangents = true } = {}) {
   if (!geo) return geo;
@@ -829,6 +888,7 @@ export class TrackBuilder {
     this.resolveMaterials();
 
     this.stage('ground', () => this.buildGround());
+    this.stage('tableEdge', () => this.buildTableEdge());
     this.stage('road', () => this.buildRoad());
     this.stage('kerbs', () => this.buildKerbs());
     this.stage('markings', () => this.buildMarkings());
@@ -1151,6 +1211,312 @@ export class TrackBuilder {
     return Number.isFinite(w) && w > 0 ? w : fallback;
   }
 
+  /* ------------------------------------------------------------- table edge */
+
+  /** Seed for the broad tonal blotches, shared by the top and its rim. */
+  groundBlotchSeed() {
+    if (this._blotchSeed == null) this._blotchSeed = makeRng(this.track.seed ^ 0x1d3a).uint();
+    return this._blotchSeed;
+  }
+
+  /**
+   * Broad tonal blotches at a scale far larger than the texture tile. This,
+   * more than resolution, is what hides a repeating texture. The rim reads it at
+   * the same (x, z) as the top does, so the shared edge cannot show a seam.
+   */
+  groundTint(x, z, out) {
+    const v = fbm2DTiled(x * 0.0022, z * 0.0022, 32, 3, 2, 0.5, this.groundBlotchSeed()) * 0.5 + 0.5;
+    const s = lerp(0.82, 1.08, v);
+    out.setRGB(s, s * 0.995, s * 0.985);
+    return out;
+  }
+
+  /** True when the surrounding surface is furniture, and so has an edge. */
+  tableIsEdged() {
+    const def = this.track.def;
+    if (def.buildGround === false) return false;
+    if (def.tableEdge != null) return !!def.tableEdge;
+    return EDGED_THEMES.has(def.theme || this.track.theme || '');
+  }
+
+  /**
+   * The rectangle the surrounding surface occupies, memoised because the top and
+   * the rim have to agree about it to the last decimal.
+   *
+   * An edged table stops a short way past the outermost thing standing on it
+   * rather than at `groundPad`, which is 300-380 u of wood and puts the rim
+   * outside every shot the game actually takes — an edge nobody sees is worth
+   * nothing. Hand-placed props are folded in first: a mug left hanging in the
+   * air past the rim is a worse tell than having no rim at all. Unedged themes
+   * keep the full pad and the mesh they have always had.
+   */
+  tableRect() {
+    if (this._tableRect) return this._tableRect;
+    const track = this.track;
+    const b = track.bounds;
+    const pad = track.def.groundPad ?? 340;
+    const edged = this.tableIsEdged();
+
+    let x0 = b.min.x;
+    let x1 = b.max.x;
+    let z0 = b.min.z;
+    let z1 = b.max.z;
+
+    if (edged) {
+      for (const p of track.def.props || []) {
+        const q = p?.position;
+        if (!Array.isArray(q) || q.length < 3) continue;
+        const s = typeof p.scale === 'number' && p.scale > 0 ? p.scale : 1;
+        const r = TABLE_PROP_ALLOW * s;
+        x0 = Math.min(x0, q[0] - r);
+        x1 = Math.max(x1, q[0] + r);
+        z0 = Math.min(z0, q[2] - r);
+        z1 = Math.max(z1, q[2] + r);
+      }
+      // Never larger than the slab that used to be built here, so a definition
+      // that wants a small table gets one by shrinking groundPad.
+      x0 = Math.max(b.min.x - pad, x0 - TABLE_MARGIN);
+      x1 = Math.min(b.max.x + pad, x1 + TABLE_MARGIN);
+      z0 = Math.max(b.min.z - pad, z0 - TABLE_MARGIN);
+      z1 = Math.min(b.max.z + pad, z1 + TABLE_MARGIN);
+    } else {
+      x0 = b.min.x - pad;
+      x1 = b.max.x + pad;
+      z0 = b.min.z - pad;
+      z1 = b.max.z + pad;
+    }
+
+    this._tableRect = { x0, x1, z0, z1, edged };
+    return this._tableRect;
+  }
+
+  /**
+   * Perimeter samples for the rim: position, unit outward direction, the miter
+   * scale that offset must be multiplied by, and arc length for the UV.
+   *
+   * Sides are sampled at the ground grid's own boundary positions so every top
+   * vertex has a rim vertex on top of it. Corners carry the bisector and a
+   * 1/cos scale, which is what makes the moulding meet itself in a clean miter
+   * instead of leaving a notch out of the silhouette.
+   */
+  tablePerimeter() {
+    const { x0, x1, z0, z1 } = this.tableRect();
+    const n = Math.max(2, GROUND_N - 1);
+    const corner = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+    const out = [];
+    let s = 0;
+
+    for (let k = 0; k < 4; k++) {
+      const a = corner[k];
+      const b = corner[(k + 1) % 4];
+      const prev = corner[(k + 3) % 4];
+
+      const dx = b[0] - a[0];
+      const dz = b[1] - a[1];
+      const len = Math.hypot(dx, dz) || 1;
+      // Walking the corners in this order leaves the interior on the left, so
+      // rotating the travel direction by -90 degrees points out of the table.
+      const ox = dz / len;
+      const oz = -dx / len;
+
+      const pdx = a[0] - prev[0];
+      const pdz = a[1] - prev[1];
+      const plen = Math.hypot(pdx, pdz) || 1;
+      const px = pdz / plen;
+      const pz = -pdx / plen;
+
+      let bx = ox + px;
+      let bz = oz + pz;
+      const bl = Math.hypot(bx, bz) || 1;
+      bx /= bl;
+      bz /= bl;
+      const miter = 1 / Math.max(0.2, bx * ox + bz * oz);
+
+      // How far a corner may be pulled inward before it overtakes its own
+      // neighbours along the side and folds the ring back over itself. See
+      // ringOffset().
+      const maxIn = Math.min(plen, len) / n;
+
+      out.push({ x: a[0], z: a[1], ox: bx, oz: bz, miter, maxIn, s });
+      for (let i = 1; i < n; i++) {
+        const f = i / n;
+        out.push({
+          x: a[0] + dx * f, z: a[1] + dz * f, ox, oz, miter: 1, maxIn: Infinity, s: s + len * f,
+        });
+      }
+      s += len;
+    }
+
+    // The closing sample repeats the first geometrically but carries the full
+    // perimeter as its arc length, so the texture runs continuously round.
+    out.push({ ...out[0], s });
+    return out;
+  }
+
+  /**
+   * Two materials, one geometry. The rolled lip a forearm actually rests on is
+   * polished smoother than the face below it — the same maps, the same texel
+   * density, one number apart, which is what wear looks like on furniture.
+   * Built on demand for the same reason the fluids are: most tracks never ask.
+   */
+  tableEdgeMaterials() {
+    if (this._tableEdgeMats) return this._tableEdgeMats;
+    const track = this.track;
+    const def = track.def;
+    const kind = def.tableEdgeSurface
+      || TABLE_EDGE_SURFACE[def.theme || track.theme]
+      || def.groundSurface
+      || track.offTrackSurface;
+    const texScale = this.metricScaleFor(kind, GROUND_TEX_SCALE);
+
+    const lip = this.surfaceMaterial(kind, { vertexColors: true, texScale, tag: 'tableLip' });
+    const face = this.surfaceMaterial(kind, { vertexColors: true, texScale, tag: 'tableFace' });
+    lip.roughness = 0.74;
+    lip.name = 'track:tableLip';
+    face.name = 'track:tableFace';
+    // A rim is seen from above at the near edge and edge-on at the far one, and
+    // the underside cap is seen from below or not at all. A backfacing hole in
+    // the table's silhouette costs far more than the fill this saves on what is
+    // background geometry in every frame.
+    lip.side = THREE.DoubleSide;
+    face.side = THREE.DoubleSide;
+
+    this._tableEdgeMats = [lip, face];
+    return this._tableEdgeMats;
+  }
+
+  /**
+   * The rim: the cross-section above, swept around the perimeter. Top row sits
+   * exactly on the ground mesh's boundary vertices, so the join is welded rather
+   * than merely close.
+   */
+  buildTableEdge() {
+    if (!this.tableRect().edged) return;
+
+    const track = this.track;
+    const ring = this.tablePerimeter();
+    const prof = expandProfile(TABLE_PROFILE.map((p) => ({ lat: p.o, y: p.d, hard: p.hard })));
+
+    let arc = 0;
+    for (let i = 1; i < TABLE_PROFILE.length; i++) {
+      arc += Math.hypot(
+        TABLE_PROFILE[i].o - TABLE_PROFILE[i - 1].o,
+        TABLE_PROFILE[i].d - TABLE_PROFILE[i - 1].d
+      );
+    }
+    if (!(arc > 0)) arc = 1;
+
+    const mats = this.tableEdgeMaterials();
+    const scale = mats[0].userData.texScale || GROUND_TEX_SCALE;
+
+    const geo = sweep(ring.length, prof.count, {
+      position: (i, j, out) => {
+        const r = ring[i];
+        const o = ringOffset(r, prof.lat[j]);
+        out.set(r.x + r.ox * o, track.groundHeight(r.x, r.z) + prof.y[j], r.z + r.oz * o);
+      },
+      normal: (i, j, out) => {
+        const r = ring[i];
+        out.set(r.ox * prof.nl[j], prof.nu[j], r.oz * prof.nl[j]).normalize();
+      },
+      uv: (i, j) => {
+        _uv.set(ring[i].s / scale, (prof.u[j] * arc) / scale);
+        return _uv;
+      },
+      color: (i, j, out) => {
+        const r = ring[i];
+        this.groundTint(r.x, r.z, out);
+        const t = clamp(-prof.y[j] / TABLE_THICK, 0, 1);
+        // A narrow band just below the arris is where hands go, so it stays
+        // bright; below that it ramps down to a third, which is the ambient
+        // occlusion of a board against its own underside baked in rather than
+        // left for a screen-space pass to find at a grazing angle.
+        const polish = smoothstep(0, 0.10, t) * (1 - smoothstep(0.10, 0.28, t));
+        out.multiplyScalar(lerp(1, 0.32, smoothstep(0.06, 0.92, t)) * (1 + 0.08 * polish));
+      },
+      quadGroup: (i, j) => (j < TABLE_LIP_QUADS ? 0 : 1),
+    });
+
+    const mesh = new THREE.Mesh(finaliseGeometry(geo), mats);
+    mesh.name = 'track:tableEdge';
+    mesh.receiveShadow = true;
+    mesh.castShadow = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    this.add(mesh);
+
+    this.buildTableUnderside(ring, prof, mats[1]);
+  }
+
+  /**
+   * A flat cap closing the bottom of the board. Fanned from the centre out to
+   * the rim's innermost ring, because sharing those exact points is the only
+   * way two separately-tessellated meshes are guaranteed not to open a crack.
+   */
+  buildTableUnderside(ring, prof, mat) {
+    const track = this.track;
+    const j = prof.count - 1;
+    const inset = prof.lat[j];
+    const drop = prof.y[j];
+    const n = ring.length - 1;          // the last sample repeats the first
+    if (n < 3) return;
+
+    const rect = this.tableRect();
+    const cx = (rect.x0 + rect.x1) * 0.5;
+    const cz = (rect.z0 + rect.z1) * 0.5;
+    const count = n + 1;
+    const pos = new Float32Array(count * 3);
+    const nor = new Float32Array(count * 3);
+    const uvs = new Float32Array(count * 2);
+    const col = new Float32Array(count * 3);
+    const scale = mat.userData.texScale || GROUND_TEX_SCALE;
+
+    const write = (k, x, y, z) => {
+      pos[k * 3] = x;
+      pos[k * 3 + 1] = y;
+      pos[k * 3 + 2] = z;
+      nor[k * 3] = 0;
+      nor[k * 3 + 1] = -1;
+      nor[k * 3 + 2] = 0;
+      uvs[k * 2] = x / scale;
+      uvs[k * 2 + 1] = z / scale;
+      this.groundTint(x, z, _col);
+      // Nothing reaches under a table but bounce, and not much of that.
+      col[k * 3] = _col.r * 0.26;
+      col[k * 3 + 1] = _col.g * 0.25;
+      col[k * 3 + 2] = _col.b * 0.24;
+    };
+
+    for (let i = 0; i < n; i++) {
+      const r = ring[i];
+      const o = ringOffset(r, inset);
+      write(i, r.x + r.ox * o, track.groundHeight(r.x, r.z) + drop, r.z + r.oz * o);
+    }
+    write(n, cx, track.groundHeight(cx, cz) + drop, cz);
+
+    const index = count > 65535 ? new Uint32Array(n * 3) : new Uint16Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      index[i * 3] = n;
+      index[i * 3 + 1] = i;
+      index[i * 3 + 2] = (i + 1) % n;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setIndex(new THREE.BufferAttribute(index, 1));
+
+    const mesh = new THREE.Mesh(finaliseGeometry(geo, { tangents: false }), mat);
+    mesh.name = 'track:tableUnderside';
+    mesh.receiveShadow = false;
+    mesh.castShadow = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    this.add(mesh);
+  }
+
   /* ----------------------------------------------------------------- ground */
 
   /** The surface the whole circuit is improvised on. */
@@ -1158,16 +1524,11 @@ export class TrackBuilder {
     const track = this.track;
     if (track.def.buildGround === false) return;
 
-    const b = track.bounds;
-    const pad = track.def.groundPad ?? 340;
-    const x0 = b.min.x - pad;
-    const x1 = b.max.x + pad;
-    const z0 = b.min.z - pad;
-    const z1 = b.max.z + pad;
-    const n = 129;
+    // Extent comes from tableRect() rather than groundPad directly: on a themed
+    // piece of furniture the top has to stop where its rim begins.
+    const { x0, x1, z0, z1 } = this.tableRect();
+    const n = GROUND_N;
     const scale = this.groundMaterial.userData.texScale;
-    const seedRng = makeRng(track.seed ^ 0x1d3a);
-    const blotchSeed = seedRng.uint();
 
     const geo = sweep(n, n, {
       position: (i, j, out) => {
@@ -1188,13 +1549,7 @@ export class TrackBuilder {
         return _uv;
       },
       color: (i, j, out) => {
-        const x = lerp(x0, x1, j / (n - 1));
-        const z = lerp(z0, z1, i / (n - 1));
-        // Broad tonal blotches at a scale far larger than the texture tile.
-        // This, more than resolution, is what hides a repeating texture.
-        const v = fbm2DTiled(x * 0.0022, z * 0.0022, 32, 3, 2, 0.5, blotchSeed) * 0.5 + 0.5;
-        const s = lerp(0.82, 1.08, v);
-        out.setRGB(s, s * 0.995, s * 0.985);
+        this.groundTint(lerp(x0, x1, j / (n - 1)), lerp(z0, z1, i / (n - 1)), out);
       },
     });
 

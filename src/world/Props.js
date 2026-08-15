@@ -72,6 +72,12 @@ const UP = new THREE.Vector3(0, 1, 0);
 const _fpVec = new THREE.Vector3();
 const _fpQuat = new THREE.Quaternion();
 const _fpOut = { w: 0, l: 0, h: 0, baseY: 0 };
+// Dedicated to the composition pass, for the same reason: it runs inside the
+// scatter loop, which is already holding _v0 and _q0.
+const _zoneOut = { x: 0, z: 0 };
+const _liftVec = new THREE.Vector3();
+const _liftQuat = new THREE.Quaternion();
+const _liftEuler = new THREE.Euler();
 
 /* ============================================================ geometry kit */
 
@@ -1211,8 +1217,16 @@ class Grid {
     bucket.push(item);
   }
 
-  /** Smallest gap between (x,z) and any stored item's radius. Negative = overlap. */
-  clearance(x, z, r) {
+  /**
+   * Smallest gap between (x,z) and any stored item's radius. Negative = overlap.
+   *
+   * `minR` ignores stored items smaller than that radius. A separation rule is
+   * a statement about things of comparable size — "keep the cereal boxes 46 u
+   * apart" — and applying it against every crumb on the table instead means a
+   * table with crumbs on it has room for nothing else. Omit it for the old
+   * behaviour: every item counts.
+   */
+  clearance(x, z, r, minR = 0) {
     const c = this.cell;
     const gx = Math.floor(x / c);
     const gz = Math.floor(z / c);
@@ -1223,6 +1237,7 @@ class Grid {
         if (!bucket) continue;
         for (let i = 0; i < bucket.length; i++) {
           const it = bucket[i];
+          if (it.r < minR) continue;
           const d = Math.hypot(it.x - x, it.z - z) - it.r - r;
           if (d < best) best = d;
         }
@@ -1267,6 +1282,32 @@ const CONTACT_BUDGET = 256;
 // a sheet of sandpaper, a coin. A blob under it would be bigger than the object.
 const CONTACT_MIN_HEIGHT = 0.6;
 
+/* ------------------------------------------------------------- composition */
+
+// A real table is zoned, not evenly sprinkled. It has a place where somebody
+// was sitting and everything gathered around them, and it has a margin that got
+// swept clear with a forearm when the box of cars came out. Those two readings
+// are what turn scenery into a story, and they cost nothing but a bias on where
+// a candidate position is drawn.
+//
+// This applies to the `field` band only. The verge keeps its even scatter,
+// because crumbs and sugar are precisely what a sweep leaves behind — pushing
+// those away from the road as well would read as a table cleaned twice.
+const ZONE_PULL = 0.55;        // share of field candidates drawn from a cluster
+const CLUSTER_ZONES = 3;
+const SWEPT_ZONES = 2;
+const CLUSTER_SPACING = 0.66;  // blue-noise gap multiplier inside a cluster
+const ZONE_TRIES = 420;        // candidate centres tested when siting the zones
+
+// Vessels that read as "knocked over when the cars came out". Only these are
+// ever tipped, only in the field band, and only where they are either gathered
+// into a cluster or already well past the clearance their entry demanded — a
+// prop lying on its side near the circuit is an obstacle, not a story beat.
+const TIPPABLE = new Set(['mug', 'jamJar', 'milkCarton', 'paintTin', 'oilCan', 'wateringCan']);
+const TIP_CHANCE = 0.45;
+const TIP_MAX = 1;             // per model — one knocked-over mug is a story, six is a mess
+const TIP_MARGIN = 25;         // extra road clearance demanded of a tipped prop
+
 export class Props {
   name = 'props';
 
@@ -1290,6 +1331,13 @@ export class Props {
     this._contact = null;          // fallback blob mesh, only when there is no Lighting
     this._contactEntries = [];     // handles returned by Lighting.addContactShadow
     this._time = 0;
+    this._zones = [];              // story zones, sited in populate()
+    // Track.projectXZ hands back a SHARED record; owning one means the scatter
+    // loop can never have it changed underneath it by another caller.
+    this._proj = {
+      t: 0, lateral: 0, distance: 0, halfWidth: 13, index: 0, frac: 0,
+      centreY: 0, slopeY: 0, tangentX: 0, tangentY: 0, tangentZ: 1,
+    };
   }
 
   async init() {
@@ -1335,6 +1383,10 @@ export class Props {
     const rng = makeRng(seed);
     const entries = Array.isArray(t.def?.props) ? t.def.props : [];
 
+    // Real footprints before anything is placed, so every separation test in
+    // this pass is judged against the object's true size.
+    this._warmMetrics(entries);
+
     const placements = [];
     // Explicit placements land first so hero composition always wins the space
     // and the scatter has to work around it, never the other way round.
@@ -1345,6 +1397,11 @@ export class Props {
         if (p) placements.push(p);
       }
     }
+    // Sited after the hero props are down and before the scatter, on their own
+    // stream: the composition has to work around what was authored by hand, and
+    // adding it must not shift a single one of those authored placements.
+    this._zones = this._buildZones(t, t.seed ?? 1337, placements);
+
     for (const e of entries) {
       if (!e || !e.model || e.count == null) continue;
       this._scatter(e, t, rng, placements);
@@ -1419,6 +1476,277 @@ export class Props {
     return out;
   }
 
+  /**
+   * Build the geometry of every model this track names, before anything is
+   * placed.
+   *
+   * _modelGeometry() writes the model's true footprint back onto its entry as
+   * `radius` and `size`, and until it has run every model reports the 4 u
+   * placeholder. That used to happen during _buildMeshes, i.e. after the whole
+   * scatter had already been laid out against the placeholder — so a 20 u
+   * cereal box and a 2 u cornflake claimed the same footprint, and which one a
+   * track got depended on whether some earlier track had already built that
+   * model into the module-level table. Warming them here makes the numbers real
+   * and makes them the same on every load. It costs nothing: this build is
+   * needed for the meshes regardless, and it is cached.
+   *
+   * @param {object[]} entries the track definition's props array
+   */
+  _warmMetrics(entries) {
+    const seen = new Set();
+    const take = (model) => {
+      if (!model || seen.has(model) || !PROP_MODELS[model]) return;
+      seen.add(model);
+      try {
+        this._modelGeometry(model);
+      } catch (err) {
+        console.warn('[Props] could not measure', model, err);
+      }
+    };
+    if (Array.isArray(entries)) for (const e of entries) take(e?.model);
+    for (const e of this.pending) take(e?.model);
+    return seen.size;
+  }
+
+  /* -------------------------------------------------------- the keep-out */
+
+  /**
+   * Horizontal gap between (x, z) and the nearest edge of the racing surface.
+   * Negative means the point is on the road.
+   *
+   * This is the one test that decides whether a prop may exist somewhere, so
+   * everything that places anything in the field goes through it — including
+   * the composition pass below, which is allowed to *suggest* a position and
+   * never to approve one.
+   *
+   * A track with no projection cannot have a ribbon for us to intrude on, so an
+   * unanswerable query returns Infinity rather than blocking the whole scatter.
+   */
+  _roadClearance(x, z) {
+    const t = this.trackRef;
+    if (typeof t?.projectXZ !== 'function') return Infinity;
+    try {
+      const p = t.projectXZ(x, z, this._proj);
+      if (!p || !Number.isFinite(p.lateral) || !Number.isFinite(p.halfWidth)) return Infinity;
+      return Math.abs(p.lateral) - p.halfWidth;
+    } catch (err) {
+      return Infinity;
+    }
+  }
+
+  /* ------------------------------------------------------- composition */
+
+  /**
+   * Site this track's story zones: a few places where the clutter gathers, and
+   * one or two lanes beside the circuit that were swept clear to make room for
+   * it.
+   *
+   * Zones only bias where a candidate is drawn. Every candidate still faces the
+   * road keep-out and the spacing test afterwards, so the worst a badly sited
+   * zone can do is waste attempts — it can never move a prop onto the racing
+   * line. It draws from its own seeded stream so that adding it cannot shift a
+   * single hand-authored placement.
+   *
+   * @param {object} track the built track
+   * @param {number} seed
+   * @param {object[]} anchors placements already authored by hand, used to site
+   *   the near cluster so the scatter reinforces the composition in the track
+   *   definition instead of competing with it
+   * @returns {object[]} zones, possibly empty
+   */
+  _buildZones(track, seed, anchors) {
+    const zones = [];
+    const b = track?.bounds;
+    if (!b || !Number.isFinite(b.min.x) || !Number.isFinite(b.max.x)) return zones;
+    const spanX = b.max.x - b.min.x;
+    const spanZ = b.max.z - b.min.z;
+    if (!(spanX > 60) || !(spanZ > 60)) return zones;
+
+    const rng = makeRng(((seed ?? 1337) ^ 0x2ce77a1e) >>> 0);
+    const pad = 26;
+    const open = [];   // out in the clear: what got shoved aside
+    const mid = [];    // a pocket inside the circuit: where somebody was sitting
+    const near = [];   // hard against the ribbon: what got swept
+    for (let i = 0; i < ZONE_TRIES; i++) {
+      const x = lerp(b.min.x - pad, b.max.x + pad, rng.next());
+      const z = lerp(b.min.z - pad, b.max.z + pad, rng.next());
+      const raw = this._roadClearance(x, z);
+      const gap = Number.isFinite(raw) ? raw : 60;
+      if (gap > 48) open.push({ x, z, gap });
+      else if (gap > 26) mid.push({ x, z, gap });
+      if (gap > 10 && gap < 36) {
+        // The tangent is read straight out of the projection that just ran, so
+        // a swept lane can lie along the circuit rather than across it.
+        near.push({ x, z, gap, yaw: Math.atan2(this._proj.tangentX || 0, this._proj.tangentZ || 1) });
+      }
+    }
+
+    const sep = Math.min(spanX, spanZ) * 0.34;
+    const push = (c, weight) => {
+      for (let j = 0; j < zones.length; j++) {
+        if (Math.hypot(zones[j].x - c.x, zones[j].z - c.z) < sep) return false;
+      }
+      // Radius is capped by the centre's own clearance, so the ellipse stays in
+      // the ground it was chosen for instead of reaching back over the road.
+      const r = clamp(c.gap * 0.7, 22, 56);
+      const cap = c.gap * 0.9;
+      zones.push({
+        kind: 'cluster',
+        x: c.x,
+        z: c.z,
+        rx: Math.min(r * rng.range(0.8, 1.3), cap),
+        rz: Math.min(r * rng.range(0.8, 1.3), cap),
+        yaw: rng.next() * TAU,
+        weight,
+      });
+      return true;
+    };
+
+    // Somebody's place. Sited at the pocket nearest the props the track
+    // definition placed by hand, so the crumbs and the toast gather around the
+    // authored breakfast rather than starting a second one somewhere else.
+    // A pocket is narrow, so what can actually land in one skews short: a prop
+    // whose entry demands more clearance than the pocket has is turned away by
+    // the keep-out, which is the right story as well as the safe outcome.
+    if (mid.length) {
+      let best = mid[0];
+      if (anchors && anchors.length) {
+        let bestD = Infinity;
+        for (let i = 0; i < mid.length; i++) {
+          let d = Infinity;
+          for (let j = 0; j < anchors.length; j++) {
+            const dd = Math.hypot(anchors[j].x - mid[i].x, anchors[j].z - mid[i].z);
+            if (dd < d) d = dd;
+          }
+          if (d < bestD) { bestD = d; best = mid[i]; }
+        }
+      }
+      push(best, 1);
+    }
+
+    // Shoved aside. Taken in generation order rather than by largest gap: the
+    // roomiest point on a rectangular table is always a corner, and three
+    // clusters in three corners is a pattern, not a composition.
+    for (let i = 0; i < open.length && zones.length < CLUSTER_ZONES; i++) {
+      push(open[i], 0.8 - zones.length * 0.15);
+    }
+
+    // The sweep. Elongated along the circuit, because that is the shape a
+    // forearm makes when it clears a space.
+    for (let i = 0; i < near.length && zones.length < CLUSTER_ZONES + SWEPT_ZONES; i++) {
+      const c = near[i];
+      let ok = true;
+      for (let j = 0; j < zones.length; j++) {
+        if (Math.hypot(zones[j].x - c.x, zones[j].z - c.z) < sep * 0.8) { ok = false; break; }
+      }
+      if (!ok) continue;
+      zones.push({
+        kind: 'swept',
+        x: c.x,
+        z: c.z,
+        rx: 26 + rng.next() * 12,
+        rz: 54 + rng.next() * 30,
+        yaw: c.yaw,
+        weight: 0,
+      });
+    }
+    return zones;
+  }
+
+  /** One attracting zone, chosen by weight. Null when there are none. */
+  _pickCluster(rng) {
+    const zones = this._zones;
+    if (!zones || !zones.length) return null;
+    let total = 0;
+    for (let i = 0; i < zones.length; i++) {
+      if (zones[i].kind === 'cluster' && zones[i].weight > 0) total += zones[i].weight;
+    }
+    if (!(total > 0)) return null;
+    let r = rng.next() * total;
+    for (let i = 0; i < zones.length; i++) {
+      const z = zones[i];
+      if (z.kind !== 'cluster' || !(z.weight > 0)) continue;
+      r -= z.weight;
+      if (r <= 0) return z;
+    }
+    return null;
+  }
+
+  /** A point inside a zone's ellipse, uniform in area. Fills and returns the
+   *  shared record — read it out before the next call. */
+  _zonePoint(zone, rng, out) {
+    const a = rng.next() * TAU;
+    const d = Math.sqrt(rng.next());
+    const ex = Math.cos(a) * d * zone.rx;
+    const ez = Math.sin(a) * d * zone.rz;
+    const c = Math.cos(zone.yaw);
+    const s = Math.sin(zone.yaw);
+    out.x = zone.x + ex * c - ez * s;
+    out.z = zone.z + ex * s + ez * c;
+    return out;
+  }
+
+  /** True when (x, z) lies in a lane that was swept clear for the circuit. */
+  _inSweptZone(x, z) {
+    const zones = this._zones;
+    if (!zones || !zones.length) return false;
+    for (let i = 0; i < zones.length; i++) {
+      const zo = zones[i];
+      if (zo.kind !== 'swept') continue;
+      const dx = x - zo.x;
+      const dz = z - zo.z;
+      const c = Math.cos(zo.yaw);
+      const s = Math.sin(zo.yaw);
+      // Inverse of the rotation _zonePoint applies.
+      const lx = (dx * c + dz * s) / zo.rx;
+      const lz = (-dx * s + dz * c) / zo.rz;
+      if (lx * lx + lz * lz < 1) return true;
+    }
+    return false;
+  }
+
+  /**
+   * How far a prop's origin must rise so that, once tilted, its lowest corner
+   * still touches the surface instead of sinking through it.
+   *
+   * Only the tilt is measured. A yaw about Y cannot change a box's lowest point,
+   * and the rotation that aligns a prop to a banked surface tilts the ground
+   * with it — correcting for that in world Y would lift the prop off the bank it
+   * is standing on.
+   *
+   * Returns the exact lift, which is what the tip path wants. A caller that only
+   * wanted to take the sink out of a few degrees of scatter tilt would want to
+   * clamp this against the prop's own height first, so that a thin flat object
+   * is not left standing on one corner.
+   */
+  _settleLift(model, tilt, scale) {
+    if (!tilt || (!tilt[0] && !tilt[1])) return 0;
+    const def = PROP_MODELS[model];
+    if (!def || def.foliage) return 0;   // blades bend from a root that stays put
+    let entry = this._geoCache.get(model);
+    if (!entry) {
+      try { entry = this._modelGeometry(model); } catch (err) { return 0; }
+    }
+    const b = entry?.bounds;
+    if (!b || b.isEmpty()) return 0;
+    const sx = typeof scale === 'number' ? scale : (scale?.x ?? 1);
+    const sy = typeof scale === 'number' ? scale : (scale?.y ?? 1);
+    const sz = typeof scale === 'number' ? scale : (scale?.z ?? 1);
+    _liftEuler.set(tilt[0], 0, tilt[1], 'XYZ');
+    _liftQuat.setFromEuler(_liftEuler);
+    let minY = Infinity;
+    for (let i = 0; i < 8; i++) {
+      _liftVec.set(
+        (i & 1 ? b.max.x : b.min.x) * sx,
+        (i & 2 ? b.max.y : b.min.y) * sy,
+        (i & 4 ? b.max.z : b.min.z) * sz
+      ).applyQuaternion(_liftQuat);
+      if (_liftVec.y < minY) minY = _liftVec.y;
+    }
+    if (!Number.isFinite(minY)) return 0;
+    return Math.max(0, -minY);
+  }
+
   _resolveExplicit(e, track, rng) {
     const def = PROP_MODELS[e.model];
     if (!def) return null;
@@ -1472,20 +1800,36 @@ export class Props {
     const side = e.side ?? 0;
     const bounds = track.bounds;
 
+    // Footprints were warmed in populate(), so def.radius is real here.
+    const canTip = band === 'field' && TIPPABLE.has(e.model);
+
     let placed = 0;
+    let tipped = 0;
     const tries = want * 14;
     for (let i = 0; i < tries && placed < want; i++) {
       let x;
       let z;
       let baseYaw = 0;
+      let inCluster = false;
+      let roadGap = 0;
       if (band === 'field') {
         if (!bounds) break;
-        x = lerp(bounds.min.x - 26, bounds.max.x + 26, rng.next());
-        z = lerp(bounds.min.z - 26, bounds.max.z + 26, rng.next());
+        // A zone suggests where to look; it never approves a position.
+        const zone = rng.next() < ZONE_PULL ? this._pickCluster(rng) : null;
+        if (zone) {
+          this._zonePoint(zone, rng, _zoneOut);
+          x = _zoneOut.x;
+          z = _zoneOut.z;
+          inCluster = true;
+        } else {
+          x = lerp(bounds.min.x - 26, bounds.max.x + 26, rng.next());
+          z = lerp(bounds.min.z - 26, bounds.max.z + 26, rng.next());
+        }
         // Anything inside the ribbon plus a car's width of margin is rejected:
         // scenery in the racing line is a bug, not a hazard.
-        const proj = track.projectXZ?.(x, z);
-        if (proj && Math.abs(proj.lateral) < proj.halfWidth + (e.clear ?? 14)) continue;
+        roadGap = this._roadClearance(x, z);
+        if (roadGap < (e.clear ?? 14)) continue;
+        if (this._inSweptZone(x, z)) continue;
       } else {
         // Stratified in t, so a hundred tufts spread over the lap instead of
         // clumping wherever the stream happened to land.
@@ -1497,6 +1841,11 @@ export class Props {
         x = p.x;
         z = p.z;
         baseYaw = Math.atan2(s.tangent.x, s.tangent.z) + (e.align ? 0 : rng.range(-0.5, 0.5));
+        // The verge is where the sweep actually shows: it carries the dense
+        // crumb scatter, and a stretch of table wiped clean beside the circuit
+        // is only legible against that. Road-band props are deliberate hazards
+        // and are left alone.
+        if (band === 'verge' && this._inSweptZone(x, z)) continue;
         if (band === 'road') {
           const p2 = track.surfacePoint(t, sgn * s.halfWidth * rng.range(0.1, 0.85), _v0);
           x = p2.x;
@@ -1506,11 +1855,28 @@ export class Props {
 
       const scale = resolveScale(e.scale, 1, rng);
       const radius = (def.radius ?? 4) * (typeof scale === 'number' ? scale : scale.x);
-      if (this.grid.clearance(x, z, radius) < spacing) continue;
+      // Clutter touches. Blue noise at the field's own spacing inside a cluster
+      // would just be a small field, which is the thing this pass exists to stop.
+      // Separation is judged against neighbours of comparable size: a mug has to
+      // stand clear of other mugs, not of a table's worth of crumbs.
+      const gap = this.grid.clearance(x, z, radius, radius * 0.5);
+      if (gap < (inCluster ? spacing * CLUSTER_SPACING : spacing)) continue;
 
       const yaw = e.align ? baseYaw + (e.yaw ?? 0) : rng.next() * TAU;
-      const tilt = e.tilt ? [rng.range(-e.tilt, e.tilt), rng.range(-e.tilt, e.tilt)] : [0, 0];
-      const p = this._makePlacement(e.model, x, z, e.y ?? 0, yaw, tilt, scale, e, rng);
+      let tilt = e.tilt ? [rng.range(-e.tilt, e.tilt), rng.range(-e.tilt, e.tilt)] : [0, 0];
+      let yOff = e.y ?? 0;
+      // Tipped where it reads as story and cannot read as an obstacle: gathered
+      // in a cluster, or otherwise well beyond the clearance this prop already
+      // had to satisfy.
+      const tipOk = inCluster || roadGap > (e.clear ?? 14) + TIP_MARGIN;
+      if (canTip && tipOk && tipped < TIP_MAX && rng.next() < TIP_CHANCE) {
+        // Rolled onto its side about its own long axis, then raised so it comes
+        // to rest on the table instead of half inside it.
+        tilt = [rng.next() < 0.5 ? Math.PI * 0.5 : -Math.PI * 0.5, 0];
+        yOff += this._settleLift(e.model, tilt, scale);
+        tipped++;
+      }
+      const p = this._makePlacement(e.model, x, z, yOff, yaw, tilt, scale, e, rng);
       if (p) { out.push(p); placed++; }
     }
   }

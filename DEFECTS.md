@@ -37,7 +37,35 @@ highlight. Should be near-neutral grey with anisotropic streaks and roughness ~0
 dark warm brown. The grain, plank seams and ray fleck are otherwise excellent — this is a
 palette bug in the knot pass only.
 
-## D12 — There is no room. The table runs to the horizon — MAJOR — OPEN
+## D17 — The table floats: a 3.6 u top 250 u above the floor, with no legs — MAJOR — OPEN
+`world/TrackBuilder.js` [A5] + `render/Sky.js` [A4]. An integration seam between two agents in
+the same wave, each of whom picked a defensible number in isolation.
+
+| part | top | bottom |
+|---|---|---|
+| `track:ground` | 0.2 | −0.2 |
+| `track:tableEdge` | 0.2 | **−3.6** |
+| `MG.Room.floor` | — | **−250** |
+
+The table-edge agent used a literal tabletop thickness: 3.6 u = 3.6 cm, correct at 1 u = 1 cm.
+The room agent used the project's exaggerated scale — the playfield is ~460 × 340 u with 9 u
+cars, i.e. a table already about 3.3× a real one relative to the toys on it — so it put the
+floor at 250 u, a 75 cm table height in that same stretched space. Both are right on their own.
+Together they give a 1:70 thickness-to-height ratio where a real table is about 1:25, and 246 u
+of empty air where the legs should be.
+
+It predicted this itself and said so: "table height is a guess the other agent must match".
+The mechanism to reconcile them already exists — Sky honours `track.def.tableHeight` if it is
+present, and `sky.setRoom({ floorDrop: N })` overrides at runtime.
+
+**Not currently visible.** Every camera the game uses looks downward: chase is 26 u above the
+table, macro 9 u, and the establishing shot at ~350 u pitched 50° has its frame top 31° BELOW
+horizontal, so there are no upward sightlines in it at all. Confirmed in `shots/*-r7.png`.
+Any low or side camera would expose it immediately.
+
+Fixing it properly means legs, and legs mean deciding whose file owns them.
+
+## D12 — There is no room. The table runs to the horizon — FIXED
 `render/Sky.js` [A4] + `world/Track.js` [A5]. `shots/diag-table-edge.png` looks across the
 table at a low angle and there is nothing there: no kitchen, no walls, no floor, no table
 edge, no table thickness. The wood plain runs to a flat horizon and everything past

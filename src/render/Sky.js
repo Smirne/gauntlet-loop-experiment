@@ -470,6 +470,322 @@ void main() {
 `;
 
 /* -------------------------------------------------------------------------- */
+/* The room                                                                   */
+/* -------------------------------------------------------------------------- */
+
+// WHY THIS IS GEOMETRY AND NOT MORE PAINT (D12).
+//
+// The backdrop shell is locked to the camera, so every direction it paints is
+// at the same apparent distance no matter where the camera stands. That is
+// exactly right for the far side of a room seen over a tabletop, and exactly
+// wrong for the two things D12 is actually about:
+//
+//  1. The establishing shot never sees the horizon. At ~350 u up, pitched 50
+//     degrees down with a 38 degree lens, the TOP of frame is already 31
+//     degrees BELOW horizontal; in the top corners it is 15 degrees below.
+//     Every sightline in that frame is a downward one, so the only part of the
+//     shell it can ever sample is the flat uGround band under h = -0.40. That
+//     band is one colour with no depth in it, which is precisely the "dark
+//     navy hole off the table edge" the reviewers kept reading as a bug. No
+//     amount of painting fixes it, because the frame contains no horizon to
+//     paint on.
+//  2. A floor is at a *finite* distance that changes across the frame — a few
+//     hundred units just past the table edge, a thousand at the far wall. A
+//     camera-locked shell puts all of it at 1400 u. Geometry gets that for
+//     free, plus real fog falloff, real defocus from the DOF pass, and real
+//     occlusion by the table.
+//
+// So: a floor, four walls, and a handful of block silhouettes, all behind and
+// below the playfield, all opaque, none of it castShadow or receiveShadow. The
+// shell is still there and still owns the IBL; the walls hand back to it over
+// their top edge so the geometry has no visible upper rim.
+//
+// SCALE. The playfield is ~460 x 340 u with 9 u cars, i.e. a "table" already
+// about 3.3x the size of a real one relative to the toys on it. The room is
+// built in that same exaggerated scale rather than in literal centimetres, so
+// it stays self-consistent with the thing it surrounds: table height 75 cm ->
+// 250 u, ceiling 2.5 m -> ~825 u, counter 90 cm -> 300 u. Building the room at
+// literal cm around a 4.6 m tabletop would read as a table in a doll's house.
+const ROOM = Object.freeze({
+  floorDrop: 250,      // tabletop -> floor, i.e. the table's height
+  margin: 330,         // table edge -> wall: room to walk round it
+  minHalf: 640,        // never closer than this, whatever the table does
+  maxHalf: 1150,       // ... and never past the band Lighting's fog assumes
+  wallRatio: 1.0,      // wall height as a fraction of the smaller half-extent
+  wallMin: 560,
+  wallMax: 1000,
+  plank: [52, 420],    // floorboard width and stagger length
+  tone: 0.46,          // wall brightness against the backdrop palette
+  floorTone: 0.78,
+  propTone: 0.62,
+  amb: 0.72,           // shading floor, unlit faces
+  key: 0.55,           // extra for a face turned to the window
+  pool: 0.038,         // strength of the light the window throws on the room
+  tableShade: 0.85,    // how much of that the table blocks
+});
+
+/** Themes that are not in a room. The shell keeps the sky for these. */
+const OUTDOOR_THEMES = new Set(['garden', 'outdoor', 'yard', 'street']);
+
+/**
+ * Themes where the playfield IS the floor rather than a surface standing on it.
+ * The room floor still has to exist — the track's own ground stops at its pad
+ * and the walls are beyond that — but it drops by a hair instead of a table
+ * height, enough to stay under the track's own ground relief without ever
+ * reading as a step.
+ */
+const FLOOR_THEMES = new Map([['bedroom', 8]]);
+
+/**
+ * Blocks along the walls, in wall-anchored coordinates:
+ *   wall  - which wall to stand against
+ *   along - centre position as a fraction of that wall's half-length
+ *   w/d/h - width along the wall, depth into the room, height
+ *   base  - height of the underside above the floor (wall units hang)
+ * Kept deliberately dumb and few: this is a silhouette, not a set.
+ */
+const ROOM_PROPS = Object.freeze([
+  { wall: '-z', along: -0.30, w: 900, d: 200, h: 300, base: 0 },     // counter run
+  { wall: '-x', along: -0.62, w: 520, d: 200, h: 300, base: 0 },     // its return
+  { wall: '-z', along: 0.58, w: 300, d: 230, h: 640, base: 0 },      // tall unit
+  { wall: '-z', along: -0.42, w: 560, d: 120, h: 260, base: 470 },   // wall cupboard
+  { wall: '-x', along: -0.55, w: 380, d: 120, h: 260, base: 470 },   // wall cupboard
+  { wall: '+x', along: 0.18, w: 200, d: 190, h: 290, base: 0 },      // chair back
+  { wall: '+z', along: -0.46, w: 170, d: 170, h: 230, base: 0 },     // bin
+  { wall: '+z', along: 0.40, w: 160, d: 160, h: 250, base: 0 },      // stool
+]);
+
+const ROOM_VERT = /* glsl */ `
+varying vec3 vRoomPos;
+varying vec3 vRoomN;
+#include <fog_pars_vertex>
+
+void main() {
+  vec4 wp = modelMatrix * vec4( position, 1.0 );
+  vRoomPos = wp.xyz;
+  // Every room mesh is an axis-aligned plane or box under axis-aligned scale,
+  // so the plain model rotation is enough here and no normal matrix is needed.
+  vRoomN = normalize( mat3( modelMatrix ) * normal );
+  vec4 mvPosition = viewMatrix * wp;
+  #include <fog_vertex>
+  gl_Position = projectionMatrix * mvPosition;
+}
+`;
+
+const ROOM_FRAG = /* glsl */ `
+${ENV_SHADER_PARS}
+
+uniform vec3  uRoomCenter;   // x, floor level, z
+uniform vec3  uRoomHalf;     // half X, wall height, half Z
+uniform float uRoomTone;
+uniform float uFloorTone;
+uniform float uPropTone;
+uniform float uRoomAmb;
+uniform float uRoomKey;
+uniform vec2  uPlank;
+
+uniform vec3  uWinPos;
+uniform vec3  uWinRight;
+uniform vec3  uWinUp;
+uniform vec3  uWinNormal;
+uniform vec2  uWinHalf;
+uniform float uWinPool;
+uniform float uRoomWindow;
+
+uniform vec3  uTableCenter;  // x, tabletop level, z
+uniform vec2  uTableHalf;
+uniform float uTableShade;
+
+varying vec3 vRoomPos;
+varying vec3 vRoomN;
+
+#include <fog_pars_fragment>
+
+float mgBoardTone( float i ) {
+  return fract( sin( i * 12.9898 + 4.1 ) * 43758.5453 ) - 0.5;
+}
+
+void main() {
+  vec3 N = normalize( vRoomN );
+  vec3 P = vRoomPos;
+
+  float floorness = smoothstep( 0.55, 0.85, N.y );
+  #ifdef MG_ROOM_PROP
+    floorness = 0.0;
+  #endif
+
+  float h = P.y - uRoomCenter.y;                      // height above the floor
+  float t = clamp( h / max( uRoomHalf.y, 1.0 ), 0.0, 1.0 );
+  vec3 wdir = normalize( uWindowDir );                // toward the window
+
+  // --- base palette, taken from the same uniforms the shell paints with, so
+  // --- the two can never disagree about what colour this room is.
+  vec3 wallLow  = mix( uGround, uHorizon, 0.42 );
+  vec3 wallHigh = mix( uHorizon, uCeiling, 0.55 );
+  vec3 wallCol  = mix( wallLow, wallHigh, smoothstep( 0.0, 0.62, t ) ) * uRoomTone;
+  vec3 floorCol = mix( uGround, uHorizon, 0.22 ) * uFloorTone;
+  vec3 col = mix( wallCol, floorCol, floorness );
+
+  #ifdef MG_ROOM_PROP
+    col *= uPropTone;
+  #endif
+
+  col *= 1.0 + mgMottle( P * 0.0045 ) * uMottle * 1.2;
+
+  // --- floorboards. Faded out by screen-space derivative, so the pattern
+  // --- dissolves before it can alias into a shimmer at distance.
+  #ifndef MG_ROOM_PROP
+  {
+    // fwidth stays out of any branch: a derivative taken inside non-uniform
+    // control flow is undefined, and this is cheap enough not to guard.
+    vec2 g = ( P.xz - uRoomCenter.xz ) / max( uPlank, vec2( 1.0 ) );
+    float sharp = 1.0 - smoothstep( 0.06, 0.30, fwidth( g.x ) );
+    float edge = abs( fract( g.x ) - 0.5 ) * 2.0;
+    float groove = smoothstep( 0.86, 1.0, edge );
+    float tone = mgBoardTone( floor( g.x ) + 7.0 * floor( g.y ) );
+    col *= 1.0 + ( tone * 0.16 - groove * 0.32 ) * sharp * floorness;
+  }
+  #endif
+
+  // --- shading. One key, from the window, plus a flat ambient. A wall with the
+  // --- window in it faces away from it and stays dark, which is correct and is
+  // --- most of what makes the room read as lit rather than coloured in.
+  float lam = max( dot( N, wdir ), 0.0 );
+  float shade = uRoomAmb + uRoomKey * lam;
+
+  // Corner occlusion, on both sides of the wall-floor join.
+  float dWall = min( uRoomHalf.x - abs( P.x - uRoomCenter.x ),
+                     uRoomHalf.z - abs( P.z - uRoomCenter.z ) );
+  float cornerFloor = 1.0 - smoothstep( 0.0, 110.0, max( dWall, 0.0 ) );
+  float cornerWall = 1.0 - smoothstep( 0.0, 80.0, max( h, 0.0 ) );
+  shade *= 1.0 - 0.34 * mix( cornerWall, cornerFloor, floorness );
+
+  // The table blocks the window. This is the one shadow in the room and it is
+  // the reason the table reads as an object standing in it.
+  float tableOcc = 0.0;
+  if ( uTableShade > 0.0 && wdir.y > 0.05 && uTableHalf.x > 1.0 ) {
+    float tt = ( uTableCenter.y - P.y ) / wdir.y;
+    if ( tt > 0.0 ) {
+      vec3 hp = P + wdir * tt;
+      vec2 d2 = abs( hp.xz - uTableCenter.xz ) - uTableHalf;
+      float sdT = length( max( d2, vec2( 0.0 ) ) ) + min( max( d2.x, d2.y ), 0.0 );
+      tableOcc = 1.0 - smoothstep( 0.0, 60.0, sdT );
+    }
+  }
+  shade *= 1.0 - tableOcc * uTableShade * 0.22;
+  col *= shade;
+
+  // --- the light the window actually throws into the room: the window pane
+  // --- projected along its own direction onto whatever this fragment is.
+  if ( uRoomWindow > 0.001 && lam > 0.0 && uWinHalf.x > 1.0 ) {
+    float denom = min( dot( wdir, uWinNormal ), -1e-3 );
+    float tw = dot( uWinPos - P, uWinNormal ) / denom;
+    if ( tw > 0.0 ) {
+      vec3 hitp = P + wdir * tw;
+      vec2 q = vec2( dot( hitp - uWinPos, uWinRight ), dot( hitp - uWinPos, uWinUp ) );
+      float sdp = mgRoundBox( q, uWinHalf * 0.92, uWinHalf.x * 0.20 );
+      float soft = max( uWinHalf.x * 0.24, 8.0 );
+      float pool = 1.0 - smoothstep( -soft, soft, sdp );
+      pool *= 1.0 - tableOcc * uTableShade;
+      col += uWindowColor * uWindowIntensity * uRoomWindow * uWinPool * pool * lam;
+    }
+  }
+
+  // --- the pane itself, drawn on the wall it is actually in.
+  #ifndef MG_ROOM_PROP
+  if ( uRoomWindow > 0.001 && uWinHalf.x > 1.0 ) {
+    vec3 rel = P - uWinPos;
+    float onWall = max( dot( N, uWinNormal ), 0.0 ) * ( 1.0 - smoothstep( 1.0, 9.0, abs( dot( rel, uWinNormal ) ) ) );
+    if ( onWall > 0.001 ) {
+      vec2 q = vec2( dot( rel, uWinRight ), dot( rel, uWinUp ) );
+      float sd = mgRoundBox( q, uWinHalf, uWinHalf.x * 0.06 );
+      float soft = max( uWinHalf.x * 0.02, 1.5 );
+      float pane = 1.0 - smoothstep( 0.0, soft, sd );
+      float barW = max( uWinHalf.x * 0.035, 1.0 );
+      float bars = min( smoothstep( 0.0, barW, abs( q.x ) ), smoothstep( 0.0, barW * 1.1, abs( q.y ) ) );
+      bars = mix( 1.0, bars, uMullion );
+      pane *= mix( 0.12, 1.0, bars );
+      float wash = exp( -max( sd, 0.0 ) / max( uWinHalf.x * 0.75, 1.0 ) );
+      col += uWindowColor * uWindowIntensity * uRoomWindow * onWall * ( pane + wash * 0.10 );
+    }
+  }
+  #endif
+
+  // Skirting: a lighter band at the foot of the wall. Cheap, and it is what
+  // turns the wall-floor join from a gradient into a line.
+  #ifndef MG_ROOM_PROP
+  // Written as 1 - smoothstep, never as a descending one: GLSL leaves
+  // smoothstep undefined when edge0 >= edge1.
+  float skirt = ( 1.0 - floorness )
+    * ( 1.0 - smoothstep( 36.0, 46.0, h ) )
+    * smoothstep( 0.0, 7.0, h );
+  col = mix( col, col * 1.26, skirt * 0.85 );
+  #endif
+
+  // Same master the shell applies, applied at the same point in the chain, so
+  // a preset that dims the backdrop dims the room with it.
+  col = max( col * uIntensity, vec3( 0.0 ) );
+
+  #ifdef USE_FOG
+    #ifdef FOG_EXP2
+      float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
+    #else
+      float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+    #endif
+    col = mix( col, fogColor, clamp( fogFactor, 0.0, 1.0 ) );
+  #endif
+
+  // Hand back to the painted shell across the top of the wall. Done after fog
+  // so the two agree exactly at the join and the geometry has no visible rim.
+  float topT = ( 1.0 - floorness ) * smoothstep( 0.86, 1.0, t );
+  if ( topT > 0.001 ) {
+    col = mix( col, mgEnvColor( normalize( P - cameraPosition ) ), topT );
+  }
+
+  gl_FragColor = vec4( col, 1.0 );
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`;
+
+/**
+ * Uniforms for the room. Every entry the environment shader needs is the SAME
+ * object the backdrop uses, not a copy, so a preset change written through
+ * `setEnvUniforms` lands on the painted shell and the built room in one go and
+ * they cannot drift apart.
+ */
+export function makeRoomUniforms(envUniforms) {
+  const u = Object.assign({}, envUniforms);
+  // three writes these itself every frame for any material with fog === true.
+  u.fogColor = { value: new THREE.Color(0x92979e) };
+  u.fogDensity = { value: 0.0006 };
+  u.fogNear = { value: 1 };
+  u.fogFar = { value: 2000 };
+
+  u.uRoomCenter = { value: new THREE.Vector3(0, -ROOM.floorDrop, 0) };
+  u.uRoomHalf = { value: new THREE.Vector3(ROOM.minHalf, ROOM.wallMin, ROOM.minHalf) };
+  u.uRoomTone = { value: ROOM.tone };
+  u.uFloorTone = { value: ROOM.floorTone };
+  u.uPropTone = { value: ROOM.propTone };
+  u.uRoomAmb = { value: ROOM.amb };
+  u.uRoomKey = { value: ROOM.key };
+  u.uPlank = { value: new THREE.Vector2(ROOM.plank[0], ROOM.plank[1]) };
+
+  u.uWinPos = { value: new THREE.Vector3(0, 0, 0) };
+  u.uWinRight = { value: new THREE.Vector3(1, 0, 0) };
+  u.uWinUp = { value: new THREE.Vector3(0, 1, 0) };
+  u.uWinNormal = { value: new THREE.Vector3(0, 0, 1) };
+  u.uWinHalf = { value: new THREE.Vector2(0, 0) };
+  u.uWinPool = { value: ROOM.pool };
+  u.uRoomWindow = { value: 1 };
+
+  u.uTableCenter = { value: new THREE.Vector3(0, 0, 0) };
+  u.uTableHalf = { value: new THREE.Vector2(0, 0) };
+  u.uTableShade = { value: ROOM.tableShade };
+  return u;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Sky system                                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -498,6 +814,13 @@ export class Sky {
     this.dust = null;
     this.shafts = null;
 
+    // The built room (D12). `floorDrop` null means "take it from the track, or
+    // from ROOM.floorDrop"; set it to a number to pin the table height.
+    this.room = null;
+    this.roomEnabled = true;
+    this.floorDrop = null;
+    this._roomSig = null;
+
     this.params = mergeBackdrop(null);
     this._target = null;
     this._blend = 1;
@@ -515,6 +838,9 @@ export class Sky {
     this._buildBackdrop();
     this._buildDust(DUST_TIERS[tier] != null ? DUST_TIERS[tier] : DUST_TIERS.ultra);
     this._buildShafts();
+    // The track does not exist yet at this point; the room fits itself to it
+    // from update() as soon as it does.
+    this._buildRoom();
 
     if (ctx.scene) ctx.scene.add(this.root);
 
@@ -671,6 +997,286 @@ export class Sky {
     this.root.add(group);
   }
 
+  /* ---- the room ---------------------------------------------------------- */
+
+  /**
+   * Floor, four walls, and the block silhouettes along them. One unit plane and
+   * one unit box, scaled per mesh, so a refit is transform-only and never
+   * touches a buffer. Nothing here casts or receives a shadow: the room sits
+   * far outside the shadow cascade, where a sampled shadow map would clamp to a
+   * hard edge, and the one shadow it needs — the table's — is analytic in the
+   * fragment shader instead.
+   */
+  _buildRoom() {
+    if (this.room) return;
+    const env = this.backdrop ? this.backdrop.uniforms : makeEnvUniforms(this.params);
+    const uniforms = makeRoomUniforms(env);
+
+    const shared = {
+      uniforms,
+      vertexShader: ROOM_VERT,
+      fragmentShader: ROOM_FRAG,
+      side: THREE.FrontSide,
+      depthWrite: true,
+      depthTest: true,
+      fog: true,
+    };
+    // Both materials point at the SAME uniforms object on purpose.
+    const material = new THREE.ShaderMaterial(Object.assign({ name: 'MG.Room' }, shared));
+    const propMaterial = new THREE.ShaderMaterial(
+      Object.assign({ name: 'MG.RoomProp', defines: { MG_ROOM_PROP: '' } }, shared)
+    );
+
+    const plane = new THREE.PlaneGeometry(1, 1);
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    const group = new THREE.Group();
+    group.name = 'MG.Room';
+
+    const make = (geometry, mat, name) => {
+      const mesh = new THREE.Mesh(geometry, mat);
+      mesh.name = name;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      group.add(mesh);
+      return mesh;
+    };
+
+    const floor = make(plane, material, 'MG.Room.floor');
+    floor.rotation.x = -Math.PI / 2;
+
+    // Order is fixed and referenced by _fitRoom: -Z, +Z, -X, +X. Each rotation
+    // turns the plane's +Z normal to face into the room.
+    const wallRot = [0, Math.PI, Math.PI * 0.5, -Math.PI * 0.5];
+    const walls = [];
+    for (let i = 0; i < 4; i++) {
+      const w = make(plane, material, `MG.Room.wall${i}`);
+      w.rotation.y = wallRot[i];
+      walls.push(w);
+    }
+
+    const props = [];
+    for (let i = 0; i < ROOM_PROPS.length; i++) {
+      const p = make(box, propMaterial, `MG.Room.prop${i}`);
+      p.userData.mgFits = false;
+      p.visible = false;
+      props.push(p);
+    }
+
+    group.visible = false;   // stays hidden until the first successful fit
+    this.room = {
+      group, material, propMaterial, plane, box, floor, walls, props, uniforms,
+      dims: null,
+      tmp: { dir: new THREE.Vector3(), right: new THREE.Vector3() },
+    };
+    this.root.add(group);
+  }
+
+  /**
+   * Size the room around whatever track is loaded. Cheap enough to call every
+   * frame: it early-outs on an unchanged signature, and the track does not
+   * exist yet when Sky.init runs, so polling is how the room ever gets built.
+   */
+  _fitRoom(ctx = this.ctx) {
+    const room = this.room;
+    if (!room) return;
+
+    const track = ctx && ctx.track;
+    const def = (track && track.def) || null;
+    const b = track && track.bounds;
+
+    let cx = 0;
+    let cz = 0;
+    let tableHX = 260;
+    let tableHZ = 260;
+    let topY = 0;
+    if (b && b.min && b.max && Number.isFinite(b.min.x) && b.max.x - b.min.x > 4) {
+      cx = (b.min.x + b.max.x) * 0.5;
+      cz = (b.min.z + b.max.z) * 0.5;
+      // Same pad TrackBuilder.buildGround uses, so the walls track the real
+      // extent of the table rather than a guess about it.
+      const pad = def && Number.isFinite(def.groundPad) ? def.groundPad : 340;
+      tableHX = (b.max.x - b.min.x) * 0.5 + pad;
+      tableHZ = (b.max.z - b.min.z) * 0.5 + pad;
+    }
+    if (track && Number.isFinite(track.groundY)) topY = track.groundY;
+
+    const theme = String((def && def.theme) || (track && track.id) || 'kitchen');
+    const themeDrop = FLOOR_THEMES.has(theme) ? FLOOR_THEMES.get(theme) : ROOM.floorDrop;
+    const drop = Number.isFinite(this.floorDrop)
+      ? this.floorDrop
+      : (def && Number.isFinite(def.tableHeight) ? def.tableHeight : themeDrop);
+
+    const halfX = Math.min(ROOM.maxHalf, Math.max(ROOM.minHalf, tableHX + ROOM.margin));
+    const halfZ = Math.min(ROOM.maxHalf, Math.max(ROOM.minHalf, tableHZ + ROOM.margin));
+    const wallH = Math.min(
+      ROOM.wallMax,
+      Math.max(ROOM.wallMin, Math.min(halfX, halfZ) * ROOM.wallRatio)
+    );
+    const floorY = topY - drop;
+
+    const visible = this.roomEnabled !== false && !OUTDOOR_THEMES.has(theme);
+
+    const sig = `${theme}|${cx.toFixed(1)},${cz.toFixed(1)},${halfX.toFixed(1)},${halfZ.toFixed(1)},${floorY.toFixed(1)},${wallH.toFixed(1)},${visible}`;
+    if (sig === this._roomSig) return;
+    this._roomSig = sig;
+
+    room.group.visible = visible;
+    room.dims = { cx, cz, halfX, halfZ, floorY, wallH, topY, tableHX, tableHZ };
+
+    // A hair of overlap at the corners so no seam can open between planes.
+    const over = 1.02;
+    room.floor.position.set(cx, floorY, cz);
+    room.floor.scale.set(halfX * 2 * over, halfZ * 2 * over, 1);
+
+    const wy = floorY + wallH * 0.5;
+    room.walls[0].position.set(cx, wy, cz - halfZ);
+    room.walls[0].scale.set(halfX * 2 * over, wallH, 1);
+    room.walls[1].position.set(cx, wy, cz + halfZ);
+    room.walls[1].scale.set(halfX * 2 * over, wallH, 1);
+    room.walls[2].position.set(cx - halfX, wy, cz);
+    room.walls[2].scale.set(halfZ * 2 * over, wallH, 1);
+    room.walls[3].position.set(cx + halfX, wy, cz);
+    room.walls[3].scale.set(halfZ * 2 * over, wallH, 1);
+
+    const u = room.uniforms;
+    u.uRoomCenter.value.set(cx, floorY, cz);
+    u.uRoomHalf.value.set(halfX, wallH, halfZ);
+    u.uTableCenter.value.set(cx, topY, cz);
+    u.uTableHalf.value.set(tableHX, tableHZ);
+
+    const hCap = wallH * 0.72;
+    for (let i = 0; i < room.props.length; i++) {
+      const d = ROOM_PROPS[i];
+      const mesh = room.props[i];
+      const ph = Math.min(d.h, hCap - d.base);
+      if (!(ph > 10)) {
+        mesh.userData.mgFits = false;
+        mesh.visible = false;
+        continue;
+      }
+      let px = cx;
+      let pz = cz;
+      let sx = d.w;
+      let sz = d.d;
+      if (d.wall === '-z') {
+        px = cx + d.along * halfX;
+        pz = cz - halfZ + d.d * 0.5;
+      } else if (d.wall === '+z') {
+        px = cx + d.along * halfX;
+        pz = cz + halfZ - d.d * 0.5;
+      } else if (d.wall === '-x') {
+        px = cx - halfX + d.d * 0.5;
+        pz = cz + d.along * halfZ;
+        sx = d.d;
+        sz = d.w;
+      } else {
+        px = cx + halfX - d.d * 0.5;
+        pz = cz + d.along * halfZ;
+        sx = d.d;
+        sz = d.w;
+      }
+      // Never let a block reach over the table: a room prop intersecting the
+      // playfield would be a far worse defect than a missing silhouette.
+      const clearX = Math.abs(px - cx) - sx * 0.5 - tableHX;
+      const clearZ = Math.abs(pz - cz) - sz * 0.5 - tableHZ;
+      const fits = Math.max(clearX, clearZ) > 20;
+      mesh.userData.mgFits = fits;
+      mesh.visible = fits;
+      mesh.position.set(px, floorY + d.base + ph * 0.5, pz);
+      mesh.scale.set(sx, ph, sz);
+    }
+  }
+
+  /**
+   * Put the pane on a real wall, in the direction the backdrop uniforms say the
+   * window is. Which wall, and where along it, comes straight from uWindowDir —
+   * that direction is built from each preset's own key azimuth in Lighting, and
+   * the two must agree or the light in the room has no visible source. Two
+   * things are then clamped so a pane always fits the wall it is in: its height
+   * (a window at 20 degrees seen from 1200 u away wants to sit above the
+   * ceiling), and, if it would overhang the end of the wall, how far along that
+   * wall it sits.
+   */
+  _updateRoomWindow() {
+    const room = this.room;
+    if (!room || !room.group.visible || !room.dims) return;
+    const u = room.uniforms;
+    const dims = room.dims;
+
+    const wd = room.tmp.dir.copy(u.uWindowDir.value);
+    if (wd.lengthSq() < 1e-8) return;
+    wd.normalize();
+
+    const ax = Math.abs(wd.x);
+    const az = Math.abs(wd.z);
+    const tx = ax > 1e-4 ? dims.halfX / ax : Infinity;
+    const tz = az > 1e-4 ? dims.halfZ / az : Infinity;
+    const t = Math.min(tx, tz);
+    if (!Number.isFinite(t) || t <= 1) {
+      u.uWinHalf.value.set(0, 0);
+      return;
+    }
+
+    // Proportions from the preset, clamped to something that fits a wall.
+    const hw = Math.min(0.20, Math.max(0.12, u.uWindowSize.value.x)) * t;
+    const hh = Math.min(0.17, Math.max(0.10, u.uWindowSize.value.y)) * t;
+
+    let nx = 0;
+    let nz = 0;
+    if (tx <= tz) nx = wd.x > 0 ? -1 : 1;
+    else nz = wd.z > 0 ? -1 : 1;
+
+    const right = room.tmp.right.set(-nz, 0, nx);
+    const px = dims.cx + wd.x * t;
+    const pz = dims.cz + wd.z * t;
+
+    const yLo = dims.floorY + dims.wallH * 0.30 + hh;
+    const yHi = dims.floorY + dims.wallH * 0.88 - hh;
+    let py = dims.topY + 24 + wd.y * t;
+    py = Math.max(Math.min(yLo, yHi), Math.min(py, Math.max(yLo, yHi)));
+
+    // Slide the pane along its wall if it would run off the end.
+    const lat = (px - dims.cx) * right.x + (pz - dims.cz) * right.z;
+    const latMax = Math.max(0, (nx !== 0 ? dims.halfZ : dims.halfX) - hw - 30);
+    const shift = Math.max(-latMax, Math.min(lat, latMax)) - lat;
+
+    u.uWinPos.value.set(px + right.x * shift, py, pz + right.z * shift);
+    u.uWinNormal.value.set(nx, 0, nz);
+    u.uWinRight.value.copy(right);
+    u.uWinUp.value.set(0, 1, 0);
+    u.uWinHalf.value.set(hw, hh);
+
+    // Hide any wall unit that would be standing where the window is.
+    for (let i = 0; i < room.props.length; i++) {
+      const mesh = room.props[i];
+      if (!mesh.userData.mgFits) continue;
+      const dx = mesh.position.x - u.uWinPos.value.x;
+      const dz = mesh.position.z - u.uWinPos.value.z;
+      const nd = Math.abs(dx * nx + dz * nz);
+      const side = Math.abs(dx * right.x + dz * right.z);
+      const top = mesh.position.y + mesh.scale.y * 0.5;
+      const bottom = mesh.position.y - mesh.scale.y * 0.5;
+      const clash =
+        nd < 300 &&
+        side < hw + Math.max(mesh.scale.x, mesh.scale.z) * 0.5 &&
+        top > py - hh &&
+        bottom < py + hh;
+      mesh.visible = !clash;
+    }
+  }
+
+  _disposeRoom() {
+    const room = this.room;
+    if (!room) return;
+    room.plane.dispose();
+    room.box.dispose();
+    room.material.dispose();
+    room.propMaterial.dispose();
+    room.group.parent?.remove(room.group);
+    this.room = null;
+    this._roomSig = null;
+  }
+
   /* ---- public API -------------------------------------------------------- */
 
   /**
@@ -708,6 +1314,33 @@ export class Sky {
     if (this.shafts) this.shafts.group.visible = tier !== 'low' && this.shafts.material.uniforms.uStrength.value > 0.001;
   }
 
+  /**
+   * Tuning handles for the built room, so its levels can be moved from a
+   * console or a tuning panel without touching a shader.
+   *
+   * @param {{enabled?: boolean, floorDrop?: number, tone?: number,
+   *          floorTone?: number, propTone?: number, ambient?: number,
+   *          key?: number, pool?: number, tableShade?: number,
+   *          window?: number}} opts
+   */
+  setRoom(opts = {}) {
+    if (opts.enabled != null) this.roomEnabled = !!opts.enabled;
+    if (Number.isFinite(opts.floorDrop)) this.floorDrop = opts.floorDrop;
+    const u = this.room && this.room.uniforms;
+    if (u) {
+      if (Number.isFinite(opts.tone)) u.uRoomTone.value = opts.tone;
+      if (Number.isFinite(opts.floorTone)) u.uFloorTone.value = opts.floorTone;
+      if (Number.isFinite(opts.propTone)) u.uPropTone.value = opts.propTone;
+      if (Number.isFinite(opts.ambient)) u.uRoomAmb.value = opts.ambient;
+      if (Number.isFinite(opts.key)) u.uRoomKey.value = opts.key;
+      if (Number.isFinite(opts.pool)) u.uWinPool.value = opts.pool;
+      if (Number.isFinite(opts.tableShade)) u.uTableShade.value = opts.tableShade;
+      if (Number.isFinite(opts.window)) u.uRoomWindow.value = opts.window;
+    }
+    this._roomSig = null;   // force a refit on the next update
+    return this;
+  }
+
   setDustDensity(scale) {
     if (!this.dust) return;
     const base = (this.params.dust && this.params.dust.opacity) || 0.5;
@@ -733,6 +1366,9 @@ export class Sky {
         this._target = null;
       }
     }
+
+    this._fitRoom(ctx);
+    this._updateRoomWindow();
 
     const camera = ctx.camera;
     if (camera && this.backdrop) {
@@ -778,6 +1414,7 @@ export class Sky {
   onResize() {}
 
   dispose() {
+    this._disposeRoom();
     if (this.backdrop) {
       this.backdrop.geometry.dispose();
       this.backdrop.material.dispose();
