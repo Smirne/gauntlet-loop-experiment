@@ -37,7 +37,7 @@ highlight. Should be near-neutral grey with anisotropic streaks and roughness ~0
 dark warm brown. The grain, plank seams and ray fleck are otherwise excellent — this is a
 palette bug in the knot pass only.
 
-## D17 — The table floats: a 3.6 u top 250 u above the floor, with no legs — MAJOR — OPEN
+## D17 — The table floats: a 3.6 u top 250 u above the floor, with no legs — MAJOR — FIXED
 `world/TrackBuilder.js` [A5] + `render/Sky.js` [A4]. An integration seam between two agents in
 the same wave, each of whom picked a defensible number in isolation.
 
@@ -63,7 +63,23 @@ table, macro 9 u, and the establishing shot at ~350 u pitched 50° has its frame
 horizontal, so there are no upward sightlines in it at all. Confirmed in `shots/*-r7.png`.
 Any low or side camera would expose it immediately.
 
-Fixing it properly means legs, and legs mean deciding whose file owns them.
+**Fixed.** One scale wins, and it has to be the stretched one, because the room and the
+playfield are both already in it. The board went 3.4 -> 10.0 u against the 250 u drop, which is
+1:25 — the proportion of a table you would recognise. `TABLE_PROFILE` had to become FRACTIONS
+of board thickness at the same time: it was authored in absolute units against a 3.4 u board,
+so thickening alone left the bullnose rolling over in the first third and then dropping
+straight, deforming the moulding instead of scaling it.
+
+Four tapered legs now run from under the apron to the floor. `TrackBuilder._tableFloorDrop()`
+resolves the drop the same way Sky does, from the same source in the same order
+(`track.def.tableHeight`, else the shared default), so the two cannot disagree without a
+definition saying so explicitly.
+
+Verified from a camera deliberately placed BELOW the tabletop looking along it, which is the
+angle no shipped camera uses and the only one that could ever have caught this. The first pass
+also got the legs wrong in exactly the same way as the original defect — 7.4 u against a 250 u
+drop is 1:34, and the frame showed four wires holding up a plank. Sized against the drop rather
+than picked in absolute units, they are now 20 u, about a twelfth of the height.
 
 ## D12 — There is no room. The table runs to the horizon — FIXED
 `render/Sky.js` [A4] + `world/Track.js` [A5]. `shots/diag-table-edge.png` looks across the

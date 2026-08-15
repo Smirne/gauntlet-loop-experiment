@@ -95,8 +95,38 @@ const GROUND_N = 129;          // ground grid resolution. The rim samples its
                                // what lets the two meshes weld without a crack.
 const TABLE_MARGIN = 58;       // bare surface beyond the outermost thing on it
 const TABLE_PROP_ALLOW = 22;   // footprint allowance around a hand-placed prop
-const TABLE_THICK = 3.4;       // 34 mm board — a real kitchen tabletop
+// D17. This was 3.4 — "34 mm board", literally correct at 1 u = 1 cm, and
+// wrong here, because this project does not draw its table at 1 u = 1 cm.
+// The playfield is ~460 x 340 u with 9 u cars standing on it: a table roughly
+// 3.3x a real one relative to the toys, which is a deliberate part of the
+// premise. render/Sky.js builds the room in that same stretched space and puts
+// the floor 250 u down. The two were written in one wave by two agents who
+// never compared numbers, and the result was a 3.4 u board floating 250 u up
+// on nothing: 1:73 thickness-to-height where a real table is about 1:25.
+//
+// One scale wins, and it has to be the stretched one, because the room and the
+// playfield are both already in it. 10 u of board against a 250 u height is
+// 1:25 — a table you would recognise the proportions of.
+const TABLE_THICK = 10.0;      // board depth, in the playfield's own scale
 const TABLE_LIP_QUADS = 3;     // profile quads carrying the worn-lip material
+
+/* -------------------------------------------------------------------- legs */
+// A tabletop with no legs is only invisible while every camera looks down,
+// which is true of all three today and is not a property worth depending on.
+//
+// Sky owns the floor and is the authority on how far down it is; this file
+// asks and then reaches it. `_tableFloorDrop` resolves the same way Sky does
+// (track.def.tableHeight, else the shared default) so the two cannot disagree
+// without the definition saying so explicitly.
+const LEG_DROP_DEFAULT = 250;  // matches ROOM.floorDrop in render/Sky.js
+const LEG_INSET = 26;          // from the tabletop corner, along both axes
+// Sized against the DROP, not picked in absolute units — which is how D17
+// happened in the first place. A real table leg is roughly a twelfth of its
+// height; the first pass here used 7.4 against a 250 drop, i.e. 1:34, and a
+// low camera showed four wires holding up a plank.
+const LEG_TOP = 20.0;          // square section under the apron
+const LEG_FOOT = 14.0;         // tapered toward the floor
+const LEG_SINK = 1.5;          // pushed into the floor so no gap can show
 
 // Which themes stand on furniture. A lawn and a bedroom floor have no edge to
 // find — they run to a fence or a skirting board, which is the room's business,
@@ -114,17 +144,22 @@ const TABLE_EDGE_SURFACE = { kitchen: 'oak', workbench: 'pine', pool: 'varnished
 // at a third of the board's depth, tucks back under, and finishes with a hard
 // arris at the underside — which is the fold that catches the light and tells
 // you how thick the board is.
+// Expressed as FRACTIONS OF BOARD THICKNESS, not in world units. It was
+// authored in absolute units against a 3.4 u board, so thickening the board
+// left the bullnose rolling over in the first third and then dropping straight
+// — the moulding deformed instead of scaling. Fractions keep the shape when
+// the thickness changes, which it just did.
 const TABLE_PROFILE = [
-  { o: 0.00, d: 0.00 },
-  { o: 0.62, d: -0.07 },
-  { o: 1.06, d: -0.44 },
-  { o: 1.25, d: -1.05 },
-  { o: 1.14, d: -1.72 },
-  { o: 0.72, d: -2.52 },
-  { o: 0.30, d: -3.10 },
-  { o: 0.10, d: -TABLE_THICK, hard: true },
-  { o: -1.2, d: -TABLE_THICK },
-];
+  { o: 0.000, d: 0.000 },
+  { o: 0.182, d: -0.021 },
+  { o: 0.312, d: -0.129 },
+  { o: 0.368, d: -0.309 },
+  { o: 0.335, d: -0.506 },
+  { o: 0.212, d: -0.741 },
+  { o: 0.088, d: -0.912 },
+  { o: 0.029, d: -1.000, hard: true },
+  { o: -0.353, d: -1.000 },
+].map((p) => ({ o: p.o * TABLE_THICK, d: p.d * TABLE_THICK, hard: p.hard }));
 
 /* ------------------------------------------------------------ module scratch */
 
@@ -889,6 +924,7 @@ export class TrackBuilder {
 
     this.stage('ground', () => this.buildGround());
     this.stage('tableEdge', () => this.buildTableEdge());
+    this.stage('tableLegs', () => this.buildTableLegs());
     this.stage('road', () => this.buildRoad());
     this.stage('kerbs', () => this.buildKerbs());
     this.stage('markings', () => this.buildMarkings());
@@ -1390,6 +1426,77 @@ export class TrackBuilder {
    * exactly on the ground mesh's boundary vertices, so the join is welded rather
    * than merely close.
    */
+  /**
+   * How far the floor is below the tabletop (D17).
+   *
+   * Resolved exactly the way render/Sky.js resolves it, from the same source in
+   * the same order, so the legs land on the floor rather than near it. If a
+   * track definition sets `tableHeight`, both read that number; otherwise both
+   * take their shared default. This is the reconciliation the room agent asked
+   * for when it wrote "table height is a guess the other agent must match".
+   */
+  _tableFloorDrop() {
+    const h = this.track?.def?.tableHeight;
+    return Number.isFinite(h) && h > 0 ? h : LEG_DROP_DEFAULT;
+  }
+
+  /**
+   * Four tapered legs from under the apron down to the room floor.
+   *
+   * Deliberately plain: they are seen edge-on, far from any camera the game
+   * uses today, and against a floor that is itself a flat analytic shade. A
+   * square section with a taper reads as furniture from any angle that will
+   * ever see them, and costs four boxes.
+   */
+  buildTableLegs() {
+    const rect = this.tableRect();
+    if (!rect.edged) return;
+
+    const drop = this._tableFloorDrop();
+    const height = drop - TABLE_THICK + LEG_SINK;
+    if (!(height > 0)) return;
+
+    const mats = this.tableEdgeMaterials();
+    const material = Array.isArray(mats) ? mats[mats.length - 1] : mats;
+    if (!material) return;
+
+    const inset = LEG_INSET;
+    const corners = [
+      [rect.x0 + inset, rect.z0 + inset],
+      [rect.x1 - inset, rect.z0 + inset],
+      [rect.x1 - inset, rect.z1 - inset],
+      [rect.x0 + inset, rect.z1 - inset],
+    ];
+
+    // One unit box, scaled per leg, tapered by moving the bottom four corners
+    // inward. BoxGeometry's vertex order is stable, so this is a direct edit of
+    // the position attribute rather than a per-leg geometry build.
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const pos = geo.attributes.position;
+    const taper = LEG_FOOT / LEG_TOP;
+    for (let i = 0; i < pos.count; i++) {
+      if (pos.getY(i) < 0) {
+        pos.setX(i, pos.getX(i) * taper);
+        pos.setZ(i, pos.getZ(i) * taper);
+      }
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+
+    for (let i = 0; i < corners.length; i++) {
+      const [x, z] = corners[i];
+      const leg = new THREE.Mesh(geo, material);
+      leg.name = `track:tableLeg${i}`;
+      leg.scale.set(LEG_TOP, height, LEG_TOP);
+      leg.position.set(x, -TABLE_THICK - height * 0.5 + LEG_SINK * 0.0, z);
+      leg.castShadow = false;      // far outside the shadow cascade
+      leg.receiveShadow = false;
+      leg.matrixAutoUpdate = false;
+      leg.updateMatrix();
+      this.add(leg);
+    }
+  }
+
   buildTableEdge() {
     if (!this.tableRect().edged) return;
 
