@@ -405,3 +405,212 @@ Wave 2 is queued and well-briefed: kill the wedge (execution, not investigation 
   - `Workflow: export const meta = { name: 'micro-gauntlet-wave-2', description: 'Four independent source-level fixes: skid ribbon, macro focus, surfaces, director', phases: [`
 
 **Claude:** Wave 2 is running — four agents on disjoint files. I'll report when they land and verify each visually.
+
+**You:** <task-notification>
+<task-id>we6rq9n75</task-id>
+<tool-use-id>toolu_014k32EmxgsQzesL5cd8w7FA</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/tasks/we6rq9n75.output</output-file>
+<status>completed</status>
+<summary>Dynamic workflow "Four independent source-level fixes: skid ribbon, macro focus, surfaces, director" completed</summary>
+<result>[{"assignment":"D16 — the skid ribbon paints a hard-edged near-black wedge across the table. Fix confined to src/fx/Trails.js; also identify the second, narrower contributor that survives hiding both ribbons.","verdict":"fixed","filesChanged":["/Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/fx/Trails.js"],"mechanism":"The diagnosis in the brief is correct and I confirmed it by reading. SKID_FRAG wrote `gl_FragColor = vec4(col, a)` with `a = tex.a * vFade * uOpacity`, NormalBlending, and `col` derived from `_tintFor()` — which resolved `rec.skidTint ?? 0x1a1a1a` (linear 0.0103) floored only at 0.012. Normal blending is `col*a + dst*(1-a)`, so at uOpacity 0.92 (the `ownsGroundMarks` branch, set both at init and again in `takeGroundMarks()`) a full-strength mark reached a ≈ 0.7-0.85 and the deposit simply *became* the pixel. That is a replacement, not a darkening, and it is why round 2 measured identical RGB over wood and over concrete. Geometrically it is the racing line, so in perspective it reads as a hard-edged wedge — consistent with a raycast through it still hitting track:ground at the same distance as clean table.\n\nTwo aggravating factors I found on top of that, both in the same shader:\n\n1. `vTint` was being written into the frame as if it were a *radiance*, but it is an *albedo* from the surface library. The ribbon is a raw ShaderMaterial with no lighting, so an albedo written directly lands roughly 2.2x too bright/wrong relative to the identical deposit world/Decals.js draws through a lit MeshStandardMaterial, and it does not track the lighting preset at all. For the pale tints (spilledMilk 0xd8d4c4, chalk) the old code was on course to write a *glowing* streak brighter than the table.\n\n2. The \"just laid\" sheen keyed off `pow(vFade, 3.0)`. `vFade` is normalised by `uLife`, and `uLife` is 240 s in the owning branch — so the highlight the comment claims lasts \"the first fraction of a second\" actually sat on every mark for the whole race. The comment was lying in exactly the branch that was active.\n\nI did NOT take the suggested MultiplyBlending route, deliberately, for two reasons I verified rather than assumed:\n- The blend algebra in the brief is wrong for r180. `vendor/three/build/three.module.js:9487` shows MultiplyBlending is `blendFuncSeparate(DST_COLOR, ONE_MINUS_SRC_ALPHA, ZERO, ONE)` — i.e. `dst*(src + 1 - a)`, not `dst*src` — and line 9513 shows the non-premultiplied branch does not set a blend func at all: it logs an error and leaves the *previous draw's* blend func in place. So it only works with `premultipliedAlpha: true`, and misusing it corrupts whatever drew before.\n- More importantly, a multiply has no fixed point above zero: N overlapping quads darken by gain^N. This ribbon stacks by construction — a rear wheel follows the front wheel's path 0.07 s behind, and a train of cars can cross the same patch several times inside one ribbon lifetime (and *certainly* inside the 240 s owning lifetime). world/Decals.js:24-34 documents having already tried multiply here and backed out for precisely this reason. Repeating it would have traded a wedge for a black apex.","changes":"All in src/fx/Trails.js.\n\nSKID_FRAG — the alpha term is now a capped COVERAGE, not an opacity: `cover = min(across * vFade * uOpacity, uMaxCover)`, with a new `uMaxCover` uniform (0.62 when this layer owns the ground marks, 0.34 when it is an accent over Decals). The cap is the safety argument: the road always keeps at least (1 - cap) of itself, so a single mark can never stand in for the surface, and stacked marks converge on the deposit colour instead of on black. Structurally this is the same floored-and-capped alpha deposit world/Decals.js settled on, which is also the cohesive choice.\n\n`_tintFor()` now returns radiance, not albedo: the surface skidTint is clamped into the band a real deposit could have (DEPOSIT_MIN 0.030 / DEPOSIT_MAX 0.55 linear, the same band Decals clamps to) and then multiplied by DEPOSIT_IRRADIANCE = 0.46. That factor is derived, not tuned: Lighting.js's own measurement note puts lit oak at luma ~114/255 (~0.13 linear pre-tone-map) against an oak albedo near 0.28. The floor is what makes it impossible to reach black; the ceiling is what stops milk/chalk becoming an unlit, unshadowable light source. The old 0.012 hand-floor is gone, replaced by this band. In the shader the tread modulation was narrowed from `0.55 + 0.45*tex.r` to `0.72 + 0.28*tex.r` so texture detail cannot undercut the floor by more than 28%.\n\nThe sheen is kept and is still genuinely additive light — that behaviour survives intact precisely because I stayed on alpha blending rather than moving to multiply. It is now bounded by the coverage cap (max contribution cover*0.085, which lands the wet centreline at roughly the unmarked road's level rather than above it), and it keys off a new `vAge` varying (absolute seconds since the quad was laid, cubed over 1.6 s) instead of `vFade`, so the comment about \"the first fraction of a second\" is now true in both the 1.5 s and the 240 s configuration. `vAge` is written in RIBBON_VERT before the collapse branch and declared in all three fragment shaders (unused in SPEED_FRAG/HAZE_FRAG) so nothing can link ambiguously.\n\nTuning: `skidOpacity` 0.48 -&gt; 0.40, new `skidOpacityOwned` 0.72 replacing the two hardcoded 0.92s (init and `takeGroundMarks()`). Both are set so a full-strength mark lands just under its cap — the cap is a rail, not the operating point, or every mark would sit at one flat value and read as a painted band again.\n\nSKID_LIFT 0.055 -&gt; 0.075, because Decals lifts its own marks 0.06 and the header claims this ribbon sits \"a hair above the permanent one\" — polygonOffset was carrying the whole separation on its own.\n\nExpected numbers on lit oak (road ~0.13 linear pre-tone-map): owning mode, a full-strength mark lands at ~45% of the underlying luminance with 38% of the wood grain still showing through; accent mode ~70%. Infinite stacking asymptotes at ~11% of the road, dark rubber rather than a hole. Over concrete the same mark lands at a similar *ratio* but a clearly different absolute RGB, which is the signature the round-2 review was looking for.\n\nSECOND CONTRIBUTOR — I do not believe it is in this file, and I did not edit anything to chase it. The other two ribbons here are both AdditiveBlending (`fx:speedRibbon`, `fx:heatHaze`) with positive tints; additive cannot darken. My candidate is `world/Decals.js`, mesh `decals:tyreMarks`, renderOrder 6. It is the same contact-path geometry, one tyre wide (TYRE_HALF 0.46 vs this file's 0.62, hence *narrower*), MARK_LIFE 30 s so it blankets the racing line, and it is a separate mesh in a separate module so it survives hiding both Trails ribbons. Concretely: its comment at Decals.js:100-105 claims MARK_MAX_COVER 0.88 lands \"at roughly half the underlying luminance\", but with the deposit albedo floored at MARK_FLOOR_R 0.032 against an oak albedo near 0.28 the arithmetic gives ~22% of the underlying luminance, not ~50%. Whoever owns Decals should either bring MARK_MAX_COVER down to ~0.55 or raise the deposit floor to ~0.12 albedo. That is a report, not a change — the file is not mine.","unverified":"I could not run anything, per the assignment. Specifically unverified:\n\n- Whether the shaders compile. I checked the module parses as ESM (`node --input-type=module --check`) and that no backtick appears inside any /* glsl */ literal, and I kept every new construct to plain GLSL ES 1.00 that three transpiles the same way as the existing code. The one genuinely new thing is the `vAge` varying; I declared it in all three fragment shaders rather than only the one that uses it so the link cannot be ambiguous.\n- Which branch is live. `ownsGroundMarks` is `!decals || decals.ownsTyreMarks === false || !decals.markMesh`. main.js:198 builds Decals before Trails and Decals sets `ow
+... (truncated 28264 chars, full result in /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/tasks/we6rq9n75.output)</result>
+<diagnostics>Per-agent results: /Users/michele.giacobazzi/.claude/projects/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/subagents/workflows/wf_8968a7cc-77e/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.
+If the result above is empty or unexpected, Read this file BEFORE diagnosing — do not assume agents returned non-empty results.
+To re-run with edited post-processing: Workflow({scriptPath: '/Users/michele.giacobazzi/.claude/projects/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/workflows/scripts/micro-gauntlet-wave-2-wf_8968a7cc-77e.js', resumeFromRunId: 'wf_8968a7cc-77e'}) — agents whose (prompt, opts) are unchanged replay from cache.</diagnostics>
+<usage><agent_count>4</agent_count><agents_done>4</agents_done><agents_error>0</agents_error><agents_skipped>0</agents_skipped><agents_empty_result>0</agents_empty_result><subagent_tokens>597186</subagent_tokens><tool_uses>173</tool_uses><duration_ms>1288278</duration_ms></usage>
+</task-notification>
+
+**Claude:** All four landed. Let me read the other three reports, then verify everything in the browser.
+  - `Bash: python3 - <<'PY' import json, pathlib p = pathlib.Path("/Users/michele.giacobazzi/.claude/projects/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-`
+  - `Bash: python3 - <<'PY' import json, pathlib p = pathlib.Path("/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-`
+  - `Bash: python3 - <<'PY' import json, pathlib, re p = pathlib.Path("/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--cla`
+
+**Claude:** The output file isn't cleanly parseable — the diff is the ground truth anyway:
+  - `Bash: git status --short; echo "=== DIFFSTAT ==="; git diff --stat`
+  - `Bash: sed -n '9480,9520p' vendor/three/build/three.module.js`
+
+**Claude:** The agent was right to push back — r180's `MultiplyBlending` is `blendFuncSeparate(DST_COLOR, ONE_MINUS_SRC_ALPHA, …)`, and the non-premultiplied branch just logs an error and leaves the previous draw's blend state. My brief's algebra was wrong; it caught that with a citation. Now let me verify all four actually run.
+  - `mcp__Claude_Browser__preview_start: micro-gauntlet`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Clean boot, zero failures. Reading the console **unfiltered** — the documented trap here — then the frames:
+  - `mcp__Claude_Browser__read_console_messages: seed`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-1-gameplay-r4.png`
+
+**Claude:** The wedge is unchanged — so my attribution was wrong. My earlier isolation changed two variables at once (shadows *and* trails), which I shouldn't have trusted. Let me test the one thing that actually distinguishes the capture from the live frame: the resize.
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** The wedge isn't in the framebuffer at *either* size — it's bright wood at both. So it's introduced after rendering, between the render and the PNG. Checking the one setting that governs that:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** `preserveDrawingBuffer` is on — but `alpha: true`. I only read RGB and ignored the channel that actually matters:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Alpha is 255 across the whole row and RGB is wood — yet the PNG has black there. I'm assuming coordinates instead of measuring them. Let me find the black region in the actual file:
+  - `Bash: python3 -c "import PIL; print('PIL', PIL.__version__)" 2>&1 | head -2`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 python3 - <<'PY' import zlib, struc`
+
+**Claude:** I've been probing the wrong camera — `captureSet` disables the director and moves the camera for shots 2–4, so every pixel probe I ran was of the establishing view, not the gameplay frame the wedge appears in. Redoing it properly, camera untouched:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 python3 - <<'PY' import zlib, struc`
+
+**Claude:** Wedge colour is RGB(31,36,55) — dark navy, not black. Now raycasting that exact NDC on the untouched gameplay camera:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Same camera, same frame: live reads wood, PNG reads navy. Replicating the capture path exactly but reading pixels instead of encoding, to find which step introduces it:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Every step of the capture path reads wood at 1920×1080. Let me compare the encoded PNG against the framebuffer directly, in-page, removing the server and my decoder from the loop:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** The camera drifts between my calls, so every probe has been a different frame. Doing the whole comparison inside a single call, engine frozen, so all three views are the same instant:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Framebuffer and encoded PNG agree exactly at all six points — including the navy at (900,950). The capture pipeline is faithful; my earlier "not in the framebuffer" reading was pure camera drift between calls. Now raycasting that exact pixel, frozen:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Perfect correlation: every navy pixel has `fx:speedRibbon` as its first hit; the wood pixel has no ribbon in front of it. Now the clean single-variable isolation, frozen:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Decisive, single variable, frozen frame:
+
+| pixel | base | speedRibbon hidden | heatHaze hidden |
+|---|---|---|---|
+| 900,950 | **30,35,55** | 148,91,73 ✅ | 31,36,55 |
+| 700,1000 | **30,35,54** | 143,81,63 ✅ | 30,35,54 |
+| 300,900 | 176,114,59 | 177,116,62 | 177,117,64 |
+
+It's `fx:speedRibbon` — **not** the skid ribbon I briefed the agent to fix. My original isolation hid both ribbons at once and I pinned it on skid because the round-2 note fit. I dismissed the speed ribbon precisely because it's additive.
+  - `Bash: sed -n '294,335p' src/fx/Trails.js; echo "=== premultiplied additive in r180 ==="; sed -n '9470,9482p' vendor/three/build/three.module.js`
+
+**Claude:** API Error: Unable to connect to API (ENOTFOUND)
+
+**You:** Try again
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -n "SPEED_FRAG\|premultipliedA`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/fx/Trails.js`
+
+**Claude:** Found it. Line 388 states the assumption outright:
+
+```glsl
+// Additive blending is (SrcAlpha, One), so the alpha channel already scales
+// the contribution.
+gl_FragColor = vec4(col, a);
+```
+
+That's false for this renderer. `Renderer.js:180` sets `premultipliedAlpha: true`, and r180's premultiplied branch uses `gl.blendFunc(ONE, ONE)` — so RGB is added unscaled **and alpha accumulates too**. Let me confirm alpha is the mechanism rather than infer it, since D9's note in this same area was explicitly inference that was never measured:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Alpha accumulation isn't it — disabling it changed nothing. Good thing I tested rather than shipped the inference. Narrowing to colour vs depth:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** `colorWrite = false` — the material writes no colour at all — and the wedge **remains**. But `visible = false` removes it. The difference is passes that don't use the object's own material. Testing the obvious candidate:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Not shadows either — `castShadow` is already false on all three. Something renders this mesh with an override material, which is why `colorWrite` on its own material has no effect:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -rn "overrideMaterial" src/ |`
+
+**Claude:** PostFX has an AO pass. Let me bisect the post chain rather than keep guessing at the source:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** **GTAOPass.** Disabling ambient occlusion takes those pixels from (30,36,55) to (142,79,57) and (152,98,84), while the control pixel is untouched. The AO pass renders the scene with an override depth material — which is exactly why `visible=false` killed the wedge but `colorWrite=false` didn't.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '1560,1600p' src/render/Post`
+
+**Claude:** Now I can fix it properly. The AO pass must not treat translucent FX as occluders:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '1600,1625p' src/render/Post`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/render/PostFX.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/render/PostFX.js`
+
+**Claude:** I inserted that method inside `build()`'s body — that's a syntax error. Fixing:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/render/PostFX.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -n "^ notifyCameraCut\|^ _safe`
+
+**Claude:** Now placing it as a proper class method, next to the other private helpers:
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/render/PostFX.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/render/PostFX.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 node --input-type=module --check <`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Fixed with AO still on: those pixels are now (148,91,74) and (149,92,76) — wood, matching the AO-disabled reading. Capturing the set:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-1-gameplay-r5.png`
+
+**Claude:** Wedge gone. Checking the macro shot, which agent B was assigned:
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-3-macro-r5.png`
+
+**Claude:** That's a step change — the "44" roundel, wheel spokes, clearcoat highlight and glazing depth all read now. Checking the establishing shot for the regression agent B was warned about:
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-4-establishing-r5.png`
+
+**Claude:** No regression — the establishing shot is sharper than before, with props reading clearly. Let me glance at the two smaller diffs before committing:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git diff src/textures/ProcTex.js sr`
+
+**Claude:** Both are sound. Director chose "justify, don't implement" with a concrete argument (camera pumping on steering input, and `screenSpan` leaking into the elimination gap). ProcTex found a real D4 cause — scratch direction was `PI/2`, perpendicular to the brush grain the comment claimed it followed. Correcting the D16 record:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/DEFECTS.md`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git add -A && git commit -q -F - <<`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Artifact: /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-`
+
+**Claude:** Wave 2 done, page updated: https://claude.ai/code/artifact/41a6f0af-c1d8-410f-b95a-cc2c96b66666
+
+**The wedge was `GTAOPass`, not the ribbon I told the agent to fix.** Ambient occlusion builds its depth and normal buffers by re-rendering the scene through `scene.overrideMaterial` — and an override *replaces* the material, so a mesh's own `depthWrite: false` and `transparent: true` don't travel with it. Every additive ribbon was written into that G-buffer as opaque geometry, and `fx:speedRibbon` is a wide sheet flying just above the road, so AO read it as an enormous near occluder and shaded everything behind it down to ambient.
+
+I have to correct two things I told you earlier:
+
+- **The skid-ribbon attribution was wrong.** My isolation hid *both* ribbons at once and I pinned it on skid because the round-2 write-up had already described a near-black normal-blended ribbon and the story fit. An agent spent its whole slot rewriting that shader. Its work is a genuine improvement and I kept it — but it moved the wedge not at all, which is what exposed my error.
+- **"It's the capture pipeline, not the framebuffer" was also wrong.** `captureSet` disables the director and moves the camera for shots 2–4, and the sim keeps advancing between tool calls, so every probe I ran was a different camera on a different frame. Freezing the engine and doing the framebuffer read, the `toDataURL` decode and the disk write inside one uninterrupted call showed all three agreeing to the byte. The capture path was always faithful.
+
+What actually settled it: `visible = false` removed the wedge but `material.colorWrite = false` did not. That gap is the whole tell — something draws the mesh without using its material. Alpha accumulation and shadows were both ruled out by measurement, not argument.
+
+The other three agents landed well:
+
+- **The macro camera holds its subject now.** That frame reads the 44 roundel, the wheel spokes, the clearcoat and the glazing depth, and the establishing shot didn't regress.
+- **`brushedAluminium` (D4) had a real cause** — its deep scores ran at `PI/2`, square across the grit octaves the comment claimed they followed. Measured anisotropy 0.78 along-vs-across, i.e. cross-hatched rather than brushed; `dir 0` gives 6.9.
+- **The trails agent pushed back on my brief and was right.** I suggested `MultiplyBlending`; it cited `three.module.js` showing r180 implements that only for premultiplied materials, with the other branch leaving the previous draw's blend func in place. I verified the line.
+
+One thing I'd flag: the surfaces agent changed nothing for **D5** (blue oak knots), so that's either already fixed or still open, and I haven't re-checked it against a frame. It's marked unverified rather than closed.
+
+Committed as `e162966`, nothing pushed.
+
+Wave 3 is the room — D12 and D13 together, which is now the largest single gap between this and the bar, plus the road-vs-table material read. Say go.
+
+**You:** go
+
+**Claude:** Wave 3 — the room. Let me get the briefs right this time; a bad one cost a whole agent slot last wave.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 echo "=== Sky.js backdrop ==="; gre`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '1190,1215p' src/world/Track`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '68,96p' ARCHITECTURE.md; ec`
+
+**Claude:** Structure understood: the backdrop is a procedural sky **sphere**, not room geometry, and the table is a finite ground plane that simply ends. Launching wave 3 — four agents, disjoint files.
+  - `Workflow: export const meta = { name: 'micro-gauntlet-wave-3', description: 'Build the room: backdrop, fog and light, the table as an object, environment richness', phase`
+
+**Claude:** While that runs, let me settle the one item I left unverified — D5, the blue oak knots. Source-only; I won't boot the game while agents are editing the tree.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -n "knot" src/textures/ProcTex`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '1050,1070p' src/textures/Pr`
+
+**Claude:** D5 is already fixed, and the log was stale. [ProcTex.js:1057](src/textures/ProcTex.js:1057) documents the real cause: `kn.phase` was missing, `undefined * 0.1` is NaN, `clamp(NaN,0,1)` is NaN, and storing NaN in a `Uint8Array` writes 0 — so every knot baked as a hard-edged disc of pure black. It was reported as "desaturated blue dots" because a hole in the albedo shows only the environment term. Only albedo was affected, since nothing else reads `phase`. The surfaces agent was right to change nothing.
+
+Wave 3 is running — backdrop, light and fog, the table as an object, and prop composition. I'll verify centrally and report when it lands.
+
+**You:** <task-notification>
+<task-id>wzfpyra5t</task-id>
+<tool-use-id>toolu_01BFnBjabygmCwfiSbYGDh1j</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/tasks/wzfpyra5t.output</output-file>
+<status>completed</status>
+<summary>Dynamic workflow "Build the room: backdrop, fog and light, the table as an object, environment richness" completed</summary>
+<result>[{"assignment":"D13 (\"fog is heavy enough to erase the backdrop\") plus lighting for the miniature illusion — motivated, raking key — in src/render/Lighting.js only.","verdict":"partial","filesChanged":["/Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/render/Lighting.js"],"mechanism":"D13 AS WRITTEN IS NOT A DEFECT, for two independent reasons, and I did not \"fix\" it.\n\n1. Fog cannot touch the backdrop at any density. Sky.js:544 builds MG.Backdrop with `fog: false`, and Sky.js:740 locks the shell to `camera.position` at `camera.far * 0.35` = 1400 u every frame (and re-locks it in lateUpdate). A camera-locked shell has no depth to fog against — fogging it would apply a constant tint, i.e. the same thing as choosing a different backdrop colour. `fog: false` is correct and should stay.\n\n2. On the track it was logged against, the fog is negligible. The live values you probed (density 0.00055, colour ~#d9d0bd) come from kitchen.js:256-257 `ambient`, applied by world/Decals.js:972 `light.setFog(amb.fogColor, amb.fogDensity)` inside `applyTrack()` — which runs AFTER it switches the preset, so the track's numbers, not morning's, are what a race actually renders. FogExp2 = 1 - exp(-(d*k)^2). At 0.00055: 200 u chase sightline = 3% fogged, 264 u near table edge = 2%, 726 u far corner (this file's own measured establishing-shot number) = 15%, 1398 u = 45% — and nothing at 1398 u is fogged anyway, see (1). A 2%-&gt;15% ramp across the establishing shot is atmospheric perspective doing its job, not erasure.\n\nWHAT IS ACTUALLY WRONG IN THAT AREA — three things, all in my file:\n\na) Density is an eraser on the other tracks. workbench asks 0.0016 and bedroom 0.0018; the dusk and nightLamp presets ask 0.0026 and 0.0030. At 0.0018 the establishing shot's far table corner is 82% replaced by fog colour, at 0.0030 a 300 u sightline is already 55% gone. Any room Sky builds in the 700-1200 u band dies there. D13 is real — on the presets and tracks nobody logged it against.\n\nb) The fog colour was a sky colour in every preset (morning 0xd7ddea, a light cool blue) while the thing behind the fogged geometry is the LOWER half of an interior — backdrop horizon 0xb8c3d1 fading to ground 0x38322b. Distant table receded toward a value brighter than the room behind it. That is the join that puts the backdrop at the wrong apparent depth.\n\nc) THE KEY WAS NOT MOTIVATED AT ALL, and this is the biggest finding. No preset ever set `backdrop.windowDir` or `backdrop.sunDir`, so Sky.js:313/322 fell back to DEFAULT_BACKDROP's [-0.62, 0.36, -0.70] for all six presets — elevation 21, azimuth -138.5. Morning's key arrives from azimuth -52. The window the player can see sat 86 degrees round the room from the direction the shadows come from, on every track, in every frame reviewed so far. The same fallback aimed the sun disc (goldenHour 0.55, dusk 0.35) at a direction unrelated to the sun, and fed the IBL cube a bright window on the wrong side of the car.\n\nRAKING: morning's key was 34 degrees. cot(34) * 2.8 u car height = a 4.2 u shadow — under half a car length. That is the \"lighting 3/10\" in one number.","changes":"1. KEY DIRECTION — lowered on the invariant sin(elevation) * intensity, which is the key's contribution to a horizontal surface. Holding that product fixed means the tabletop level, and therefore the depth of every cast shadow measured against it, is unchanged BY CONSTRUCTION — the establishing shot cannot get darker or flatter as a side effect. Verified numerically:\n   morning    34 deg @ 4.30 -&gt; 24 deg @ 5.91  (sin*I 2.4045 -&gt; 2.4040; flank key cos*I 3.565 -&gt; 5.399 = 1.51x; shadow 4.2 u -&gt; 6.3 u = 1.51x)\n   noon       56 @ 4.05 -&gt; 44 @ 4.83          (sin*I 3.358 -&gt; 3.355; shadow 1.9 -&gt; 2.9 u)\n   overcast   46 @ 1.60 -&gt; 38 @ 1.87          (sin*I 1.1509 -&gt; 1.1513; shadow 2.7 -&gt; 3.6 u)\n   goldenHour (14), dusk (11), nightLamp (34, it is moonlight fill) unchanged.\n\n2. MOTIVATION — added `windowDir` and `sunDir` to every preset's backdrop block, built by a new `dirArray(elevation, azimuth)` helper from the preset's own key azimuth, so pane and shadows cannot drift. Window elevation stays a separate number (13-22 deg) because a window is a hole in a wall a table-height camera sees near the horizon, even when the sun through it is higher.\n\n3. BOUNCE / RIM — rim azimuth set to exactly key + 180 on all daylight presets (it was 8-14 deg off), so key / tabletop-bounce / far-wall-rim are one triangle defined by one number. nightLamp's warm bounce moved from azimuth -40 (pointing at nothing) to 52, which is opposite its actual key: the lamp at offset [-118, 205, -92] sits at azimuth -128, elevation 54.\n\n4. FILL — morning's hemi sky colour 0x9dbcf0 (saturated OUTDOOR sky blue, over a table with a ceiling above it) -&gt; 0xa4b3c6, the room's own ceiling colour. Still the cool half of the split, now a colour a wall could be. Left alone on goldenHour, which is the one preset used by an outdoor track (garden).\n\n5. FOG — new exported `FOG_DENSITY_MAX = 0.0008`, derived in a comment from the three measured cameras and the 1400 u shell: at it, a 726 u table corner keeps 71% of its own colour, a 1200 u wall 40%, a 200 u chase sightline 97%. Applied in three places: every preset density brought under it (0.0030 -&gt; 0.0008 worst case), `_applyPreset` clamps, and `setFog()` clamps — so workbench 0.0016 and bedroom 0.0018 are clamped too. Colour is taken from a track exactly as asked; only density is clamped, and the reason is written where a track author will find it. Every preset's fog colour re-derived as its own backdrop horizon lerped ~40% to its own ground and nudged by its haze (morning 0xd7ddea -&gt; 0x92979e).\n\n6. Replaced the `if (!scene.fog) new FogExp2(0xd7ddea, 0.001)` magic pair with the preset's own values.\n\n7. Corrected two comments that were lying. `shadow.intensity`'s doc had the sense INVERTED — three's shader is mix(1, shadow, shadowIntensity), so it is the fraction LOST, not the fraction reaching — and quoted a \"0.10-0.18 leak\" matching none of the six values (which are 0.80-0.95, i.e. a 5-20% leak). And the claim that 11-14 degrees \"throws a shadow three to five car lengths long\" is out by ~3x: cot(11)*2.8 = 14.4 u = 1.6 car lengths.\n\nCONTACT SHADOWS UNTOUCHED. No change to the blob pool, the two-lobe shader, the sink guard, the tilt-to-surface path or `_leanScale` semantics. The only knock-on is that a lower key changes airborne lean scale 0.816 -&gt; 0.88 (cot is clamped at 1.6), which affects airborne blobs only; grounded blobs have h = 0 and no lean.\n\nVERIFIED WITHOUT RUNNING: full-file parse (node vm.Script) OK; the preset table evaluated standalone and every key/window/sun angle and fog percentage above read back from the actual literals; the two /* glsl */ templates were not touched, so the backtick trap is not in play; Sky's `mergeBackdrop` is Object.assign over DEFAULT_BACKDROP, so the new windowDir/sunDir keys pass straight through to both makeEnvUniforms and setEnvUniforms.","unverified":"I did not start a server, drive the browser or capture anything, per the assignment. Nothing here is confirmed in a frame. Specifically unverified:\n\n- Whether 24 degrees on morning is too low once real props cast: a 40 u cereal box now throws a 90 u shadow. That is the point, but it is a lot of shadow on a 460 u table.\n- Whether moving the sun disc onto the key azimuth puts it in frame. goldenHour (0.55) and dusk (0.35) draw a ~2 deg disc at 26x intensity. The establishing camera pitches 50 deg down with an 19 deg half-fov, so its frame spans roughly -31 to -69 deg elevation and sees no backdrop at all — the disc cannot appear there. A macro or low chase shot looking down the key azimuth could see it, and that is a bloom risk I could not measure.\n- Whether the IBL got brighter in a way that matters. The window and the sun now share a direc
+... (truncated 3592 chars, full result in /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/tasks/wzfpyra5t.output)</result>
+<diagnostics>Per-agent results: /Users/michele.giacobazzi/.claude/projects/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/subagents/workflows/wf_40929f97-d5f/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.
+If the result above is empty or unexpected, Read this file BEFORE diagnosing — do not assume agents returned non-empty results.
+To re-run with edited post-processing: Workflow({scriptPath: '/Users/michele.giacobazzi/.claude/projects/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/workflows/scripts/micro-gauntlet-wave-3-wf_40929f97-d5f.js', resumeFromRunId: 'wf_40929f97-d5f'}) — agents whose (prompt, opts) are unchanged replay from cache.</diagnostics>
+<failures>[C-table] failed: API Error: Connection closed mid-response. The response above may be incomplete.
+parallel[0] failed: agent stalled on all 6 attempts (no progress for 180000ms each)
+parallel[3] failed: agent stalled on all 6 attempts (no progress for 180000ms each)</failures>
+<usage><agent_count>4</agent_count><agents_done>1</agents_done><agents_error>3</agents_error><agents_skipped>0</agents_skipped><agents_empty_result>0</agents_empty_result><subagent_tokens>782613</subagent_tokens><tool_uses>142</tool_uses><duration_ms>7473727</duration_ms></usage>
+</task-notification>
+
+**You:** [Request interrupted by user]

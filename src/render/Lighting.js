@@ -24,6 +24,31 @@
 // Env lighting is procedural: the Sky module's direction->radiance function is
 // rendered into a cube and run through PMREMGenerator. No HDR files, and the
 // reflections in the clearcoat match the backdrop the player can see.
+//
+// FOG AND THE BACKDROP — the contract, because it is split across two modules.
+//
+// `scene.fog` is owned here. The backdrop shell is owned by Sky, is locked to
+// the camera at `camera.far * 0.35` = 1400 u, and its material sets
+// `fog: false`. Those two facts together are the whole answer to "is the fog
+// erasing the backdrop": it cannot touch it, at any density, at any distance.
+// A camera-locked shell has no depth to fog *against* — fogging it would only
+// apply a constant tint, which is the same thing as choosing a different
+// backdrop colour, so `fog: false` is correct and should stay.
+//
+// What that leaves is a join to get right. Real geometry — the table, the room
+// Sky builds in front of the shell — fades toward `scene.fog.color` as it
+// recedes, and then the shell takes over. If the two disagree the eye reads a
+// seam and puts the backdrop at the wrong apparent depth however good it looks
+// on its own. So:
+//
+//   1. every preset's `fog.color` is the *lower* half of that preset's own
+//      backdrop — its horizon lerped ~40% toward its ground, nudged by its haze
+//      — not a sky colour. Indoors, distance recedes into a dim wall and floor.
+//   2. every preset's `fog.density` is under FOG_DENSITY_MAX, so geometry at
+//      room distances is shaded by fog and not replaced by it.
+//
+// If Sky's room lands much closer or much further than the 700-1200 u band those
+// numbers assume, this is the knob to move, and it should move here.
 
 import * as THREE from 'three';
 import * as RendererModule from './Renderer.js';
@@ -42,6 +67,51 @@ function baseExposure() {
 
 const DEG = Math.PI / 180;
 
+/**
+ * Unit direction *toward* a source, as the `[x, y, z]` array a backdrop block
+ * wants. Same convention as `dirFromAngles`: elevation degrees above the XZ
+ * plane, azimuth degrees with 0 = +Z increasing toward +X.
+ *
+ * Sky's `uWindowDir` and `uSunToward` are both "direction the eye looks to see
+ * the source", which is the same vector as `Lighting.sunDir`, so a preset can
+ * build its window and its key from one pair of angles and they cannot drift.
+ */
+function dirArray(elevationDeg, azimuthDeg) {
+  const e = elevationDeg * DEG;
+  const a = azimuthDeg * DEG;
+  const c = Math.cos(e);
+  return [Math.sin(a) * c, Math.sin(e), Math.cos(a) * c];
+}
+
+/**
+ * Ceiling on `scene.fog.density`, applied to every preset here and to any track
+ * that hands its own value to `setFog()`.
+ *
+ * FogExp2 mixes a fragment toward the fog colour by `1 - exp( -( d * k )^2 )`.
+ * The distances that matter are measured, not guessed:
+ *
+ *   - chase camera, ~26 u above the table: nothing in shot past ~200 u.
+ *   - establishing, ~350 u up looking down at 50 degrees: the near table edge
+ *     is 264 u of view depth, the far corner 726.
+ *   - the backdrop shell is camera-locked at `camera.far * 0.35` = 1400 u, and
+ *     any room geometry lands between the table edge and there.
+ *
+ * At 0.0008 a 726 u table corner keeps 71% of its own colour, a 1200 u wall
+ * 40%, and a 200 u chase sightline 97%. That is atmospheric perspective. Past
+ * it the room stops being geometry and becomes a flat plate of fog colour,
+ * which is the failure D13 names — real on the two presets that were running
+ * 0.0026-0.0030 and on the tracks that asked for 0.0016-0.0018, and not real
+ * at all on kitchen, which asks for 0.00055 and is nowhere near this.
+ *
+ * It is a ceiling, not a target. Nothing is pushed up to meet it.
+ */
+export const FOG_DENSITY_MAX = 0.0008;
+
+function clampFogDensity(v) {
+  if (!Number.isFinite(v) || v < 0) return 0;
+  return v > FOG_DENSITY_MAX ? FOG_DENSITY_MAX : v;
+}
+
 /* ========================================================================== */
 /* Presets                                                                    */
 /* ========================================================================== */
@@ -54,11 +124,29 @@ const DEG = Math.PI / 180;
  * Every preset is written as a deliberate lighting setup rather than a bag of
  * numbers, and each carries the same four tonal decisions:
  *
- *  - **key elevation.** Nothing sits above 56 degrees. A key overhead lights the
+ *  - **key elevation.** Nothing sits above 44 degrees. A key overhead lights the
  *    top of a die-cast car and nothing else: no long shadow to read scale
  *    against, no modelling on the flanks, no separation from the table. The
- *    daylight presets rake between 34 and 56 degrees; the low presets go to
- *    11-14, which throws a shadow three to five car lengths long.
+ *    daylight presets rake between 24 and 44 degrees; the low presets go to
+ *    11-14.
+ *
+ *    Measure the shadow rather than asserting it. A resting car is 2.8 u tall,
+ *    so its cast shadow runs cot(elevation) * 2.8 u across the table: 4.2 u at
+ *    the old morning 34 degrees, which is under half a car length and is why
+ *    the frames read flat however carefully the fill was balanced; 6.3 u at 24;
+ *    11.2 u at goldenHour's 14. (An earlier version of this note claimed three
+ *    to five car lengths at 11-14 degrees. That is out by roughly 3x — it was
+ *    not measuring anything.)
+ *
+ *    Elevation comes down on the invariant `sin(elevation) * intensity`, which
+ *    is the key's contribution to a *horizontal* surface. Hold that product
+ *    fixed and the tabletop level is unchanged by construction, and so is the
+ *    depth of every cast shadow measured against it — the establishing shot
+ *    cannot get darker or flatter as a side effect. What moves is the ratio on
+ *    a *vertical* face, `cos(elevation) * intensity`: morning 34 -> 24 degrees
+ *    at 4.30 -> 5.91 gives a car's flank 1.51x the key it had and lengthens its
+ *    shadow by exactly the same 1.51x. noon 56 -> 44 at 4.05 -> 4.83 and
+ *    overcast 46 -> 38 at 1.60 -> 1.87 are the same trade.
  *  - **key:fill ratio.** Fill is hemi + ambient + IBL. Note that the interesting
  *    ratio is on a *vertical* face — the flank of a car — not on the table: at
  *    34 degrees the key contributes sin(34) = 0.56 of its intensity to a
@@ -81,11 +169,32 @@ const DEG = Math.PI / 180;
  *    contributes nothing to an up-facing tabletop, and therefore cannot lift
  *    the shadow it is compensating for. `rim` comes down instead, because it
  *    *does* light the tabletop and it casts no shadow.
- *  - **shadow.intensity.** How much of the key still reaches a fully shadowed
- *    fragment. Never 1.0: a cast shadow that removes 100% of the key leaves
- *    only the fill, and a chase camera looking into a large shadow returns a
- *    frame that is three-quarters black. 0.10-0.18 of the key leaking through
- *    is what keeps a deep shadow *deep* rather than *empty*.
+ *  - **shadow.intensity.** three's own `LightShadow.intensity`. The stock shader
+ *    ends in `mix( 1.0, shadow, shadowIntensity )`, so this is the fraction of
+ *    the key a fully shadowed fragment *loses*; `1 - it` is what still leaks
+ *    through. Never 1.0: a cast shadow that removes 100% of the key leaves only
+ *    the fill, and a chase camera looking into a large shadow returns a frame
+ *    that is three-quarters black. The set runs 0.80-0.95, i.e. a 5-20% leak,
+ *    deepest on overcast where the key is barely a key at all. (The previous
+ *    note here had the sense inverted and quoted a 0.10-0.18 leak that matched
+ *    none of the values below.)
+ *  - **motivation.** A key with no visible source is most of the difference
+ *    between a lit set and a rendered one, and the backdrop already draws a
+ *    window. Until this pass no preset set `backdrop.windowDir` or
+ *    `backdrop.sunDir`, so Sky fell back to `DEFAULT_BACKDROP`'s
+ *    [-0.62, 0.36, -0.70] for all six — elevation 21, azimuth -138.5 — and the
+ *    window the player can see sat 86 degrees round the room from the direction
+ *    morning's key actually arrives from. Both are now built from the preset's
+ *    own key azimuth with `dirArray`, so the pane and the shadows agree by
+ *    construction. The pane's *elevation* stays a separate number, because a
+ *    window is a hole in a wall: it sits in the 13-22 degree band a table-height
+ *    camera sees it in even when the sun coming through it is higher.
+ *  - **fog.** Interior air across 4.6 m is not hazy, and fog is how the eye
+ *    reads the distance to a room that is only just being built. Densities are
+ *    set against the sightlines the cameras measurably use — see
+ *    `FOG_DENSITY_MAX` — and each colour is the lower half of that preset's own
+ *    backdrop rather than a sky colour, because indoors the distance recedes
+ *    into a dim wall and floor, not into daylight.
  *  - **exposure.** Set per preset against the failure that preset actually had,
  *    not uniformly. `morning` was clipping the oak to paper-white over large
  *    parts of the frame, so it comes down hard. `goldenHour` had the opposite
@@ -95,25 +204,32 @@ const DEG = Math.PI / 180;
  *    that is what turns a bright frame milky rather than merely bright.
  */
 export const LIGHT_PRESETS = {
-  // Window light raking across a breakfast table. Warm key, cool sky fill, warm
-  // bounce off the tabletop. This is the preset that was blowing the oak out:
-  // exposure is down 20%, the key down 14%, and the window/haze/shaft veil is
-  // roughly halved. The elevation still goes *up* (21 -> 34) because 21 degrees
-  // was throwing shadows so long and shallow that nothing in frame had a
-  // legible base — the raking is now in the 30-40 band with the level pulled to
-  // pay for it.
+  // Window light raking across a breakfast table, and the preset the flagship
+  // track runs. Warm key low in the west, cool *room* fill, warm bounce off the
+  // tabletop.
+  //
+  // The key is at 24 degrees, azimuth -52. It went 21 -> 34 in an earlier pass
+  // to buy level, then 34 -> 24 here to buy raking back without giving the level
+  // up: intensity moves 4.30 -> 5.91 so sin(elevation) * intensity is unchanged
+  // and the tabletop lands exactly where it did. The window in the backdrop is
+  // on the same azimuth at elevation 20, so the source of that key is visible in
+  // any shot that can see the far wall.
+  //
+  // The fill was an outdoor sky blue (0x9dbcf0) sitting over a table with a
+  // ceiling above it. It is now the room's own ceiling colour: still the cool
+  // half of the warm/cool split, but a colour a wall could actually be.
   morning: {
     id: 'morning',
     look: 'morning',
     exposure: 0.84,
-    sun: { color: 0xffd8ae, intensity: 4.30, elevation: 34, azimuth: -52 },
-    fill: { sky: 0x9dbcf0, ground: 0x7a5f42, intensity: 0.42 },
+    sun: { color: 0xffd8ae, intensity: 5.91, elevation: 24, azimuth: -52 },
+    fill: { sky: 0xa4b3c6, ground: 0x7a5f42, intensity: 0.42 },
     bounce: { color: 0xffc79a, intensity: 0.46, elevation: -16, azimuth: 128 },
-    rim: { color: 0xa9c8ff, intensity: 0.26, elevation: 30, azimuth: 142 },
+    rim: { color: 0xa9c8ff, intensity: 0.26, elevation: 30, azimuth: 128 },
     ambient: { color: 0x38455e, intensity: 0.11 },
     shadow: { intensity: 0.95 },
     lamp: { intensity: 0 },
-    fog: { color: 0xd7ddea, density: 0.00085 },
+    fog: { color: 0x92979e, density: 0.00060 },
     env: { intensity: 0.60 },
     contact: { strength: 0.74, tint: 0x2a2620 },
     backdrop: {
@@ -121,30 +237,34 @@ export const LIGHT_PRESETS = {
       clutter: 0.55, clutterColor: 0x2b2b31,
       windowColor: 0xfff0d6, windowIntensity: 4.2, windowSize: [0.30, 0.24],
       windowRound: 0.05, windowSoft: 0.035, windowFalloff: 2.6, mullion: 1.0,
-      sunColor: 0xffe6c0, sunDisc: 0.0,
+      windowDir: dirArray(20, -52),
+      sunColor: 0xffe6c0, sunDisc: 0.0, sunDir: dirArray(24, -52),
       hazeColor: 0xc6cfdb, hazeStrength: 0.20, indoor: 1.0, mottle: 0.055, intensity: 1.0,
       dust: { density: 1.0, color: 0xffe9c8, size: 1.0, opacity: 0.38 },
       shafts: { strength: 0.42, width: 46, length: 640, count: 3, color: 0xffdfae },
     },
   },
 
-  // Midday, but 56 rather than 66 degrees: still short hard shadows, still a
-  // clear top-down read, yet the flanks of a car keep some modelling. A
-  // horizontal surface takes sin(56) = 0.83 of the key here against sin(34) =
-  // 0.56 at morning, so the intensity has to come down to land at the same
-  // tabletop level.
+  // Midday, and the highest key in the set — but 44 degrees, not 56 and not the
+  // 66 it started at. Still short hard shadows and a clear top-down read, yet a
+  // car's flank keeps some modelling: cot(44) * 2.8 = 2.9 u of shadow against
+  // 1.9 u at 56, which is the difference between a car with a base and a car
+  // sitting on a smudge. A horizontal surface takes sin(44) = 0.69 of the key
+  // against sin(56) = 0.83, so the intensity goes up to land at the same level.
+  // The window is much lower than the sun here, at 22 degrees: a midday sun does
+  // not shine through the middle of a pane, it comes in over the sill.
   noon: {
     id: 'noon',
     look: 'noon',
     exposure: 0.88,
-    sun: { color: 0xfff4e2, intensity: 4.05, elevation: 56, azimuth: -22 },
+    sun: { color: 0xfff4e2, intensity: 4.83, elevation: 44, azimuth: -22 },
     fill: { sky: 0x88b4ff, ground: 0x8a7758, intensity: 0.50 },
     bounce: { color: 0xffd9b0, intensity: 0.30, elevation: -22, azimuth: 158 },
-    rim: { color: 0xbcd7ff, intensity: 0.18, elevation: 24, azimuth: 150 },
+    rim: { color: 0xbcd7ff, intensity: 0.18, elevation: 24, azimuth: 158 },
     ambient: { color: 0x3a4763, intensity: 0.11 },
     shadow: { intensity: 0.95 },
     lamp: { intensity: 0 },
-    fog: { color: 0xdfe6f0, density: 0.0007 },
+    fog: { color: 0xa6adb5, density: 0.00060 },
     env: { intensity: 0.66 },
     contact: { strength: 0.80, tint: 0x231f1a },
     backdrop: {
@@ -152,7 +272,8 @@ export const LIGHT_PRESETS = {
       clutter: 0.30, clutterColor: 0x3a4048,
       windowColor: 0xffffff, windowIntensity: 1.8, windowSize: [0.26, 0.20],
       windowRound: 0.06, windowSoft: 0.06, windowFalloff: 2.0, mullion: 0.4,
-      sunColor: 0xfff6e4, sunDisc: 1.0,
+      windowDir: dirArray(22, -22),
+      sunColor: 0xfff6e4, sunDisc: 1.0, sunDir: dirArray(44, -22),
       hazeColor: 0xd9e3f0, hazeStrength: 0.22, indoor: 0.25, mottle: 0.03, intensity: 1.0,
       dust: { density: 0.6, color: 0xfff2dd, size: 0.85, opacity: 0.24 },
       shafts: { strength: 0.0, width: 46, length: 640, count: 3, color: 0xfff0d0 },
@@ -160,11 +281,18 @@ export const LIGHT_PRESETS = {
   },
 
   // The money shot, and the one that came back crushed. 14 degrees (up from 9)
-  // still throws a shadow four car lengths long, but at 9 the key was
-  // contributing sin(9) = 0.16 of itself to the ground, i.e. barely more than
-  // the fill, so the whole frame lived at the bottom of the range. Exposure is
-  // deliberately *not* cut here; the fill floor, the ambient and the shadow
-  // leak all go up instead, and only the additive veil comes down.
+  // still throws a shadow 11.2 u long — a car and a quarter — but at 9 the key
+  // was contributing sin(9) = 0.16 of itself to the ground, i.e. barely more
+  // than the fill, so the whole frame lived at the bottom of the range.
+  // Exposure is deliberately *not* cut here; the fill floor, the ambient and the
+  // shadow leak all go up instead, and only the additive veil comes down.
+  //
+  // The one preset used by an *outdoor* track, so the fill stays sky blue and
+  // the sun disc stays on. Disc and window now share the key direction, which
+  // means the low sun is seen through the bright patch rather than 60 degrees
+  // round the sky from it. Its 0.0016 fog was the heaviest daylight value in
+  // the set and would have taken a 726 u sightline to 74% fog colour; at
+  // FOG_DENSITY_MAX it takes it to 29%.
   goldenHour: {
     id: 'goldenHour',
     look: 'goldenHour',
@@ -172,11 +300,11 @@ export const LIGHT_PRESETS = {
     sun: { color: 0xffb070, intensity: 4.90, elevation: 14, azimuth: -78 },
     fill: { sky: 0x86ace8, ground: 0x8a5f34, intensity: 0.56 },
     bounce: { color: 0xffa066, intensity: 0.60, elevation: -13, azimuth: 102 },
-    rim: { color: 0x9fc0ff, intensity: 0.38, elevation: 22, azimuth: 116 },
+    rim: { color: 0x9fc0ff, intensity: 0.38, elevation: 22, azimuth: 102 },
     ambient: { color: 0x3a3048, intensity: 0.20 },
     shadow: { intensity: 0.93 },
     lamp: { intensity: 0 },
-    fog: { color: 0xf0c69a, density: 0.0016 },
+    fog: { color: 0xbc9771, density: 0.00080 },
     env: { intensity: 0.80 },
     contact: { strength: 0.66, tint: 0x2c2118 },
     backdrop: {
@@ -184,7 +312,8 @@ export const LIGHT_PRESETS = {
       clutter: 0.60, clutterColor: 0x2a2028,
       windowColor: 0xffc98a, windowIntensity: 6.0, windowSize: [0.33, 0.26],
       windowRound: 0.05, windowSoft: 0.045, windowFalloff: 2.1, mullion: 1.0,
-      sunColor: 0xffb46a, sunDisc: 0.55,
+      windowDir: dirArray(14, -78),
+      sunColor: 0xffb46a, sunDisc: 0.55, sunDir: dirArray(14, -78),
       hazeColor: 0xe8b98d, hazeStrength: 0.30, indoor: 0.75, mottle: 0.06, intensity: 1.0,
       dust: { density: 1.35, color: 0xffd7a2, size: 1.15, opacity: 0.48 },
       shafts: { strength: 0.55, width: 54, length: 720, count: 3, color: 0xffc389 },
@@ -195,19 +324,21 @@ export const LIGHT_PRESETS = {
   // overcast day is not an ambient cube, it is a very large soft source
   // overhead and slightly to one side. Shadows are shallow by design, so
   // shadow.intensity is the lowest in the set — and with a diffuse key like
-  // this the contact blob is doing nearly all the grounding work.
+  // this the contact blob is doing nearly all the grounding work. 46 -> 38
+  // degrees on the same sin(e) * I invariant as the other daylight presets, so
+  // the level is unchanged and the little shaping there is lands on the flanks.
   overcast: {
     id: 'overcast',
     look: 'overcast',
     exposure: 1.02,
-    sun: { color: 0xe4eaf4, intensity: 1.60, elevation: 46, azimuth: -30 },
+    sun: { color: 0xe4eaf4, intensity: 1.87, elevation: 38, azimuth: -30 },
     fill: { sky: 0xc7d4e6, ground: 0x968f80, intensity: 1.18 },
     bounce: { color: 0xcfd6dd, intensity: 0.34, elevation: -20, azimuth: 150 },
-    rim: { color: 0xdfe8f5, intensity: 0.16, elevation: 26, azimuth: 148 },
+    rim: { color: 0xdfe8f5, intensity: 0.16, elevation: 26, azimuth: 150 },
     ambient: { color: 0x515a6b, intensity: 0.24 },
     shadow: { intensity: 0.80 },
     lamp: { intensity: 0 },
-    fog: { color: 0xd2d9e2, density: 0.0022 },
+    fog: { color: 0xa9afb5, density: 0.00075 },
     env: { intensity: 0.95 },
     contact: { strength: 0.54, tint: 0x2f3238 },
     backdrop: {
@@ -215,7 +346,8 @@ export const LIGHT_PRESETS = {
       clutter: 0.40, clutterColor: 0x424750,
       windowColor: 0xe8eef6, windowIntensity: 2.6, windowSize: [0.32, 0.25],
       windowRound: 0.06, windowSoft: 0.09, windowFalloff: 1.5, mullion: 0.9,
-      sunColor: 0xdfe6f2, sunDisc: 0.0,
+      windowDir: dirArray(20, -30),
+      sunColor: 0xdfe6f2, sunDisc: 0.0, sunDir: dirArray(38, -30),
       hazeColor: 0xcfd7e1, hazeStrength: 0.34, indoor: 0.85, mottle: 0.04, intensity: 1.0,
       dust: { density: 0.5, color: 0xdfe6f2, size: 0.9, opacity: 0.18 },
       shafts: { strength: 0.0, width: 46, length: 640, count: 3, color: 0xdfe6f2 },
@@ -232,12 +364,12 @@ export const LIGHT_PRESETS = {
     exposure: 1.12,
     sun: { color: 0xff9068, intensity: 2.10, elevation: 11, azimuth: -96 },
     fill: { sky: 0x51649f, ground: 0x453648, intensity: 0.56 },
-    bounce: { color: 0xff7f5a, intensity: 0.42, elevation: -12, azimuth: 96 },
-    rim: { color: 0x7f9dff, intensity: 0.46, elevation: 26, azimuth: 98 },
+    bounce: { color: 0xff7f5a, intensity: 0.42, elevation: -12, azimuth: 84 },
+    rim: { color: 0x7f9dff, intensity: 0.46, elevation: 26, azimuth: 84 },
     ambient: { color: 0x2b3352, intensity: 0.26 },
     shadow: { intensity: 0.90 },
     lamp: { intensity: 0 },
-    fog: { color: 0x59547e, density: 0.0026 },
+    fog: { color: 0x5d4e74, density: 0.00080 },
     env: { intensity: 0.86 },
     contact: { strength: 0.60, tint: 0x1a1a2a },
     backdrop: {
@@ -245,7 +377,8 @@ export const LIGHT_PRESETS = {
       clutter: 0.70, clutterColor: 0x14131f,
       windowColor: 0xff9d6e, windowIntensity: 5.0, windowSize: [0.30, 0.24],
       windowRound: 0.05, windowSoft: 0.05, windowFalloff: 2.3, mullion: 1.0,
-      sunColor: 0xff8a5c, sunDisc: 0.35,
+      windowDir: dirArray(13, -96),
+      sunColor: 0xff8a5c, sunDisc: 0.35, sunDir: dirArray(11, -96),
       hazeColor: 0x6a5f8c, hazeStrength: 0.34, indoor: 0.7, mottle: 0.06, intensity: 1.0,
       dust: { density: 0.9, color: 0xffb389, size: 1.05, opacity: 0.36 },
       shafts: { strength: 0.45, width: 50, length: 700, count: 2, color: 0xff9e70 },
@@ -255,14 +388,21 @@ export const LIGHT_PRESETS = {
   // Practical-lit: the desk lamp is the key and the "sun" is moonlight through
   // a window, kept at 34 degrees so it still rims the cars rather than dropping
   // a flat wash on their roofs.
+  //
+  // The one preset where the key is not the directional. The lamp sits at offset
+  // [-118, 205, -92] from the track centre, i.e. azimuth -128, elevation 54, so
+  // the warm bounce belongs on azimuth 52 — opposite the lamp, where its light
+  // lands on the table — rather than the -40 it had, which pointed at nothing.
+  // The cool rim stays with the moon and sits opposite it at -58. The window is
+  // on the moon's azimuth, because that is what the moonlight is coming through.
   nightLamp: {
     id: 'nightLamp',
     look: 'nightLamp',
     exposure: 1.20,
     sun: { color: 0x7286c8, intensity: 0.44, elevation: 34, azimuth: 122 },
     fill: { sky: 0x3a4874, ground: 0x2a221b, intensity: 0.26 },
-    bounce: { color: 0xffb473, intensity: 0.22, elevation: -18, azimuth: -40 },
-    rim: { color: 0x89a7ff, intensity: 0.26, elevation: 24, azimuth: -70 },
+    bounce: { color: 0xffb473, intensity: 0.22, elevation: -18, azimuth: 52 },
+    rim: { color: 0x89a7ff, intensity: 0.26, elevation: 24, azimuth: -58 },
     ambient: { color: 0x1a2135, intensity: 0.18 },
     shadow: { intensity: 0.92 },
     // `irradiance` is the target lux-equivalent at the target point; the actual
@@ -272,7 +412,7 @@ export const LIGHT_PRESETS = {
       color: 0xffc27a, irradiance: 5.6, offset: [-118, 205, -92],
       angle: 0.66, penumbra: 0.58, shadow: true,
     },
-    fog: { color: 0x1b2138, density: 0.0030 },
+    fog: { color: 0x202239, density: 0.00080 },
     env: { intensity: 0.70 },
     contact: { strength: 0.82, tint: 0x14131c },
     backdrop: {
@@ -280,7 +420,8 @@ export const LIGHT_PRESETS = {
       clutter: 0.80, clutterColor: 0x080810,
       windowColor: 0x7d9dff, windowIntensity: 1.8, windowSize: [0.26, 0.30],
       windowRound: 0.04, windowSoft: 0.04, windowFalloff: 2.8, mullion: 1.0,
-      sunColor: 0x8ea6e8, sunDisc: 0.0,
+      windowDir: dirArray(22, 122),
+      sunColor: 0x8ea6e8, sunDisc: 0.0, sunDir: dirArray(34, 122),
       hazeColor: 0x232a48, hazeStrength: 0.32, indoor: 1.0, mottle: 0.05, intensity: 1.0,
       dust: { density: 1.2, color: 0xffd6a0, size: 1.1, opacity: 0.44 },
       shafts: { strength: 0.40, width: 40, length: 520, count: 2, color: 0xffc98d },
@@ -693,7 +834,14 @@ export class Lighting {
       // three's sorted light list, and that sort is stable, so being first in the
       // scene graph is what guarantees cascade index == light index.
       this._hoistRoot(scene);
-      if (!scene.fog) scene.fog = new THREE.FogExp2(0xd7ddea, 0.001);
+      // Seeded from the preset that is about to be applied rather than from a
+      // hardcoded pair no preset uses. Both are overwritten a few lines below by
+      // setPreset(); this only decides what a single frame rendered before that
+      // would look like, and a wrong colour there is a visible flash.
+      if (!scene.fog) {
+        const pf = (this.preset && this.preset.fog) || {};
+        scene.fog = new THREE.FogExp2(finiteOr(pf.color, 0x92979e), clampFogDensity(pf.density));
+      }
       this.fog = scene.fog;
     }
 
@@ -961,7 +1109,7 @@ export class Lighting {
 
     if (this.fog) {
       lerpC(this.fog.color, p.fog.color);
-      this.fog.density = num(this.fog.density, p.fog.density);
+      this.fog.density = num(this.fog.density, clampFogDensity(p.fog.density));
     }
 
     if (this.contact && p.contact) {
@@ -1839,11 +1987,25 @@ export class Lighting {
     };
   }
 
-  /** Explicit fog override, for tracks that ship their own ambient block. */
+  /**
+   * Explicit fog override, for tracks that ship their own ambient block.
+   * `world/Decals.js` calls this from `applyTrack()`, *after* it has switched
+   * the preset, so a track's `ambient.fogColor` / `ambient.fogDensity` is the
+   * value actually in force in a race — not the preset's.
+   *
+   * The colour is taken exactly as asked: that is the track's mood and its call.
+   * The density is clamped to FOG_DENSITY_MAX, because past that the fog stops
+   * being a depth cue and starts being an eraser, and a track author picking a
+   * number for atmosphere has no way to know where the room behind the table
+   * is. Two of the five tracks were over it: workbench 0.0016 and bedroom
+   * 0.0018, which put the establishing shot's far table corner at 74% and 82%
+   * fog colour respectively. kitchen (0.00055), pool (0.00040) and garden
+   * (0.00085 -> 0.00080) are at or under it and effectively untouched.
+   */
   setFog(color, density) {
     if (!this.fog) return;
     if (color != null) this.fog.color.set(color);
-    if (density != null) this.fog.density = density;
+    if (density != null) this.fog.density = clampFogDensity(density);
   }
 
   onResize() {}
