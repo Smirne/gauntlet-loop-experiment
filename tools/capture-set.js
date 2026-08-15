@@ -150,13 +150,34 @@ export async function captureSet(suffix = '', opts = {}) {
   shots.push(await window.MG.capture('crit-3-macro' + tag, 1920, 1080));
 
   // 4. wide establishing shot of the whole circuit
+  //
+  // RE-POSED after round 3, and the reason is worth keeping. The old pose put
+  // the camera at ctr + (0.42d, 0.80d, 0.62d) — elevation 46.9 degrees — which
+  // is ABOVE AND INSIDE all four table edges. The near and left edges ran off
+  // frame, the far edges showed only their top surface ending in a one-pixel
+  // line, and the far corner clipped dead against y = 0 with no headroom. So a
+  // stranger saw a wooden board floating in grey: a diorama, not a kitchen.
+  //
+  // The critic's phrasing is the part to remember — everything built to make
+  // the table read as furniture (a 10 u board, a moulded rim, four legs down to
+  // the room floor, a floor and walls behind it) "contributes exactly zero
+  // pixels to this review set". The work was fine; the camera never looked at
+  // it. A review frame that cannot see the thing being reviewed is a broken
+  // instrument, not a verdict.
+  //
+  // Dropping to ~32 degrees and pulling back puts a NEAR CORNER in shot, with
+  // the rim, a leg and the floor behind it, and keeps the whole circuit legible
+  // — which is still the hard constraint this frame must satisfy.
+  //
+  // This breaks A/B comparability with rounds 1-3 by design. Do not read a
+  // difference across that boundary as a rendering change.
   const b = ctx.track.bounds;
   const ctr = b.getCenter(new THREE.Vector3());
   const sz = b.getSize(new THREE.Vector3());
-  const d = Math.max(sz.x, sz.z) * 0.95;
-  cam.fov = 38;
-  cam.position.set(ctr.x + d * 0.42, ctr.y + d * 0.80, ctr.z + d * 0.62);
-  cam.lookAt(ctr.x, ctr.y, ctr.z);
+  const d = Math.max(sz.x, sz.z) * 1.28;
+  cam.fov = 35;
+  cam.position.set(ctr.x + d * 0.50, ctr.y + d * 0.47, ctr.z + d * 0.66);
+  cam.lookAt(ctr.x, ctr.y - sz.y * 0.35, ctr.z);
   cam.updateProjectionMatrix();
   ctx.postfx?.notifyCameraCut?.();
   shots.push(await window.MG.capture('crit-4-establishing' + tag, 1920, 1080));

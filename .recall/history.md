@@ -885,3 +885,69 @@ It's invisible today — every camera looks downward — but any low angle expos
 Committed as `ece8f14`.
 
 Next is the one thing this project has never actually done: **critic round 3, on frames of a race that is genuinely running.** Rounds 1 and 2 both scored a stopped race, so this will be the first real reading of where the quality actually stands. I'll fix D17 alongside it, since a floating table is exactly what a hostile critic will find first.
+
+**You:** continue
+
+**Claude:** Two things can run at once: critics judge frozen PNGs on disk, so I can fix D17 in source while they work. Setting up the blind A/B first, with the mapping randomised now and kept from the judges:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots mkdir -p ab python3 - <<'PY'`
+
+**Claude:** Assignment is mixed — always answering "A" scores 2/4. Now the critic round, on frames of a race that is genuinely running for the first time:
+  - `Workflow: export const meta = { name: 'micro-gauntlet-critique-r3', description: 'Five hostile critics score the round-3 frames against the rubric', phases: [{ title: 'Cr`
+
+**Claude:** Critics are running on frozen PNGs, so I can fix D17 in source meanwhile. Let me see how the two agents each derived their heights:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -n "TABLE_PROFILE\|tableHeight`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '88,130p' src/world/TrackBui`
+
+**Claude:** Now I can see both sides precisely: `TABLE_THICK = 3.4` ("34 mm board — a real kitchen tabletop", literal cm) against `ROOM.floorDrop = 250` (table height in the stretched space). A 3.4 u board on a 460 u wide table is 1:135; a real table is about 1:41. Let me fix it properly — legs, and a board thickness that matches the scale the room assumes.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -n "buildTableEdge()" -A 30 sr`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '1260,1300p' src/world/Track`
+
+**Claude:** Now the fix — one scale, and legs that reach the floor the room actually builds:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/world/TrackBuilder.js`
+
+**Claude:** The profile's intermediate depths were hardcoded for a 3.4 u board, so thickening alone would deform the moulding. Making it proportional:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/world/TrackBuilder.js`
+
+**Claude:** Now the legs themselves — helper defined complete before anything calls it:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/world/TrackBuilder.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/world/TrackBuilder.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 node --input-type=module --check <`
+
+**Claude:** Now verifying from a deliberately low camera — the angle that would expose a floating table:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Geometry closes: board 0.2 → −10.2, legs −10 → −251.5, through the floor at −250. Let me look:
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/d17-lowangle.png`
+
+**Claude:** Legs stand on the floor and the table reads as furniture. But they're far too slender — 7.4 u on a 250 u drop is 1:34, where a real table leg is about 1:12. That's the same proportion error I just fixed, one level down:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/world/TrackBuilder.js`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/d17-lowangle2.png`
+
+**Claude:** Now it reads as a table leg with visible grain. Let me confirm the normal cameras didn't regress from the thicker board:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-4-establishing-r8.png`
+
+**Claude:** No regression, and the board reads more solidly at the near edge. Committing the D17 fix:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 python3 - <<'PY' import pathlib, re`
+
+**Claude:** D17 is closed and committed as `b180d38`. Let me check on the critics:
+  - `Bash: ls -la /Users/michele.giacobazzi/.claude/projects/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experi`
+
+**Claude:** Critics still working. D17 is done and committed — the seam between the two wave-4 agents is closed.
+
+**What I fixed while they ran:** the two agents had each picked a defensible number in isolation — a literal 3.4 u tabletop against a 250 u floor drop in the project's stretched scale. One scale had to win, and it had to be the stretched one, since the room and the playfield are both already in it. The board is now 10 u against 250, which is 1:25 — the proportion of a table you'd recognise.
+
+Two things that only showed up by doing it:
+
+- **`TABLE_PROFILE` had to become fractions of board thickness.** It was authored in absolute units against a 3.4 u board, so thickening alone left the bullnose rolling over in the first third and then dropping straight — the moulding *deformed* instead of scaling.
+- **My first pass at the legs repeated the exact defect I was fixing.** I picked 7.4 u in absolute units; against a 250 u drop that's 1:34, and the low-angle frame showed four wires holding up a plank. Sizing them against the drop instead — about a twelfth of the height, 20 u — fixed it.
+
+I verified from a camera placed deliberately *below* the tabletop looking along it. No shipped camera uses that angle, which is precisely why it was the only one that could ever have caught this. `_tableFloorDrop()` now resolves the drop the same way Sky does, from the same source in the same order, so the two can't drift apart again without a track definition explicitly saying so.
+
+Committed as `b180d38`. Standard cameras re-checked after: no regression, and the board reads more solidly at the near edge.
+
+The five critics are scoring the wave-4 frames now. That'll be the first honest reading this project has ever had — rounds 1 and 2 both scored a stopped race — and I'll bring you the scores plus the blind A/B (pre-room vs post-room, labels randomised, always-answering-A scores 2/4) as soon as they land.
