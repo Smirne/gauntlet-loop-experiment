@@ -1,5 +1,45 @@
 # Open defects
 
+## D18 — Cars interpenetrate to about half a car width — MAJOR — OPEN
+`physics/Collision.js` [A8]. Playtest note ("the collision system seems flawed"), then measured.
+
+**In a real race:** over 45 s of racing with 8 cars, the minimum centre-to-centre distance
+between any two cars was **1.91 u**. Two cars are 4.15 u wide and 9.5 u long, so side by side
+they touch at 4.15 and nose to tail at 9.5. 1.91 is a deep overlap in any orientation.
+
+**Isolated, which is the useful part.** Place two cars 1.13 u apart — a massive deliberate
+overlap — and let the solver run:
+
+| step | centre distance |
+|---|---|
+| 0 | 1.13 |
+| 10 | 1.32 |
+| 60 | 1.87 |
+| 120 | 1.91 |
+| 239 | **1.99** |
+
+So the response is **not absent** — it pushes them apart, monotonically, and then *plateaus at
+roughly half the correct separation* and stays there. A solver that was not running would leave
+them at 1.13; one that was working would reach about 4.15. This is a scale error, not a missing
+system, which is a much narrower thing to look for.
+
+**The lead.** The vehicle proxy's half extents are exactly right: `[2.075, 1.46, 4.75]`, half of
+4.15 × 2.92 × 9.5. But the proxy also carries `roundXZ` and `radius: 1`, and
+`Collision.js` exports a `roundCylinder` path. If the rounded-box representation shrinks the box
+by `radius` and the contact generation does not add the radius back when computing penetration
+depth, the resting separation would be 2 × (2.075 − 1) = **2.15 u** — which is what is being
+measured, within the slop and Baumgarte tolerance. That is a hypothesis with a number attached,
+not a conclusion; check `roundCylinder`, `boxBox` and `prepareManifold` against it before
+changing anything.
+
+**Also unexplained and possibly related:** `physics._pairCount` peaked at **1** across 600 steps
+with 285 proxies and 8 cars racing. Either the field is genuinely rarely in contact, or the
+broadphase is reporting far fewer pairs than it should. Establish which before trusting either.
+
+Do not "fix" this by inflating the half extents — they are correct, and a car whose collision box
+is bigger than its geometry will bounce off things it visibly did not touch.
+
+
 Found during integration verification. Fed into the post-build fix wave.
 Each entry names the owning module per ARCHITECTURE.md section 3.
 
