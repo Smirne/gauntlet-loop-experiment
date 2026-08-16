@@ -23,18 +23,40 @@ roughly half the correct separation* and stays there. A solver that was not runn
 them at 1.13; one that was working would reach about 4.15. This is a scale error, not a missing
 system, which is a much narrower thing to look for.
 
-**The lead.** The vehicle proxy's half extents are exactly right: `[2.075, 1.46, 4.75]`, half of
-4.15 × 2.92 × 9.5. But the proxy also carries `roundXZ` and `radius: 1`, and
-`Collision.js` exports a `roundCylinder` path. If the rounded-box representation shrinks the box
-by `radius` and the contact generation does not add the radius back when computing penetration
-depth, the resting separation would be 2 × (2.075 − 1) = **2.15 u** — which is what is being
-measured, within the slop and Baumgarte tolerance. That is a hypothesis with a number attached,
-not a conclusion; check `roundCylinder`, `boxBox` and `prepareManifold` against it before
-changing anything.
+**The mechanism, measured.** Force two cars to overlap, step once, and read the manifold between
+their two proxies:
 
-**Also unexplained and possibly related:** `physics._pairCount` peaked at **1** across 600 steps
-with 285 proxies and 8 cars racing. Either the field is genuinely rarely in contact, or the
-broadphase is reporting far fewer pairs than it should. Establish which before trusting either.
+```
+proxy:    shape 'box', roundXZ false, half [2.075, 1.46, 4.75], isVehicle true   (all correct)
+manifold: count 1,  normal (0.795, 0.024, 0.606)
+```
+
+**`count: 1`.** Two overlapping boxes are producing a ONE-POINT manifold where a face-to-face
+overlap should produce up to four, from the clipped face polygon. A single point is enough to
+push at, which is why the separation improves at all, but it cannot resolve a face overlap: the
+pair rotates and slides around that one point instead of separating, and the position solver
+settles into a shallow equilibrium. That is exactly the observed "pushes apart, then plateaus at
+half".
+
+The normal supports it. For two roughly axis-aligned cars overlapping along X it should be close
+to ±X; `(0.795, 0.024, 0.606)` is diagonal, which is what you get when the separating-axis search
+returns an edge or corner feature rather than a face.
+
+So the fault is in **contact generation, not the solver and not the shapes** — look at `boxBox`,
+the clipping in `prepareManifold`, and `MAX_CONTACTS`.
+
+**Ruled out by measurement, so nobody repeats them:**
+- Not the proxy size. Half extents are exactly half of 4.15 × 2.92 × 9.5.
+- Not `roundXZ`. Vehicles are shape `'box'`, so `roundXZ` is false and the `roundCylinder` path
+  never runs for a car. The `radius: 1` on the proxy is an unused default, not a shrink factor.
+  (This was my first hypothesis and it was wrong.)
+- Not a missing response. It pushes apart monotonically; it just stops early.
+
+**Still unexplained:** `physics._pairCount` peaked at **1** across 600 steps with 285 proxies and
+8 cars racing. Possibly the same story seen from the broadphase end. Worth settling first.
+
+Do not "fix" this by inflating the half extents — they are correct, and a car whose collision box
+is bigger than its geometry will bounce off things it visibly did not touch.
 
 Do not "fix" this by inflating the half extents — they are correct, and a car whose collision box
 is bigger than its geometry will bounce off things it visibly did not touch.
