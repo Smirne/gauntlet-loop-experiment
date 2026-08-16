@@ -140,6 +140,26 @@ export function installCapture(engine) {
         return null;
       }
 
+      // Let every system see the camera it is about to be rendered with.
+      //
+      // `renderFrame()` only renders. Anything that fits itself to the camera in
+      // update/lateUpdate is otherwise still fitted to whatever camera the last
+      // real frame used — and a capture has almost always just repositioned the
+      // camera, so that is the wrong one by construction.
+      //
+      // This cost four rounds of critique. `Lighting._fitToCamera()` runs in
+      // lateUpdate, so shots 2-4 of every review set were rendered with the
+      // shadow cascades fitted to the PREVIOUS shot's camera. On the
+      // establishing wide the cascade that covers the table was left centred
+      // 427 u below the tabletop by the macro camera, and every prop on the
+      // table stood there with no cast shadow. Rounds 1-4 all scored that frame
+      // on corrupted evidence.
+      //
+      // dt = 0 advances nothing — integrators do nothing, re-fits do their whole
+      // job — so the captured moment is still exactly the moment that was asked
+      // for.
+      engine.syncSystems?.();
+
       // Two frames: the first settles anything sized off the new viewport
       // (post-processing render targets, temporal history buffers).
       engine.renderFrame?.(1 / 60);

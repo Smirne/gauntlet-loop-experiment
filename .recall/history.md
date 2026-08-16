@@ -1373,3 +1373,121 @@ An agent is on it in `Collision.js` with that brief and a concrete acceptance te
 **Critic round 4** is also running, on the supersampled frames — the first round where critics judge what the game actually renders rather than a 1× capture. Round 3 was marking down aliasing no player ever saw.
 
 I'll report both as they land, committing each separately so an interruption costs at most one.
+
+**You:** <task-notification>
+<task-id>a1b63452d3d37560f</task-id>
+<tool-use-id>toolu_01HBtCBRWZXbrxpbeqZgv7n3</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/tasks/a1b63452d3d37560f.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix D18 box-box manifold" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## Mechanism — I agree with the diagnosis, and I found the exact cause
+
+The fault is in `boxBox`'s SAT axis search, in `src/physics/Collision.js`. **The nine edge-cross axes are not unit vectors and their separations were never normalised.** `|A_i × B_j|` is the sine of the angle between those two axes, so the raw `proj - (ra + rb)` for an edge pair is the true separation *multiplied by that sine*. It was then compared directly against the face separations, which are measured on unit axes — two different units.
+
+For two roughly-aligned cars the sine is ~0, so an edge pair reports a penetration crushed to ~0 and wins the "shallowest axis" search outright. `FACE_BIAS_REL/ABS` cannot save it: the bias is a few percent, the scaling error is three orders of magnitude. I dumped the old axis table for the D18 configuration (two cars 1.13 u apart, both upright):
+
+```
+faceA 0  -3.03018      &lt;- the correct answer, X
+faceA 1  -2.92997
+edge 0 0  raw -0.06650  sin 0.00700  true -9.50018
+edge 2 2  raw -0.00000  sin 0.00000  true (degenerate)   &lt;- WINS
+```
+
+`edge 2 2` (Z_A × Z_B, exactly parallel) scores ~0 and wins, then `edgeContact` produces the single point. Two consequences, both matching the field measurements:
+
+- With a small yaw difference you get `count: 1` and a **diagonal, near-horizontal normal** — because the winning axis is a cross product of two nearly-parallel axes, so its direction is pure numerical noise in the XZ plane. That is your measured `(0.795, 0.024, 0.606)`, y≈0 included.
+- The reported separation is ~0, so `solvePosition` sees `err = -separation - SLOP &lt; 0` and does **nothing at all**. The only push left is the velocity constraint on closing speed — which is exactly "improves while they are approaching, then plateaus".
+
+Worse than D18 says: when the cars are *perfectly* aligned the degenerate axis makes `edgeContact` bail on `len &lt; 1e-5` and `boxBox` returns **false — no contact whatsoever**. Two cars at identical yaw pass through each other. The same happened for a car hitting a wall square-on.
+
+Measured over 14 407 overlapping car-shaped pairs, against an independent normalised-axis reference SAT: old code produced a 1-point manifold **97% of the time**, mean normal error **62.9°**. After the fix: 1.9% and **2.1°**.
+
+## What I changed (`src/physics/Collision.js` only, 89 insertions)
+
+1. **Edge separations are divided by the axis length** before any comparison. `|A_i × B_j|² = 1 − (A_i · B_j)²`, so it costs one `sqrt`. Edge pairs below `EDGE_PARALLEL_SQ = 1e-6` (sin &lt; 1e-3) are skipped entirely — parallel edges have no usable cross axis and are fully covered by the face tests. That also guarantees a selected edge axis is never one `edgeContact` then rejects. `edgeContact` now also receives the *true* separation rather than the scaled one.
+
+2. **A car-car vertical guard** (`vertPenalty`). This one is not cosmetic — without it the confirming test still fails. A car is 2.92 tall and 4.15 wide, so once two cars are closer than 1.23 u the genuinely shallowest axis is **vertical**, and an honest MTD solver stands one car on the other's roof. That is fatal here for a reason outside this file: an upright car is held up by its four suspension rays, not by a contact (`World._terrainContacts` returns early for upright vehicles), so the suspension shoves the lifted car straight back down and the horizontal overlap never resolves. While neither car is meaningfully above the other (`|Δy| &lt; 0.5 ×` their summed world-up half extents) near-vertical axes get a penalty that pushes them out of the ranking. The penalty affects **ranking only** — the `s &gt; margin` separation test always uses the true value — it applies only when `A.isVehicle &amp;&amp; B.isVehicle`, and it lifts the moment one car really is on the roof.
+
+No half extents touched. No allocations added.
+
+## Verification actually performed
+
+I could not boot the game, but I ran the real module: I copied it verbatim to scratch with only the two import specifiers rewritten to the vendored three, and drove it with a loop mirroring `World._step` (6 velocity iterations, 3 position iterations, warm start, `transferImpulses`, `applyCarCarResponse`, `MAX_CORRECTION = 5`, dt = 1/120).
+
+**The D18 test, two cars 1.13 u apart:**
+
+| step | old | new |
+|---|---|---|
+| 0 | 1.130 | 1.130 |
+| 1 | 1.130 | 1.996 |
+| 10 | 1.130 | 4.011 |
+| 60 | 1.130 | **4.115** |
+| 239 | 1.130 (count 1, diagonal n) | **4.115** (count 4, n = (1.00, 0.00, −0.02)) |
+
+4.115 = 4.15 − SLOP, exactly right, and stable — no drift, no oscillation. (My rig has no ground or suspension, so the old plateau sits at 1.13 rather than the game's 1.99; the narrowphase signature is identical.)
+
+**Regressions checked, all pass:** car into a wall square-on and grazing at 15° (identical trajectories old vs new in a 110 u/s impact sim); car onto a small prop box and a tall thin prop; car dropped onto another car's roof — settles at rest on the roof with a **4-point +Y manifold** (the vertical guard correctly lifts), and settles faster and calmer than the old code did. A 40 000-pair fuzz against the reference SAT: **zero false positives, zero false negatives** in both old and new, so the separation test's correctness is preserved.
+
+## What I could not verify
+
+Behaviour in the running game — no dev server, and the suspension/ground interaction is only reasoned about, not executed. The vertical guard's 0.5 threshold and the `VERTICAL_AXIS_DOT = 0.5` cutoff are judgement calls that only a real race will validate. The guard is also the one change I would revert first if car-car feel goes wrong; it is self-contained (one `if` block plus three `sel =` expressions) and change 1 stands alone without it.
+
+## For the orchestrator to measure
+
+1. **The confirming test**: two cars 1.13 u apart → expect ~4.115 (4.15 − SLOP) within ~60 steps, not 1.99.
+2. **The manifold**: force an overlap, step once → expect `count: 4` and a normal within a few degrees of ±X, not `count: 1`.
+3. **A 45 s race**: minimum centre-to-centre distance should now sit near 4.15 rather than 1.91.
+4. **Watch for cars climbing.** If any car ends up on another's roof during normal racing, the vertical guard's gate is the thing to look at.
+
+## Follow-up in World.js (not mine to edit)
+
+I could not reproduce `_pairCount` peaking at 1, and nothing in `Collision.js` explains it — the isolated two-car sim reproduces the whole plateau from the narrowphase alone, with no broadphase involved, so D18 does not depend on it. Two precise notes:
+
+- With 8 cars, each car's AABB overlaps the heightfield proxy (which is `oversized`, so it is tested against every awake dynamic body every tick), and `_pairCount` is reset once at `_step` line 930 and holds the tick total. It should therefore never read below 8. A reading of 1 is either a sampling artefact or the broadphase dropping pairs; settling it needs an instrumented boot.
+- **A real bug I did find by reading, at `World._queryGrid` line 1116**: `if (dynamic &amp;&amp; bi &lt;= ai) continue;` dedupes dynamic-dynamic pairs by index, but the driving loop at line 1085 skips sleeping bodies. So a **sleeping dynamic body whose proxy index is lower than the awake body's is never paired at all** — it never drives its own query, and the awake body's query filters it out. This directly contradicts the comment at lines 1080-1082 ("A sleeping prop is still found… so a car arriving wakes it"). Since props are built before vehicles, most sleeping dynamic props have lower indices than the cars, and cars will drive straight through them. Statically-added props are unaffected (the static-grid path has no index filter), so this hits only genuinely dynamic sleeping props.</result>
+<usage><subagent_tokens>144317</subagent_tokens><tool_uses>31</tool_uses><duration_ms>1006410</duration_ms></usage>
+</task-notification>
+
+**Claude:** The agent found the actual cause and verified it by running the real module. Let me confirm in the game with the same tests I used to find it:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git diff --stat -- src/physics/Coll`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** `count: 4` now (was 1), and they separate past 4.15 properly. The real test — minimum distance over a full race:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** **D18 fixed and confirmed in the game.** Minimum centre-to-centre distance over a 45-second race: **1.91 → 4.22 u**, right at the expected 4.15.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 python3 - <<'PY' import pathlib p =`
+
+**Claude:** The D18 entry got duplicated — my replace matched an anchor that appears twice. Cleaning up:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 python3 - <<'PY' import pathlib, re`
+
+**Claude:** **D18 is fixed and confirmed in the running game** — `3b6d8bc`, with a doc cleanup in `c59f657`.
+
+The root cause is one piece of missing arithmetic, and it's a good one. `boxBox`'s separating-axis search compared the nine **edge-cross axes** against the six face axes **without normalising them**. `|A_i × B_j|` is the *sine* of the angle between those axes, so an edge pair's raw separation is the true value scaled by that sine, while face separations are measured on unit axes. Two different units, compared directly.
+
+For two roughly-aligned cars that sine is ~0, so an edge pair reports a penetration crushed to nearly nothing and wins the shallowest-axis search outright. The existing face bias is a few percent against a three-orders-of-magnitude scaling error.
+
+That explains both things I measured without knowing why:
+- the **one-point manifold with a diagonal normal** — the winning axis is a cross product of two nearly-parallel axes, so its direction is pure numerical noise in XZ, which is exactly the `(0.795, 0.024, 0.606)` I saw, y≈0 included;
+- the **plateau** — reported separation ≈ 0 makes `solvePosition` see `err < 0` and do nothing at all, leaving only the velocity constraint on closing speed.
+
+It was also **worse than I logged**: at perfectly equal yaw the degenerate axis makes `boxBox` return *false*. Two cars at identical heading passed straight through each other, as did a car hitting a wall square-on.
+
+Confirmed by me in the game, not just by the agent:
+
+| test | before | after |
+|---|---|---|
+| two cars at 1.13 u, step 10 | 1.13 | **4.28** |
+| manifold | count 1, diagonal | **count 4, face-aligned** |
+| min distance over a 45 s race | 1.91 | **4.22** |
+
+Cars are 4.15 wide, so 4.22 is correct contact.
+
+The agent also earned its keep on a second thing: the fix alone still failed the test until it added a car-car vertical guard. Within 1.23 u the genuinely shallowest axis is *vertical*, so an honest solver stands one car on the other's roof — and that sticks here because an upright car is held up by suspension rays rather than contacts, so the suspension shoves it back down and the horizontal overlap never resolves. It reasoned that out from a file it wasn't allowed to edit.
+
+**One follow-up logged, not fixed:** in `World.js`, `_queryGrid` dedupes dynamic pairs with `bi <= ai` while the driving loop skips sleeping bodies — so a sleeping dynamic body with a lower proxy index is never paired at all, directly contradicting the comment two lines above claiming a car arriving wakes it. Props are built before vehicles, so most sleeping props have lower indices than the cars.
+
+Critic round 4 is still running on the supersampled frames. I'll report it when it lands.

@@ -484,6 +484,32 @@ export class Engine {
     }
   }
 
+  /**
+   * Run update + lateUpdate with dt = 0, advancing nothing.
+   *
+   * For out-of-band renders — captures, thumbnails, anything that repositions
+   * the camera and then calls renderFrame() directly. Those never run a phase,
+   * so every system that fits itself to the camera in lateUpdate is still
+   * fitted to whatever camera the last real frame used.
+   *
+   * That is not hypothetical: it cost this project four rounds of critique.
+   * Lighting._fitToCamera() lives in lateUpdate (deliberately — the director
+   * moves the camera there), so the review captures rendered shots 2-4 with the
+   * shadow cascades still fitted to the PREVIOUS shot's camera. On the
+   * establishing wide that meant cascade 2 was centred 427 u below the tabletop,
+   * left over from a macro camera 27 u from one car, and every prop on the table
+   * — six boxes, a mug, a bowl — stood in the frame with no cast shadow at all.
+   * A critic A/B'd it at the identical camera and sim state and proved it.
+   *
+   * dt = 0 is the point: a system that integrates by dt does nothing, while a
+   * system that re-fits to current state does its whole job.
+   */
+  syncSystems() {
+    this._runPhase('update', 0);
+    this._runPhase('lateUpdate', 0);
+    return this;
+  }
+
   _runPhase(method, dt) {
     const reg = this.registry;
     const ctx = this.ctx;
