@@ -219,10 +219,15 @@ export async function captureSet(suffix = '', opts = {}) {
   const b = ctx.track.bounds;
   const ctr = b.getCenter(new THREE.Vector3());
   const sz = b.getSize(new THREE.Vector3());
-  const d = Math.max(sz.x, sz.z) * 1.28;
-  cam.fov = 35;
-  cam.position.set(ctr.x + d * 0.50, ctr.y + d * 0.47, ctr.z + d * 0.66);
-  cam.lookAt(ctr.x, ctr.y - sz.y * 0.35, ctr.z);
+  // SECOND re-pose, after round 4. The first one dropped the elevation from 46.9
+  // to about 32 and that was right, but the critic measured that it STILL put no
+  // near corner and no table leg in frame — so the furniture the re-pose existed
+  // to reveal was still not being reviewed. Pull further back and swing wider so
+  // a near corner has headroom below it and a leg is visible against the floor.
+  const d = Math.max(sz.x, sz.z) * 1.45;
+  cam.fov = 34;
+  cam.position.set(ctr.x + d * 0.62, ctr.y + d * 0.42, ctr.z + d * 0.86);
+  cam.lookAt(ctr.x, ctr.y - sz.y * 0.55, ctr.z);
   cam.updateProjectionMatrix();
   ctx.postfx?.notifyCameraCut?.();
   shots.push(await window.MG.capture('crit-4-establishing' + tag, 1920, 1080));
