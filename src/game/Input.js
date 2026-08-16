@@ -198,8 +198,11 @@ export class Input {
       // 61% of lock, 14.6 of 24 degrees. `steerPos` tracked the command
       // exactly, so the vehicle's own rate limiter never engaged; this ramp was
       // the entire steering feel.
-      steerAttackSlow: 0.13,   // seconds to full lock, parked
-      steerAttackFast: 0.34,   // seconds to full lock, at top speed
+      // Second pass. The first cut took a 100 ms tap from 14.6 to 5.9 degrees
+      // and the playtest verdict was still "too strong", so the same two dials
+      // move again rather than one of them twice: 5.9 -> about 3.1 degrees.
+      steerAttackSlow: 0.16,   // seconds to full lock, parked
+      steerAttackFast: 0.42,   // seconds to full lock, at top speed
       steerReturn: 0.075,      // seconds back to centre
       steerCounter: 0.055,     // seconds to cross centre when countersteering
       // Shape the command so the first half of the travel is gentler than the
@@ -208,7 +211,7 @@ export class Input {
       // every small input is a scaled-down version of a big one. This is the
       // curve that gives a keyboard a trim range: out = x*(k + (1-k)*x*x),
       // exact at full lock, so nothing is taken away at the extremes.
-      steerExpo: 0.45,         // 1 = linear; lower = finer around centre
+      steerExpo: 0.30,         // 1 = linear; lower = finer around centre
       rumble: 1,
       invertSteer: false,
     };

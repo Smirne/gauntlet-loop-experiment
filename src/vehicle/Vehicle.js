@@ -966,8 +966,35 @@ export class Vehicle {
     // 30/s: two ticks to full. Imperceptible as lag, but it keeps the torque
     // trace continuous, which the engine synth and the tyre solve both prefer.
     const k = saturate(fdt * 30);
-    this.throttle += (c.throttle - this.throttle) * k;
-    this.brake += (c.brake - this.brake) * k;
+
+    // REVERSE SWAPS THE PEDALS, and without this the car cannot reverse at all.
+    //
+    // Playtest: "retro (going backward) does not work". Reverse GEAR engaged
+    // correctly — hold brake at a standstill for 0.28 s and `gear` goes to -1,
+    // measured. But the car never moved, because the same key is still the
+    // brake: engine torque needs throttle, the player is holding brake, so the
+    // drivetrain had reverse selected and nothing driving it while the pads
+    // clamped the wheels. Measured over 300 steps in reverse gear: speed stayed
+    // between -0.34 and +0.19.
+    //
+    // And there was no other key that could work. `_drivetrain` shifts back to
+    // first the moment throttle passes 0.5, so pressing forward in reverse gear
+    // just cancels reverse. Neither pedal could ever drive the car backwards.
+    //
+    // In reverse the pedals swap, which is what every arcade racer does and
+    // what a player already expects: the key that selected reverse drives it,
+    // and the forward key becomes the brake. The swap happens here, on the
+    // resolved inputs, so everything downstream — torque, ABS, brake lights,
+    // the engine synth, the AI — sees one consistent story and needs no
+    // special case of its own.
+    let inThrottle = c.throttle;
+    let inBrake = c.brake;
+    if (this.gear === -1) {
+      inThrottle = c.brake;
+      inBrake = c.throttle;
+    }
+    this.throttle += (inThrottle - this.throttle) * k;
+    this.brake += (inBrake - this.brake) * k;
     this.handbrake += (c.handbrake - this.handbrake) * saturate(fdt * 45);
     this.boostInput = c.boost;
     this.steerInput = c.steer;
@@ -1275,10 +1302,16 @@ export class Vehicle {
     const nGears = gears.length;
 
     /* --- reverse -------------------------------------------------------- */
-    if (this.gear >= 0 && Math.abs(this.forwardSpeed) < 3 && this.brake > 0.55 && this.throttle < 0.15) {
+    // Both tests read the RAW controls, not the latched ones. In reverse
+    // `_latchControls` swaps the pedals, so `this.throttle` is the brake key
+    // and testing it here would shift straight back out of reverse the instant
+    // the player pressed the key that is supposed to drive them backwards.
+    const rawThrottle = this.controls.throttle;
+    const rawBrake = this.controls.brake;
+    if (this.gear >= 0 && Math.abs(this.forwardSpeed) < 3 && rawBrake > 0.55 && rawThrottle < 0.15) {
       this._reverseHold += fdt;
       if (this._reverseHold > 0.28) { this.gear = -1; this._shiftTimer = 0; }
-    } else if (this.gear === -1 && this.throttle > 0.5 && this.forwardSpeed > -1.5) {
+    } else if (this.gear === -1 && rawThrottle > 0.5 && this.forwardSpeed > -1.5) {
       this.gear = 1;
       this._reverseHold = 0;
     } else {
