@@ -123,6 +123,36 @@ export async function captureSet(suffix = '', opts = {}) {
   const tag = suffix ? '-' + suffix : '';
   const shots = [];
 
+  /**
+   * Let the frame-level effects catch up with a camera that just teleported.
+   *
+   * `MG.capture()` pauses the engine and calls `renderFrame()` directly, so
+   * nothing's `update()` ever sees the new camera — every screen-space effect
+   * keeps whatever value the last LIVE frame left it holding. That is how a
+   * locked-off establishing shot ended up wearing the chase camera's
+   * full-screen speed lines: fx:overlay alone was lifting the far wall from
+   * 125 to 176 of 255 in a static wide.
+   *
+   * Stepping with rendering suppressed costs nothing and lets the damped terms
+   * decay to what this shot actually warrants. It does mean each frame is a
+   * few tenths of a second after the previous one rather than the same instant
+   * — which is the right trade, because these are four different cameras and
+   * were never one moment to a viewer anyway.
+   */
+  const settle = (steps = 48) => {
+    const eng = window.MG.engine;
+    const real = eng?.renderFrame;
+    if (eng) eng.renderFrame = () => {};
+    try {
+      for (let i = 0; i < steps; i++) eng?.stepOnce?.();
+    } finally {
+      if (eng) {
+        delete eng.renderFrame;
+        if (eng.renderFrame !== real) eng.renderFrame = real;
+      }
+    }
+  };
+
   // 1. the director's own race camera, exactly as a player sees it
   shots.push(await window.MG.capture('crit-1-gameplay' + tag, 1920, 1080));
 
@@ -139,6 +169,7 @@ export async function captureSet(suffix = '', opts = {}) {
   cam.lookAt(c.x, c.y + 2, c.z);
   cam.updateProjectionMatrix();
   ctx.postfx?.notifyCameraCut?.();
+  settle();
   shots.push(await window.MG.capture('crit-2-chase' + tag, 1920, 1080));
 
   // 3. macro detail: car body against the table surface
@@ -147,6 +178,7 @@ export async function captureSet(suffix = '', opts = {}) {
   cam.lookAt(c.x, c.y + 1.4, c.z);
   cam.updateProjectionMatrix();
   ctx.postfx?.notifyCameraCut?.();
+  settle();
   shots.push(await window.MG.capture('crit-3-macro' + tag, 1920, 1080));
 
   // 4. wide establishing shot of the whole circuit
@@ -180,6 +212,7 @@ export async function captureSet(suffix = '', opts = {}) {
   cam.lookAt(ctr.x, ctr.y - sz.y * 0.35, ctr.z);
   cam.updateProjectionMatrix();
   ctx.postfx?.notifyCameraCut?.();
+  settle();
   shots.push(await window.MG.capture('crit-4-establishing' + tag, 1920, 1080));
 
   return {

@@ -532,15 +532,39 @@ const ROOM = Object.freeze({
   wallMax: 1000,
   plank: [52, 420],    // floorboard width and stagger length
 
-  wallColor: 0xcfc6b8, // emulsion, warm off-white
+  // Emulsion in a pale grey-green. It was a warm off-white (0xcfc6b8), which is
+  // a perfectly good kitchen wall and the wrong one for this frame: the critics
+  // measured 85-88% of the image inside a single 40 degree amber band, and the
+  // room is the only large surface that can carry a complementary anchor. This
+  // colour is picked ISO-LUMINANT with the one it replaces — both land at 0.554
+  // relative luminance once uRoomTint has bent them toward the preset's cast —
+  // so the room's level is exactly where it was tuned and only its hue moved.
+  // uRoomTint still pulls it halfway to the preset, so goldenHour warms it back
+  // and it never fights the key.
+  wallColor: 0xb4c8c8,
   floorColor: 0x93673d, // mid oak board
   tint: 0.50,          // how far each albedo bends toward the preset's own cast
   tone: 0.46,          // wall level against the backdrop palette
   floorTone: 1.0,
   propTone: 0.62,
-  wallSheen: 0.06,     // emulsion has a real Fresnel edge; this is what sells it
-  floorGloss: 0.14,    // satin varnish: the window smears along the boards
+  // Sheen strengths. See the sheen block in ROOM_FRAG for why these are larger
+  // than they look: most of the lobe is a wide, weak ambient term, not a mirror.
+  wallSheen: 0.10,
+  floorGloss: 0.20,    // satin varnish: the window smears along the boards
   skirt: 105,          // skirting height. Below ~90 it dies at establishing distance.
+  // Splashback band, floor-relative. Pinned to ROOM_PROPS: the counter runs are
+  // 300 tall and the wall cupboards hang from 470, so the tiles fill exactly the
+  // gap between them, which is also the strip of wall that survives being seen
+  // over a 250 u tabletop.
+  splash: [300, 470],
+  // How much of `scene.fog` the room takes (D13). Lighting owns the fog and its
+  // 0.0006 exp2 density is right for the playfield, but the room is the farthest
+  // thing in any frame: at the 1200 u of the far wall the raw factor is 0.40, and
+  // mixing 40% of a cool neutral (0x92979e) over every wall and board is most of
+  // why the reviewers read the room as a colourless card. At 0.62 the far wall
+  // still sits at a quarter fog, so aerial perspective survives and the material
+  // comes back through it.
+  fog: 0.62,
 
   amb: 0.58,           // shading floor, unlit faces
   key: 0.82,           // extra for a face turned to the window
@@ -565,6 +589,13 @@ const OUTDOOR_THEMES = new Set(['garden', 'outdoor', 'yard', 'street']);
  * reading as a step.
  */
 const FLOOR_THEMES = new Map([['bedroom', 8]]);
+
+/**
+ * Themes that get the tiled splashback. Deliberately narrow: tiles between
+ * worktop and wall-unit height read as a kitchen instantly, and read as a
+ * mistake on a bedroom wall.
+ */
+const TILED_THEMES = new Set(['kitchen']);
 
 /**
  * Blocks along the walls, in wall-anchored coordinates:
@@ -650,6 +681,8 @@ uniform float uRoomTint;     // how far each albedo bends toward the preset cast
 uniform float uWallSheen;
 uniform float uFloorGloss;
 uniform float uSkirt;
+uniform vec3  uSplash;       // tile band: low edge, high edge, amount
+uniform float uRoomFog;      // how much of scene.fog this room takes
 
 uniform vec3  uBounceColor;  // warm light coming back off the tabletop
 uniform float uBounceAmt;
@@ -816,6 +849,58 @@ void main() {
   }
   #endif
 
+  // Glazed tile is glossier than emulsion; the splashback below adds to this.
+  float glossExtra = 0.0;
+
+  // --- splashback. The two walls the counter runs stand against are tiled from
+  // --- worktop height to the underside of the wall units, in a running bond of
+  // --- 66 x 33 u metro tiles (20 x 10 cm at the room's 3.33 u per cm).
+  // ---
+  // --- This is the room's answer to "no material at any scale", and the band is
+  // --- where it is because that is the strip of wall the frame can actually
+  // --- see. Sightlines in the establishing shot descend at about 32 degrees, so
+  // --- a ray grazing the front top edge of a 300 u counter meets the wall 200 u
+  // --- behind it 125 u lower: everything on that wall below ~175 u is hidden by
+  // --- the counter, and everything below ~44 u is hidden by the table rim. The
+  // --- 300-470 band clears both, which the skirting never can.
+  #ifndef MG_ROOM_PROP
+  {
+    // Derivatives stay out of every branch: taken in non-uniform control flow
+    // they are undefined, and this is a handful of ALU either way.
+    // One horizontal coordinate serves both tiled walls, because on each of them
+    // exactly one of x and z is constant.
+    float su = ( ( P.x - uRoomCenter.x ) + ( P.z - uRoomCenter.z ) ) / 66.0;
+    float sv = h / 33.0;
+    float crisp = 1.0 - smoothstep( 0.05, 0.26, fwidth( su ) );
+
+    float lo = uSplash.x;
+    float hi = max( uSplash.y, lo + 20.0 );
+    // Inward normal is +Z on the -Z wall and +X on the -X wall, which are the
+    // two ROOM_PROPS puts counter runs against. Everything else stays plain.
+    float tiled = smoothstep( 0.70, 0.95, max( N.z, N.x ) );
+    float band = smoothstep( lo, lo + 12.0, h ) * ( 1.0 - smoothstep( hi - 12.0, hi, h ) );
+    float m = uSplash.z * tiled * band * ( 1.0 - floorness );
+
+    // Running bond: every other course shifts half a tile. Staggering AFTER the
+    // derivative keeps the course boundary from sampling a discontinuity and
+    // drawing a one-pixel line across the wall.
+    float row = floor( sv );
+    float su2 = su + 0.5 * mod( row, 2.0 );
+    float grout = max(
+      smoothstep( 0.88, 1.0, abs( fract( su2 ) - 0.5 ) * 2.0 ),
+      smoothstep( 0.84, 1.0, abs( fract( sv ) - 0.5 ) * 2.0 )
+    );
+    // Glazed ceramic is never one colour across a wall.
+    float tid = mgBoardTone( floor( su2 ) * 3.0 + row * 11.0 );
+    // Only the HIGH-frequency half takes the derivative fade. The band's own
+    // value lift is low frequency and survives any distance, which is the same
+    // reason the skirting works: a horizontal change of value across a wall
+    // reads as a room long after the grout it came from has dissolved.
+    col *= 1.0 + m * ( 0.20 + ( tid * 0.10 - grout * 0.42 ) * crisp );
+    glossExtra += m * 0.22;
+  }
+  #endif
+
   vec3 albedo = col;
 
   // --- shading. One key, from the window, plus a flat ambient. A wall with the
@@ -917,14 +1002,26 @@ void main() {
   // --- floor smears the window along the boards. The reflection is sampled from
   // --- the same environment function the shell paints with, clamped so the pane
   // --- cannot put a mirror-bright hole in a floorboard.
-  float gloss = mix( uWallSheen, uFloorGloss, floorness );
-  float fres = pow( clamp( 1.0 - max( dot( N, -V ), 0.0 ), 0.0, 1.0 ), 5.0 );
+  // ---
+  // --- The lobe is SPLIT, and that is the whole point. A Schlick pow-5 term on
+  // --- its own is inert at the angles this game's cameras use: the establishing
+  // --- shot meets the far wall about 25 degrees off its normal, where pow-5
+  // --- evaluates to 8e-5 and 0.06 of it is nothing at all. So the wide, weak
+  // --- part of the lobe — the part emulsion actually has, and the part that
+  // --- makes a wall look painted rather than printed — is taken from pal, the
+  // --- room's own light colour, which is already in hand and costs nothing. The
+  // --- narrow mirror part still comes from the environment, but only where the
+  // --- surface really is grazing, which keeps the expensive call rare.
+  float gloss = mix( uWallSheen, uFloorGloss, floorness ) + glossExtra;
+  float ndv = clamp( dot( N, -V ), 0.0, 1.0 );
+  float fres = pow( 1.0 - ndv, 3.0 );
+  col += pal * gloss * ( 0.22 + 0.60 * fres );
   // The gate is worth having: mgEnvColor is the most expensive thing in this
   // shader and the room can cover a third of the frame. A surface seen close to
   // head-on contributes under half a level and is skipped.
-  if ( gloss * ( 0.03 + 0.97 * fres ) > 0.002 ) {
+  if ( gloss * fres > 0.004 ) {
     vec3 env = min( mgEnvColor( reflect( V, N ) ), vec3( 2.5 ) );
-    col += env * gloss * ( 0.03 + 0.97 * fres );
+    col += env * gloss * fres * 1.7;
   }
 
   // Same master the shell applies, applied at the same point in the chain, so
@@ -937,7 +1034,11 @@ void main() {
     #else
       float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
     #endif
-    col = mix( col, fogColor, clamp( fogFactor, 0.0, 1.0 ) );
+    // Scaled by uRoomFog (D13). The room is the farthest geometry in every
+    // frame, so it collects the most fog of anything on screen, and at the raw
+    // density the far wall arrives 40% replaced by a flat cool neutral. The
+    // scale keeps the aerial perspective and hands the material back.
+    col = mix( col, fogColor, clamp( fogFactor * uRoomFog, 0.0, 1.0 ) );
   #endif
 
   // Hand back to the painted shell across the top of the wall. Done after fog
@@ -1004,6 +1105,10 @@ export function makeRoomUniforms(envUniforms) {
   u.uWallSheen = { value: ROOM.wallSheen };
   u.uFloorGloss = { value: ROOM.floorGloss };
   u.uSkirt = { value: ROOM.skirt };
+  // z is the amount, and starts at zero: _fitRoom turns the tiles on only for
+  // themes that should have them, so a room that never fits stays untiled.
+  u.uSplash = { value: new THREE.Vector3(ROOM.splash[0], ROOM.splash[1], 0) };
+  u.uRoomFog = { value: ROOM.fog };
 
   // Overwritten every frame from ctx.lighting.bounce when there is one; these
   // are the morning values so the room is never wrong before Lighting reports.
@@ -1381,6 +1486,7 @@ export class Sky {
     u.uRoomHalf.value.set(halfX, wallH, halfZ);
     u.uTableCenter.value.set(cx, topY, cz);
     u.uTableHalf.value.set(tableHX, tableHZ);
+    u.uSplash.value.set(ROOM.splash[0], ROOM.splash[1], TILED_THEMES.has(theme) ? 1 : 0);
 
     // Was 0.72, which clipped the one prop tall enough to matter. The handback
     // no longer touches props, so they can stand their real height; the cap is
@@ -1631,7 +1737,7 @@ export class Sky {
    *          key?: number, pool?: number, tableShade?: number,
    *          window?: number, tableAO?: number, tint?: number,
    *          wallSheen?: number, floorGloss?: number, skirt?: number,
-   *          bounceRange?: number, lampSpill?: number,
+   *          fog?: number, bounceRange?: number, lampSpill?: number,
    *          wallColor?: number, floorColor?: number}} opts
    */
   setRoom(opts = {}) {
@@ -1652,6 +1758,7 @@ export class Sky {
       if (Number.isFinite(opts.wallSheen)) u.uWallSheen.value = opts.wallSheen;
       if (Number.isFinite(opts.floorGloss)) u.uFloorGloss.value = opts.floorGloss;
       if (Number.isFinite(opts.skirt)) u.uSkirt.value = opts.skirt;
+      if (Number.isFinite(opts.fog)) u.uRoomFog.value = opts.fog;
       if (Number.isFinite(opts.bounceRange)) u.uBounceRange.value = opts.bounceRange;
       if (Number.isFinite(opts.lampSpill)) u.uLampSpill.value = opts.lampSpill;
       if (Number.isFinite(opts.wallColor)) u.uWallColor.value.set(opts.wallColor);

@@ -682,6 +682,30 @@ function lampZ(shell, l, depth, dir, proud = 0.05) {
   return dir < 0 ? Math.min(l.z, want) : Math.max(l.z, want);
 }
 
+/**
+ * Where a round lamp's bucket has to sit for its lens to reach the surface it
+ * is mounted in.
+ *
+ * `lampZ` cannot do this one: it is written for a flat plate centred on its own
+ * z, while `makeRoundLamp` puts the lens face 0.24 of the bucket depth ahead of
+ * the origin and hangs the bucket a whole depth behind it. Measured on the
+ * muscle, whose nose runs to z 4.75, the headlamps were authored at 4.50 and
+ * 4.56 — so roughly half of each lens was inside the paint and what showed was
+ * a crescent.
+ *
+ * The reach is taken at the lamp's centre rather than across its footprint,
+ * which is the opposite of what lampZ does at the tail and is deliberate: a
+ * bucket lamp on a nose that curves away is meant to sit in a recess, so
+ * clearing the outermost point under its rim would push the whole assembly out
+ * onto the nose tip instead of seating it in the face it belongs to.
+ */
+function roundLampZ(shell, l, depth, dir, proud = 0.03) {
+  const reach = endSurfaceZ(shell, Math.abs(l.x), l.y, dir);
+  if (reach === null) return l.z;
+  const want = reach + dir * (proud - depth * 0.24);
+  return dir < 0 ? Math.min(l.z, want) : Math.max(l.z, want);
+}
+
 /** Revolve a (radius, axial) profile about the local X axis. */
 export function revolveX(profile, segments = 28, phiStart = 0, phiLength = TAU) {
   const pts = profile.map((p) => new THREE.Vector2(Math.max(1e-4, p[0]), p[1]));
@@ -1696,12 +1720,54 @@ function buildBodyShell(cfg) {
 
   const zTail = keys[0].z;
   const zNose = keys[keys.length - 1].z;
-  const capN = cfg.capNose ?? 0.36;
-  const capT = cfg.capTail ?? 0.30;
+  const arches = cfg.arches || [];
+
+  /* --- how much of each end is cap, and why it is not what was authored ---
+   *
+   * A cap is an INSET OF ONE STATION'S RING, not a sampled section: whatever
+   * cross-section the first (or last) station happens to have is frozen into
+   * the whole cap. Take that station inside a wheel arch and the arch's raised
+   * floor is what the entire end of the car is made of.
+   *
+   * That is what the muscle's tail was. Its rear axle sits at z = -3.245 with a
+   * 1.29 arch radius, so the arch lifts the floor as far back as z = -4.535;
+   * the body ends at -4.75 and capTail 0.34 put the last station at -4.41,
+   * still 0.125 u inside the arch. Measured, the rearmost 0.34 u of a 9.5 u car
+   * was a 3.14 x 0.30 lip 1.5 u off the ground with open air below it, and the
+   * tail lamps, the reversing lamps, the valance, the plate and the exhausts
+   * all hung in that air with no bodywork behind any of them. The pickup was
+   * the same at 0.29, the rally at 0.45.
+   *
+   * Pulling the cap back until its station clears the arch gives those cars
+   * their rear panel back — 0.30 u of lip becomes 1.5 u of body — and costs
+   * only roll radius on the corner. The floor keeps a real roll even on a
+   * short overhang that can never clear its arch (the rally hatch has 0.006 u
+   * of room), because a razor edge is the defect the roll was added to fix.
+   * Nothing here moves zMin or zMax: the cap always ends at the key station, so
+   * the livery's z parameterisation is untouched.
+   */
+  const CAP_MIN = 0.12;
+  // Landing the station exactly on the arch edge is not clear of it: there the
+  // arch has lowered the opening to hub height but not yet let the floor go, so
+  // the section is still a metre of car short. Measured on the muscle, exact
+  // gave a 0.72 u rear face and 0.02 u past it gave 1.49. The arch wall is
+  // vertical, so the margin only has to beat rounding.
+  const ARCH_MARGIN = 0.02;
+  const capRoom = (zEnd, dir) => {
+    let room = Infinity;
+    for (const a of arches) {
+      const d = (dir < 0 ? (a.z - a.r) - zEnd : zEnd - (a.z + a.r)) - ARCH_MARGIN;
+      if (d < room) room = d;
+    }
+    return room;
+  };
+  const capN0 = cfg.capNose ?? 0.36;
+  const capT0 = cfg.capTail ?? 0.30;
+  const capN = clamp(Math.min(capN0, capRoom(zNose, 1)), Math.min(CAP_MIN, capN0), capN0);
+  const capT = clamp(Math.min(capT0, capRoom(zTail, -1)), Math.min(CAP_MIN, capT0), capT0);
   const zA = zTail + capT;
   const zB = zNose - capN;
 
-  const arches = cfg.arches || [];
   const floorAt = (z) => {
     let y = cfg.floorY;
     for (const a of arches) {
@@ -1966,6 +2032,80 @@ function makeExhaust(path, r, o = {}) {
   });
 }
 
+/**
+ * The dark bore of a pipe: a funnel set into the outlet.
+ *
+ * `sweep` caps both ends of every path it runs, so an exhaust is a closed
+ * chrome rod — and four closed chrome rods under a tail are what the modelling
+ * critic read as legs. What separates a pipe from a rod is one thing: a black
+ * hole with a lit rim around it. This builds that hole as a cone whose mouth
+ * sits a hair proud of the chrome cap (never coplanar with it, so the two can
+ * never z-fight) and whose apex is well inside the pipe, wound so the surface
+ * you see is the inside of the funnel.
+ *
+ * @param {number[][]} path  the same path the pipe was swept along
+ * @param {number} r         the same radius
+ * @param {object} o         { flare, bore, boreDepth, segments } — flare must
+ *                           match the pipe's or the bore will not fit the tip
+ */
+function pipeBore(path, r, o = {}) {
+  const n = path.length;
+  if (n < 2) return null;
+  const tip = path[n - 1];
+  const prev = path[n - 2];
+  let tx = tip[0] - prev[0];
+  let ty = tip[1] - prev[1];
+  let tz = tip[2] - prev[2];
+  const tl = Math.hypot(tx, ty, tz);
+  if (!(tl > 1e-6)) return null;
+  tx /= tl; ty /= tl; tz /= tl;
+
+  // Any two axes across the tangent. The reference only has to be non-parallel.
+  let ax = 0; let ay = 1; let az = 0;
+  if (Math.abs(ty) > 0.9) { ax = 1; ay = 0; az = 0; }
+  let ux = ay * tz - az * ty;
+  let uy = az * tx - ax * tz;
+  let uz = ax * ty - ay * tx;
+  const ul = Math.hypot(ux, uy, uz) || 1;
+  ux /= ul; uy /= ul; uz /= ul;
+  const vx = ty * uz - tz * uy;
+  const vy = tz * ux - tx * uz;
+  const vz = tx * uy - ty * ux;
+
+  const rTip = r * (1 + (o.flare ?? 0.25));
+  const rm = rTip * (o.bore ?? 0.76);
+  const depth = rTip * (o.boreDepth ?? 2.0);
+  const seg = Math.max(6, o.segments ?? 10);
+  const lip = 0.006;
+
+  const pos = [];
+  const uvs = [];
+  for (let i = 0; i < seg; i++) {
+    const a = (i / seg) * TAU;
+    const cs = Math.cos(a);
+    const sn = Math.sin(a);
+    pos.push(
+      tip[0] + tx * lip + (ux * cs + vx * sn) * rm,
+      tip[1] + ty * lip + (uy * cs + vy * sn) * rm,
+      tip[2] + tz * lip + (uz * cs + vz * sn) * rm,
+    );
+    uvs.push(i / seg, 1);
+  }
+  pos.push(tip[0] - tx * depth, tip[1] - ty * depth, tip[2] - tz * depth);
+  uvs.push(0.5, 0);
+
+  const apex = seg;
+  const idx = [];
+  for (let i = 0; i < seg; i++) idx.push(apex, i, (i + 1) % seg);
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 /** A wing: an aerofoil plate on two end plates and two pylons. */
 function makeWing(o) {
   const span = o.span;
@@ -2135,6 +2275,11 @@ function makeCollector(flatUV) {
     },
     /** Add a part and its mirror image on the other side of the car. */
     pair(role, geometry, matrix) {
+      // `add` already tolerates a null part; `mirrorGeom` below does not, and a
+      // factory that declines to build something (pipeBore on a degenerate
+      // path) would otherwise take the whole car's extras down with it — they
+      // are built inside one try/catch, so one throw costs every part after it.
+      if (!geometry) return;
       this.add(role, geometry, matrix);
       const m = matrix ? matrix.clone() : new THREE.Matrix4();
       const flip = new THREE.Matrix4().makeScale(-1, 1, 1);
@@ -2181,23 +2326,34 @@ function dressChassis(env, d) {
 
   const lights = { head: [], brake: [], reverse: [] };
 
+  // The nose is authored against the key stations exactly as the tail was, and
+  // has the same problem for the same reason — the shell runs a cap radius past
+  // its last station. Seated here rather than by hand so the numbers survive a
+  // retune. A lamp raked into a wedge nose keeps its authored z: pitching it
+  // means its face is no longer the plate's own +Z and none of this applies.
   for (const l of (d.headlamps || [])) {
     if (l.type === 'round') {
-      const { bucket, lens } = makeRoundLamp(l.r, l.depth ?? 0.34);
+      const depth = l.depth ?? 0.34;
+      const lz = roundLampZ(shell, l, depth, 1, 0.03);
+      const { bucket, lens } = makeRoundLamp(l.r, depth);
       // revolveX leaves the lens on +X; -90 degrees about Y swings it to +Z.
-      const m = xform(l.x, l.y, l.z, 0, -Math.PI / 2, 0);
+      const m = xform(l.x, l.y, lz, 0, -Math.PI / 2, 0);
       out.pair('chrome', bucket, m);
       out.pair('lampClear', lens, m);
-    } else {
-      const g = makeBarLamp(l.w, l.h, l.d ?? 0.22, l.r ?? 0.09);
-      out.pair('lampClear', g, xform(l.x, l.y, l.z, l.pitch ?? 0, 0, l.roll ?? 0));
-      if (l.surround !== false) {
-        const s = makeBarLamp(l.w + 0.16, l.h + 0.16, (l.d ?? 0.22) * 0.7, (l.r ?? 0.09) + 0.05);
-        out.pair('trim', s, xform(l.x, l.y, l.z - 0.06, l.pitch ?? 0, 0, l.roll ?? 0));
-      }
+      lights.head.push({ x: l.x, y: l.y, z: lz });
+      if (l.x !== 0) lights.head.push({ x: -l.x, y: l.y, z: lz });
+      continue;
     }
-    lights.head.push({ x: l.x, y: l.y, z: l.z });
-    if (l.x !== 0) lights.head.push({ x: -l.x, y: l.y, z: l.z });
+    const depth = l.d ?? 0.22;
+    const lz = (l.pitch || l.roll) ? l.z : lampZ(shell, l, depth, 1, 0.04);
+    const g = makeBarLamp(l.w, l.h, depth, l.r ?? 0.09);
+    out.pair('lampClear', g, xform(l.x, l.y, lz, l.pitch ?? 0, 0, l.roll ?? 0));
+    if (l.surround !== false) {
+      const s = makeBarLamp(l.w + 0.16, l.h + 0.16, depth * 0.7, (l.r ?? 0.09) + 0.05);
+      out.pair('trim', s, xform(l.x, l.y, lz - 0.06, l.pitch ?? 0, 0, l.roll ?? 0));
+    }
+    lights.head.push({ x: l.x, y: l.y, z: lz });
+    if (l.x !== 0) lights.head.push({ x: -l.x, y: l.y, z: lz });
   }
 
   // The tail is what the macro camera points straight at, and every one of
@@ -2259,12 +2415,25 @@ function dressChassis(env, d) {
     out.pair(m.role || 'trim', stalk);
     out.pair(m.role || 'trim', pod, xform(m.x, m.y, m.z));
     // The reflective face belongs on the rearward side of the head, not the
-    // outboard one: +Z is the nose, so the glass sits a hair proud at -Z.
-    out.pair('glass', bevelBox(0.24, 0.15, 0.05, 0.02, 2), xform(m.x + 0.01, m.y, m.z - 0.08));
+    // outboard one: +Z is the nose, so the face sits a hair proud at -Z. It is
+    // chrome rather than glazing: the glass material is a dark tint at 0.30
+    // opacity with depthWrite off, which on a 0.24 u plate laid over a now-dark
+    // trim pod returns a dark rectangle on a dark blob. A mirror is the one
+    // place on a car where a hard specular glint is the correct read, and it is
+    // what tells you the pod is a mirror and not a lump.
+    out.pair('chrome', bevelBox(0.24, 0.15, 0.05, 0.02, 2), xform(m.x + 0.01, m.y, m.z - 0.08));
   }
 
   for (const e of (d.exhausts || [])) {
-    out.pair('chrome', makeExhaust(e.path, e.r ?? 0.16, e));
+    const er = e.r ?? 0.16;
+    out.pair('chrome', makeExhaust(e.path, er, e));
+    // A capped chrome cylinder is a rod. Below about 0.12 u the bore is under
+    // a pixel at any distance the game shows the car at, and all it would buy
+    // is a dark speck on the tip.
+    if (er >= 0.12) {
+      const bore = pipeBore(e.path, er, e);
+      if (bore) out.pair('grille', bore);
+    }
   }
 
   if (d.plate !== false) {
@@ -2371,7 +2540,12 @@ export const CAR_MODELS = {
       const lights = dressChassis(env, {
         archLip: { thick: 0.15, tall: 0.12 },
         bumperFront: { z: 4.42, y: 1.22, half: 0.99, depth: 0.62, thick: 0.22, tall: 0.34, rise: 0.05 },
-        bumperRear: { z: -4.42, y: 1.28, half: 0.99, depth: 0.52, thick: 0.22, tall: 0.34, rise: 0.05 },
+        // The rear bumper was authored when the tail had no bodywork below the
+        // boot line to be authored against — see the cap/arch note in
+        // buildBodyShell. With the rear panel back, a bar at z -4.42 lies
+        // entirely inside the paint; at -4.61 its face stands 0.08 proud of the
+        // panel, and 1.02 drops it clear of the tail lamps above.
+        bumperRear: { z: -4.61, y: 1.02, half: 0.99, depth: 0.52, thick: 0.22, tall: 0.34, rise: 0.05 },
         headlamps: [
           { type: 'round', x: 0.72, y: 1.70, z: 4.56, r: 0.34 },
           { type: 'round', x: 1.36, y: 1.70, z: 4.50, r: 0.34 },
@@ -2380,9 +2554,13 @@ export const CAR_MODELS = {
         reverselamps: [{ x: 0.30, y: 1.50, z: -4.56, w: 0.36, h: 0.24 }],
         grille: { y: 1.72, z: 4.52, w: 2.30, h: 0.62, bars: 5 },
         mirrors: [{ x: 1.86, y: 2.32, z: 0.62 }],
+        // The tips used to stop at z -4.72, which was 0.03 u short of the rear
+        // panel — so with the panel restored the outlets were inside the car.
+        // 0.11 u proud puts the bore where it can be seen and the tips below
+        // the bumper, which is where a quad-tip system exits.
         exhausts: [
-          { path: [[1.02, 0.52, -3.4], [1.10, 0.50, -4.2], [1.14, 0.54, -4.72]], r: 0.155, flare: 0.30 },
-          { path: [[1.42, 0.52, -3.4], [1.48, 0.50, -4.2], [1.50, 0.54, -4.72]], r: 0.155, flare: 0.30 },
+          { path: [[1.02, 0.44, -3.4], [1.10, 0.42, -4.2], [1.14, 0.46, -4.86]], r: 0.155, flare: 0.30 },
+          { path: [[1.42, 0.44, -3.4], [1.48, 0.42, -4.2], [1.50, 0.46, -4.86]], r: 0.155, flare: 0.30 },
         ],
         glass: { z: [-2.55, 0.98], lift: 0.06, low: 6, steps: 14 },
         interior: { z0: -2.5, z1: 0.9, inset: 0.30, seatY: 1.52, seatZ: -1.2, seatX: [-0.68, 0.68] },
@@ -2399,18 +2577,20 @@ export const CAR_MODELS = {
       // ends inside an arch, both ends inside the tyre. What you saw was a
       // chrome capsule apparently floating beside the sills with its tips
       // buried in the wheels.
-      out.pair('chrome', makeExhaust([[1.78, 0.74, 1.30], [1.83, 0.70, -0.30], [1.80, 0.74, -1.92]], 0.19, { flare: 0.10 }));
+      const sidePipe = [[1.78, 0.74, 1.30], [1.83, 0.70, -0.30], [1.80, 0.74, -1.92]];
+      out.pair('chrome', makeExhaust(sidePipe, 0.19, { flare: 0.10 }));
+      out.pair('grille', pipeBore(sidePipe, 0.19, { flare: 0.10 }));
       // Boot lip.
       out.add('paint', bevelBox(3.20, 0.16, 0.55, 0.10, 2), xform(0, 2.50, -4.02, 4 * DEG, 0, 0));
-      // Rear panel. The tail is the view the macro camera holds longest and it
-      // was bare paint: the lamps sit above the bumper line, the exhausts below
-      // it, and the whole band between y 0.9 and 1.2 had nothing on it at all.
-      // A recessed black valance with a chrome-framed plate set into it is what
-      // a 60s coupe actually has there, and it gives the boot face a highlight,
-      // a shadow and a straight edge to read scale against.
-      out.add('grille', bevelBox(2.10, 0.44, 0.12, 0.05, 2), xform(0, 1.02, -4.72));
-      out.add('chrome', bevelBox(1.30, 0.34, 0.10, 0.04, 2), xform(0, 1.02, -4.80));
-      out.add('base', bevelBox(1.10, 0.22, 0.05, 0.02, 2), xform(0, 1.02, -4.84));
+      // Rear panel furniture, stacked down the face the macro camera holds
+      // longest: lamps at y 1.39-1.89, the bumper blade under them, the plate
+      // standing off the bumper's own face where a 60s coupe carries it, and a
+      // black lower valance under all of it for the tips to exit beside. Each
+      // one is placed against the rear panel's real surface at z -4.75, which
+      // is what the whole band lacked before.
+      out.add('chrome', bevelBox(1.30, 0.34, 0.10, 0.04, 2), xform(0, 1.07, -4.87));
+      out.add('base', bevelBox(1.10, 0.22, 0.05, 0.02, 2), xform(0, 1.07, -4.91));
+      out.add('grille', bevelBox(1.50, 0.30, 0.12, 0.05, 2), xform(0, 0.56, -4.78));
       return lights;
     },
   },
@@ -2657,7 +2837,9 @@ export const CAR_MODELS = {
           [2.00, 1.74, 1.10 - i * 0.24],
         ], 0.125, { flare: 0 }));
       }
-      out.pair('chrome', makeExhaust([[2.04, 1.62, 0.90], [2.06, 1.46, -0.70], [2.04, 1.44, -1.96]], 0.20, { flare: 0.30 }));
+      const collector = [[2.04, 1.62, 0.90], [2.06, 1.46, -0.70], [2.04, 1.44, -1.96]];
+      out.pair('chrome', makeExhaust(collector, 0.20, { flare: 0.30 }));
+      out.pair('grille', pipeBore(collector, 0.20, { flare: 0.30 }));
       return lights;
     },
   },
@@ -2832,9 +3014,9 @@ export const CAR_MODELS = {
       out.add('trim', bevelBox(1.85, 0.85, 1.30, 0.24, 3), xform(0, 2.34, -2.75));
       out.add('chrome', revolveX([[0.001, -0.16], [0.52, -0.16], [0.58, 0], [0.52, 0.16], [0.001, 0.16]], 16),
         xform(0, 2.86, -2.75, 0, 0, Math.PI / 2));
-      out.pair('chrome', makeExhaust([
-        [0.62, 2.10, -3.15], [1.10, 1.90, -3.60], [1.28, 2.36, -3.86],
-      ], 0.135, { flare: 0.42 }));
+      const upsweep = [[0.62, 2.10, -3.15], [1.10, 1.90, -3.60], [1.28, 2.36, -3.86]];
+      out.pair('chrome', makeExhaust(upsweep, 0.135, { flare: 0.42 }));
+      out.pair('grille', pipeBore(upsweep, 0.135, { flare: 0.42 }));
       // Windscreen frame only — no glass, it is a beach car.
       out.add('trim', makeTubes([
         [[-1.28, 2.20, 1.34], [-1.16, 3.02, 1.24]],
@@ -2918,10 +3100,11 @@ export const CAR_MODELS = {
       // static axle would tear straight through the wheels. VehicleVisual
       // assembles them per frame from `liveAxle` and the real hub positions.
       out.add('base', bevelBox(1.10, 0.70, 1.30, 0.20, 3), xform(0, 2.10, -0.20));
-      // Stacks.
-      out.pair('chrome', makeExhaust([
-        [1.15, 3.10, -1.30], [1.35, 4.20, -1.45], [1.42, 5.35, -1.50],
-      ], 0.17, { flare: 0.28 }));
+      // Stacks. These point up, and every camera in the game looks down, so
+      // the bore is the part of them anything ever sees.
+      const stack = [[1.15, 3.10, -1.30], [1.35, 4.20, -1.45], [1.42, 5.35, -1.50]];
+      out.pair('chrome', makeExhaust(stack, 0.17, { flare: 0.28 }));
+      out.pair('grille', pipeBore(stack, 0.17, { flare: 0.28 }));
       return lights;
     },
   },

@@ -1030,3 +1030,87 @@ parallel[1] failed: agent stalled on all 6 attempts (no progress for 180000ms ea
 </task-notification>
 
 **You:** [Request interrupted by user]
+
+**You:** Continue from where you left off.
+
+**Claude:** No response requested.
+
+**You:** continue
+
+**Claude:** Wave 5: 3 of 5 landed. B-tyres and E-room both failed — and their files are modified, so they may be half-written. Checking before anything else:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git diff --stat -- src echo "=== pa`
+
+**Claude:** All parse and no dangling calls — but that's exactly what was true last time the boot hung. Booting is the test:
+  - `mcp__Claude_Browser__preview_start: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `mcp__Claude_Browser__read_console_messages: seed`
+
+**Claude:** Clean boot, console clear. Capturing to see what the two failed agents left behind:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-3-macro-r10.png`
+
+**Claude:** Substantial improvement — and notably the tyres are now dark rubber against bright rims, which was the top finding. Both failed agents got most of their work in before stalling.
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-4-establishing-r10.png`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-2-chase-r10.png`
+
+**Claude:** Grounding is visibly fixed — a real cast shadow beside the car, dark tyres, and the road grain now runs straight through the corner instead of bending with it.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git add -A && git commit -q -F - <<`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Artifact: /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-`
+
+**Claude:** Wave 5 committed as `2f4f488`, page updated: https://claude.ai/code/artifact/41a6f0af-c1d8-410f-b95a-cc2c96b66666
+
+**Three of five agents finished, two stalled — and for the first time a failure cost nothing.** Both stalled agents left the tree runnable: clean boot, 34 modules, zero warnings, console clear. That's the rule added after wave 3's wreckage paying off on a failure rather than a success. Nothing had to be reverted.
+
+What landed:
+
+- **The car touches the table.** The blob was drawing 264 instances a frame of something *below the visible threshold* — a centimetre past the flank gave a 3% darkening, which is exactly the "0.27% of pixels changed by more than 25%" the critic measured. Now 34%.
+- **The tyres are dark rubber again**, the value anchor a die-cast object needs. Two critics reached that independently, which made it the round's highest-confidence item.
+- **The road's grain runs straight through corners** instead of wrapping 180° round both hairpins.
+- **The grade can reach black**, so the wood's dark grain is brown rather than rose-magenta.
+
+The best thing that happened is that **the grounding agent disagreed with my brief and argued it out.** I told it to fix the blob's lean; it showed the lean points away from the key on all four daylight presets — the side the macro and chase cameras can't see, and which the car's own 8.1 u of self-occlusion swallows whole. Lean spends darkening where nothing can look. It fixed reach instead, and gave lean only a small bounded value. It also settled the shallow-shadow finding by arithmetic rather than grinding: 0.38 decomposes into 0.347 fill and 0.653 key, so the shadow is shallow because a third of every lit pixel comes from light that casts nothing — not a shadow bug at all.
+
+**Still open**, because their agents stalled: the greenhouse is a clipped white slab hiding a modelled interior, the tail cap is still 3 steps, and the room is still a grey card with no skirting line at establishing distance. `Sky.js` took 423 lines before its agent died, so that one is part-done — it needs a re-run, not a rescue.
+
+One thing I'm carrying forward rather than burying: the grounding agent flagged that the blob quad grew to 15.96 × 9.45, so a car on the outside line near a table edge has ~2.4 u more quad hanging past the surface it belongs to, where it could draw as a dark smear in mid-air. I haven't looked for it at an edge yet.
+
+Next is round 4: re-run the two stalled agents, then critique again. The open list is now composition and detail rather than anything structural — which is the first time that's been true.
+
+**You:** continue
+
+**Claude:** Wave 6 — re-run the two that stalled, plus prop composition. I'll take the blob-overhang risk myself since it needs visual verification at a table edge, which agents can't do.
+  - `Workflow: export const meta = { name: 'micro-gauntlet-wave-6', description: 'Room material, car interior and tail, prop composition', phases: [{ title: 'Detail', detail`
+
+**Claude:** Now the blob-overhang risk the grounding agent flagged. It needs a car near a table edge, which agents can't set up:
+  - `mcp__Claude_Browser__preview_start: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/blob-edge.png`
+
+**Claude:** Checked at 4 u from the rim, viewed from off-table so any overhang would be silhouetted against the room: **no smear.** The flagged risk doesn't materialise — the blob is clipped by the tabletop before it reaches the edge.
+
+That frame also happens to be the best evidence yet that the table edge work landed: a thick board with end grain and a moulded lip catching the light, standing in a room.
+
+Wave 6 is running — three agents on the room material, the car interior and tail, and prop composition. Status so far:
+
+**Verified this turn**
+- Contact-blob overhang at a table edge: tested and **not present** (one position, 4 u from the rim, camera outside the table).
+
+**Landed and committed** (`2f4f488`)
+- The car touches the table — contact darkening went from 3% to 34% a centimetre off the tyre.
+- Tyres read as rubber, the value anchor of the object.
+- Road grain runs straight through corners.
+- The grade reaches black, so wood grain is brown rather than rose-magenta.
+
+**Still open, being worked now**
+- The room is a grey card — no skirting line, no floor material, no window pool at establishing distance.
+- The greenhouse is a clipped white slab hiding a modelled interior.
+- The tail is a 3-step cap: a flat plate with a chamfer on the one surface a die-cast car is identified by.
+- Props read as a quota — nine mugs, ten cereal boxes — rather than as a table someone sat at.
+
+I'll boot and verify when the wave reports, then run critic round 4 to see whether the scores move off 5/5/6/6/5.

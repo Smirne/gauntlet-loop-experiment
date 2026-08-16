@@ -199,10 +199,8 @@ export default {
     { model: 'cerealBowl', position: [-42, 0, -10], yaw: 0.4, scale: 1.15 },
     { model: 'cutlerySpoon', position: [-25, 3.1, -5], rotation: [0.28, 1.05, 0.10] },
     { model: 'mug', position: [30, 0, -12], yaw: 0.9 },
-    { model: 'mug', position: [-120, 0, 86], yaw: -0.6, scale: 0.95 },
     { model: 'jamJar', position: [64, 0, -6], yaw: 0.2 },
     { model: 'jamJar', position: [-268, 0, 24], yaw: -0.9, scale: 1.1 },
-    { model: 'cerealBowl', position: [268, 0, -132], yaw: -0.7 },
     { model: 'mug', position: [-300, 0, 132], yaw: 0.3, scale: 1.1 },
     { model: 'cerealBox', position: [304, 0, 168], yaw: -0.35, scale: 1.2, color: 0x3d63a8 },
     { model: 'cerealBox', position: [-330, 0, -40], yaw: 0.9, scale: 1.1 },
@@ -212,8 +210,45 @@ export default {
     { model: 'toast', t: 0.240, lateral: -25, rotation: [0, 0.4, 0.55] },
     { model: 'toast', t: 0.246, lateral: 25, rotation: [0, -0.3, -0.5] },
     { model: 'toast', t: 0.262, lateral: 29, rotation: [0.2, 1.1, 0] },
-    { model: 'toast', position: [246, 0, -66], yaw: 0.5 },
-    { model: 'toast', position: [252, 0, -76], y: 1.6, yaw: 0.9, rotation: [0.1, 0.9, 0.08] },
+
+    /* ---- the abandoned breakfast ------------------------------------------ */
+
+    // The one thing on this table that says why there is a racetrack on it.
+    // Somebody was eating at the east side; the box of cars came out; the whole
+    // place setting went into the corner in a single arm sweep and nobody has
+    // been back for it. It sits outside Turn One, which is where the player
+    // looks under braking at the end of the longest straight on the lap.
+    //
+    // What makes it read as one event rather than ten objects: everything is
+    // within a couple of centimetres of its neighbour, the cereal box went over
+    // backwards with its printed panel to the ceiling and its top pointing away
+    // down the sweep, the toast is propped against the carton where it slid,
+    // and the mug rolled clear of the huddle. The `propZones` entries below
+    // wipe the verge scatter between this and the circuit and gather the field
+    // scatter around it, so the cleared lane reads as cleared.
+    //
+    // These positions were laid out against each model's real oriented
+    // footprint — a bowl is 15 u across, a cereal box on its back sweeps about
+    // 24 x 36 — and checked pairwise. Seventeen of the forty-five pairs sit
+    // within 6 u of each other and the deepest contact is 1.8 u, which is a
+    // slice of toast lying on a coaster rather than through it. Move one and
+    // re-check its neighbours.
+    { model: 'cerealBowl', position: [250, 0, -110], yaw: 0.85, scale: 1.05 },
+    { model: 'toast', position: [261.5, 0, -100.5], rotation: [0, -0.52, 0.42], settle: true },
+    { model: 'milkCarton', position: [272, 0, -96], yaw: 0.62 },
+    { model: 'jamJar', position: [255, 0, -95], yaw: 0.4 },
+    { model: 'coaster', position: [246, 0, -96], yaw: 0.4 },
+    { model: 'toast', position: [237, 0, -101], yaw: 1.35 },
+    // Flat on its back, top end pointing off toward the table edge: the one
+    // object that actually shows the direction the arm went. `settle` asks
+    // world/Props.js for the lift that puts its lowest corner on the table,
+    // measured from the merged geometry rather than guessed from the builder.
+    { model: 'cerealBox', position: [283, 0, -113], rotation: [-1.5708, -2.498, 0], settle: true, scale: 1.1, color: 0xc8542a },
+    { model: 'cutleryKnife', position: [234, 0, -114], yaw: 2.05 },
+    { model: 'cutlerySpoon', position: [258, 0, -126], yaw: 2.30 },
+    // On its side, well clear of the rest — the beat that dates the whole
+    // tableau to the moment the cars arrived.
+    { model: 'mug', position: [238, 0, -127], rotation: [0, 1.10, 1.5708], settle: true },
 
     // Cutlery on the verge of the chicane, aligned with the ribbon so it reads
     // as somebody's place setting rather than as scatter.
@@ -225,7 +260,11 @@ export default {
     { model: 'eggShell', position: [-96, 0, -18], yaw: 0.5 },
     { model: 'eggShell', position: [-88, 0, -26], yaw: 2.1, scale: 0.9 },
     { model: 'coaster', position: [-58, 0, -22], yaw: 0.7 },
-    { model: 'coaster', position: [140, 0, -14], yaw: 0.2 },
+    // Was [140, -14], which is 7.6 u INSIDE the Jam Loop's racing surface — a
+    // collidable, knockable disc sitting on the road with nothing in the
+    // definition saying it was meant to be a hazard. Moved 20 u outward into
+    // the same pocket, where it now clears the ribbon by 12 u.
+    { model: 'coaster', position: [160, 0, -12], yaw: 0.2 },
 
     /* ---- scattered dressing ---------------------------------------------- */
 
@@ -235,21 +274,55 @@ export default {
     { model: 'coin', count: 14, band: 'verge', offset: [9, 28], spacing: 8, tilt: 0.08 },
     { model: 'bottleCap', count: 12, band: 'verge', offset: [8, 30], spacing: 9, tilt: 0.3 },
     { model: 'eggShell', count: 10, band: 'verge', offset: [12, 34], spacing: 12, tilt: 0.35, scale: [0.8, 1.15] },
-    { model: 'toast', count: 9, band: 'field', clear: 26, spacing: 26, tilt: 0.12, scale: [0.9, 1.1] },
-    { model: 'coaster', count: 7, band: 'field', clear: 24, spacing: 22 },
-    { model: 'pencil', count: 5, band: 'field', clear: 26, spacing: 30, tilt: 0.05 },
+    { model: 'toast', count: 4, band: 'field', clear: 26, spacing: 26, tilt: 0.12, scale: [0.9, 1.1] },
+    { model: 'coaster', count: 3, band: 'field', clear: 24, spacing: 22 },
+    { model: 'pencil', count: 3, band: 'field', clear: 26, spacing: 30, tilt: 0.05 },
     { model: 'sugarCube', count: 26, band: 'field', clear: 20, spacing: 5, tilt: 0.25, scale: [0.85, 1.3] },
 
     // Background silhouettes, kept well clear of the ribbon so they frame the
     // action instead of blocking it.
-    { model: 'cerealBox', count: 5, band: 'field', clear: 52, spacing: 46, tilt: 0.03, scale: [0.9, 1.25] },
-    { model: 'milkCarton', count: 4, band: 'field', clear: 50, spacing: 42, tilt: 0.03, scale: [0.9, 1.1] },
-    { model: 'jamJar', count: 6, band: 'field', clear: 40, spacing: 28, scale: [0.9, 1.15] },
-    { model: 'mug', count: 6, band: 'field', clear: 38, spacing: 26, scale: [0.9, 1.1] },
-    { model: 'cerealBowl', count: 4, band: 'field', clear: 42, spacing: 34 },
-    { model: 'cutleryFork', count: 5, band: 'field', clear: 34, spacing: 24, tilt: 0.04 },
-    { model: 'cutleryKnife', count: 5, band: 'field', clear: 34, spacing: 24, tilt: 0.04 },
-    { model: 'cutlerySpoon', count: 4, band: 'field', clear: 34, spacing: 24, tilt: 0.04 },
+    //
+    // These counts are all HALVED, and the reason is worth keeping. They used
+    // to read as a quota rather than as a breakfast: nine mugs, ten cereal
+    // boxes, six bowls and eight jars on one table, evenly distributed, which
+    // is what a table looks like when nobody sat at it. Restraint is the point
+    // — these are background objects competing with eight cars for attention,
+    // and the budget the cuts freed went into the abandoned breakfast above,
+    // which is a story where six identical mugs was not. What survives here now
+    // gathers, because world/Props.js draws four field candidates in five from
+    // a cluster zone.
+    { model: 'cerealBox', count: 2, band: 'field', clear: 52, spacing: 46, tilt: 0.03, scale: [0.9, 1.25] },
+    { model: 'milkCarton', count: 1, band: 'field', clear: 50, spacing: 42, tilt: 0.03, scale: [0.9, 1.1] },
+    { model: 'jamJar', count: 2, band: 'field', clear: 40, spacing: 28, scale: [0.9, 1.15] },
+    { model: 'mug', count: 2, band: 'field', clear: 38, spacing: 26, scale: [0.9, 1.1] },
+    { model: 'cerealBowl', count: 1, band: 'field', clear: 42, spacing: 34 },
+    // Fourteen loose knives, forks and spoons scattered across a table is the
+    // same failure in miniature. Two of each, and the place settings that read
+    // as place settings are the hand-placed ones on the chicane verge and in
+    // the abandoned breakfast.
+    { model: 'cutleryFork', count: 2, band: 'field', clear: 34, spacing: 24, tilt: 0.04 },
+    { model: 'cutleryKnife', count: 2, band: 'field', clear: 34, spacing: 24, tilt: 0.04 },
+    { model: 'cutlerySpoon', count: 2, band: 'field', clear: 34, spacing: 24, tilt: 0.04 },
+  ],
+
+  // Where the loose dressing gathers, and the lane that was cleared for the
+  // circuit. Consumed by world/Props.js: a zone biases where a scatter
+  // candidate is DRAWN and never approves one — the road keep-out and the
+  // spacing test still decide whether anything may exist there — so the worst a
+  // badly placed zone can do is waste attempts.
+  propZones: [
+    // Somebody's place, in the infield pocket between the return leg and the
+    // Crumb Run, around the bowl and mug and jam jar the props list puts there.
+    // The pocket is narrow, so what can actually land in it skews short: crumbs
+    // and sugar, which is the right story as well as the safe outcome.
+    { x: 6, z: -16, rx: 52, rz: 24, yaw: 0.06, weight: 1.0 },
+    // The abandoned breakfast outside Turn One. Crumbs where somebody ate.
+    { x: 258, z: -108, rx: 34, rz: 30, yaw: 0.4, weight: 1.3 },
+    // ...and the lane the arm swept clear between the two, running along the
+    // circuit the way a forearm sweeps. Nothing scatters here, so the gap
+    // between the tableau and the road reads as deliberate rather than as an
+    // accident of the blue noise.
+    { x: 226, z: -96, rx: 22, rz: 46, yaw: 0.0, kind: 'swept' },
   ],
 
   ambient: {

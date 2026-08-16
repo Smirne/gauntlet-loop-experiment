@@ -1293,11 +1293,24 @@ const CONTACT_MIN_HEIGHT = 0.6;
 // This applies to the `field` band only. The verge keeps its even scatter,
 // because crumbs and sugar are precisely what a sweep leaves behind — pushing
 // those away from the road as well would read as a table cleaned twice.
-const ZONE_PULL = 0.55;        // share of field candidates drawn from a cluster
+// 0.80, not 0.55. At 0.55 the pull was a lean rather than a rule: nearly half
+// the field still landed on a uniform draw, so the clusters read as three
+// slightly denser patches of the same even sprinkle. The zones only ever
+// SUGGEST — every candidate still faces the road keep-out and the spacing test
+// — so raising this cannot put anything anywhere it was not already allowed to
+// be. It only decides how much of the field gathers.
+const ZONE_PULL = 0.80;        // share of field candidates drawn from a cluster
 const CLUSTER_ZONES = 3;
 const SWEPT_ZONES = 2;
 const CLUSTER_SPACING = 0.66;  // blue-noise gap multiplier inside a cluster
 const ZONE_TRIES = 420;        // candidate centres tested when siting the zones
+
+// A prop taller than this can hide a corner from the chase camera, which is a
+// gameplay bug rather than a dressing choice. Set above the tallest thing that
+// is deliberately laid ON the road anywhere in world/tracks — a pool ball at
+// 5.7 u, a building block at 5.0, a slice of toast at 1.7 — and below the
+// shortest vessel that could occlude, the mug at 9.5.
+const OCCLUDER_HEIGHT = 8;
 
 // Vessels that read as "knocked over when the cars came out". Only these are
 // ever tipped, only in the field band, and only where they are either gathered
@@ -1534,7 +1547,126 @@ export class Props {
     }
   }
 
+  /**
+   * The same keep-out, applied to a HAND-AUTHORED placement.
+   *
+   * The scatter has refused to put anything near the ribbon since it was
+   * written; explicit placements were trusted, which is right for the toast
+   * propped against the jump lip and for the pool balls lying in the racing
+   * line on purpose, and wrong for anything tall enough to hide a corner from
+   * the chase camera.
+   *
+   * So the rule is deliberately narrow, and it is about height and centres, not
+   * about footprints: a prop over OCCLUDER_HEIGHT whose CENTRE sits inside the
+   * driving surface is dropped, and one whose centre is merely over the edge is
+   * reported. Nothing currently authored in world/tracks trips either branch —
+   * this is a guard against the next placement, not a change to any existing
+   * one.
+   *
+   * @param {string} model a PROP_MODELS key
+   * @param {number} x world X
+   * @param {number} z world Z
+   * @param {number|{x:number,y:number,z:number}} scale resolved placement scale
+   * @returns {boolean} true when the placement must be dropped
+   */
+  _explicitKeepOut(model, x, z, scale) {
+    const def = PROP_MODELS[model];
+    if (!def) return false;
+    const sy = typeof scale === 'number' ? scale : (scale?.y ?? 1);
+    const sxz = typeof scale === 'number' ? scale : Math.max(scale?.x ?? 1, scale?.z ?? 1);
+    // def.size is written by _modelGeometry, which populate() warms before any
+    // placement resolves. A model that has not been measured reports nothing and
+    // is left alone rather than guessed at.
+    const height = (def.size?.y ?? 0) * sy;
+    if (!(height > OCCLUDER_HEIGHT)) return false;
+    const gap = this._roadClearance(x, z);
+    if (!Number.isFinite(gap) || gap >= 0) return false;
+    const radius = (def.radius ?? 4) * sxz;
+    if (gap < -radius * 0.5) {
+      console.warn('[Props] keep-out: dropped', model, 'at', Math.round(x), Math.round(z),
+        '— it stands on the racing surface');
+      return true;
+    }
+    console.warn('[Props] keep-out:', model, 'at', Math.round(x), Math.round(z),
+      'overhangs the road edge');
+    return false;
+  }
+
   /* ------------------------------------------------------- composition */
+
+  /**
+   * Story zones declared by the track definition itself, as
+   * `def.propZones: [{ x, z, rx, rz, yaw, weight, kind }]`.
+   *
+   * Procedural siting can find a plausible pocket but it cannot know which
+   * pocket the definition meant, and the whole point of a composed vignette is
+   * that the loose dressing gathers around it — crumbs where somebody actually
+   * ate. An authored zone is the definition saying so.
+   *
+   * A zone still only biases where a candidate is DRAWN — the road keep-out and
+   * the spacing test decide whether it may exist — but a cluster that reached
+   * back over the ribbon would waste most of its attempts, so the declared
+   * ellipse is shrunk until its whole boundary is clear of the road.
+   *
+   * @param {object} track the built track
+   * @returns {object[]} validated zones, possibly empty
+   */
+  _authoredZones(track) {
+    const out = [];
+    const list = track?.def?.propZones;
+    if (!Array.isArray(list)) return out;
+    for (const spec of list) {
+      if (!spec || !Number.isFinite(spec.x) || !Number.isFinite(spec.z)) continue;
+      const kind = spec.kind === 'swept' ? 'swept' : 'cluster';
+      const yaw = Number.isFinite(spec.yaw) ? spec.yaw : 0;
+      let rx = clamp(spec.rx ?? 30, 6, 140);
+      let rz = clamp(spec.rz ?? 30, 6, 140);
+
+      // A swept lane is the one zone that is MEANT to lie against the circuit:
+      // it marks where dressing is absent, it affects only the verge and field
+      // scatter, and clamping it away from the road would erase it. Everything
+      // below is for clusters.
+      if (kind !== 'swept') {
+        const raw = this._roadClearance(spec.x, spec.z);
+        if (Number.isFinite(raw) && raw <= 0) {
+          console.warn('[Props] propZone cluster centre is on the road, ignored:', spec.x, spec.z);
+          continue;
+        }
+        // Shrunk uniformly rather than clamped per axis. A pocket between two
+        // straights is long one way and narrow the other, and capping both
+        // radii by the centre's single clearance number throws that shape away
+        // — which is most of what makes an authored zone worth authoring.
+        const c = Math.cos(yaw);
+        const s = Math.sin(yaw);
+        for (let i = 0; i < 14; i++) {
+          let worst = Infinity;
+          for (let k = 0; k < 12; k++) {
+            const a = (k / 12) * TAU;
+            const ex = Math.cos(a) * rx;
+            const ez = Math.sin(a) * rz;
+            const g = this._roadClearance(spec.x + ex * c - ez * s, spec.z + ex * s + ez * c);
+            if (Number.isFinite(g) && g < worst) worst = g;
+          }
+          if (!(worst < 0)) break;
+          rx *= 0.88;
+          rz *= 0.88;
+          if (rx < 6 || rz < 6) break;
+        }
+      }
+
+      out.push({
+        kind,
+        x: spec.x,
+        z: spec.z,
+        rx,
+        rz,
+        yaw,
+        weight: kind === 'swept' ? 0 : Math.max(0, spec.weight ?? 1),
+        authored: true,
+      });
+    }
+    return out;
+  }
 
   /**
    * Site this track's story zones: a few places where the clutter gathers, and
@@ -1555,7 +1687,10 @@ export class Props {
    * @returns {object[]} zones, possibly empty
    */
   _buildZones(track, seed, anchors) {
-    const zones = [];
+    // Authored first, so a definition that composed a vignette gets the ground
+    // it asked for and the procedural siting below has to keep away from it —
+    // push() and the swept loop both test against whatever is already here.
+    const zones = this._authoredZones(track);
     const b = track?.bounds;
     if (!b || !Number.isFinite(b.min.x) || !Number.isFinite(b.max.x)) return zones;
     const spanX = b.max.x - b.min.x;
@@ -1780,6 +1915,14 @@ export class Props {
       : (Array.isArray(e.rotation) ? e.rotation[1] : e.rotation) + (e.relative ? baseYaw : 0);
     const tilt = Array.isArray(e.rotation) ? [e.rotation[0] || 0, e.rotation[2] || 0] : [0, 0];
 
+    // `settle: true` asks for the lift that puts a tipped prop's lowest corner
+    // back on the table. Authoring one by hand means reading a lathe profile and
+    // trusting the arithmetic; the scatter has measured it from the real bounds
+    // since the tip pass was written, and this is the same call.
+    if (e.settle) yOff += this._settleLift(e.model, tilt, scale);
+
+    if (this._explicitKeepOut(e.model, x, z, scale)) return null;
+
     return this._makePlacement(e.model, x, z, yOff, yaw, tilt, scale, e, rng);
   }
 
@@ -1805,7 +1948,11 @@ export class Props {
 
     let placed = 0;
     let tipped = 0;
-    const tries = want * 14;
+    // Floored, not just proportional. A halved count is a small count, and a
+    // count of one demanding 50 u of road clearance had fourteen attempts to
+    // find it — most of which now start inside a cluster that may be too tight
+    // for it. The floor costs nothing when the entry is easy to satisfy.
+    const tries = Math.max(28, want * 14);
     for (let i = 0; i < tries && placed < want; i++) {
       let x;
       let z;

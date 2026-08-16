@@ -575,6 +575,47 @@ export class Impacts {
     if (this.flash > 0) this.flash = Math.max(0, this.flash - this.flashDecay * fdt);
   }
 
+  /**
+   * How much the camera is travelling, as a 0..1 gate on streaming speed lines.
+   *
+   * Normalised against the subject's own top speed so it reads the same on
+   * every chassis: a camera keeping station with a car at full pace gates to 1,
+   * a locked-off camera to 0.
+   *
+   * A camera CUT teleports the camera, which would otherwise register as an
+   * enormous velocity and flash a frame of lines on the first frame of every
+   * new shot. Anything past the cut threshold is treated as a jump, not as
+   * motion, and returns the previous gate rather than a spike.
+   */
+  _cameraMotionGate(dt) {
+    const cam = this.ctx?.camera;
+    if (!cam || !(dt > 0)) return this._camGate ?? 0;
+
+    const p = cam.position;
+    const prev = this._prevCamPos;
+    if (!prev) {
+      this._prevCamPos = { x: p.x, y: p.y, z: p.z };
+      this._camGate = 0;
+      return 0;
+    }
+
+    const dx = p.x - prev.x, dy = p.y - prev.y, dz = p.z - prev.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    prev.x = p.x; prev.y = p.y; prev.z = p.z;
+
+    // A real chase camera at 100 u/s covers under 1 u per frame. 40 u in one
+    // frame is not a camera, it is a different shot.
+    if (dist > 40) return this._camGate ?? 0;
+
+    const subject = this.ctx?.director?.focusTarget || this.ctx?.player || this.ctx?.vehicles?.[0];
+    const top = Math.max(1, subject?.topSpeed || 100);
+    // Half top speed is enough camera travel to earn full lines; below a tenth
+    // there is effectively no self-motion to report.
+    const gate = saturate((dist / dt / top - 0.10) / 0.40);
+    this._camGate = gate;
+    return gate;
+  }
+
   update(dt, ctx) {
     if (!this._ready) return;
     this.ctx = ctx || this.ctx;
@@ -600,6 +641,21 @@ export class Impacts {
       if (subject.isAirborne) wantSpeed *= 0.35;
       wantBoost = saturate(subject.boostAmount ?? (subject.boosting ? 1 : 0));
     }
+    // SPEED LINES BELONG TO THE CAMERA, NOT THE SUBJECT.
+    //
+    // This was keyed purely to the subject's speed, so a wide establishing shot
+    // of a motionless table carried a full-screen radial streak veil because a
+    // 40-pixel toy car somewhere in frame happened to be going fast. Measured on
+    // the round-3 wide: fx:overlay alone lifted the far wall from 125 to 176 of
+    // 255, and the critic's phrasing was "nobody ships a static overview with
+    // speed lines on it".
+    //
+    // Streaming lines are a cue about how fast the VIEWER is travelling. A chase
+    // camera rides with the car and earns them; a locked-off wide does not,
+    // however fast the subject is moving. So the subject term is now scaled by
+    // how far the camera itself moved this frame.
+    wantSpeed *= this._cameraMotionGate(dt);
+
     // Critically damped, like everything else the camera does: lines that snap
     // on at exactly 80% would strobe every time the car hovers on the boundary.
     const k = 1 - Math.exp(-dt * 7);
