@@ -160,25 +160,37 @@ export async function captureSet(suffix = '', opts = {}) {
   const lead = ctx.vehicles[0];
   if (ctx.director) ctx.director.enabled = false;
   const cam = ctx.camera;
-  const c = lead.group.position;
+
+  // SETTLE FIRST, THEN AIM. Settling advances the simulation, so a camera posed
+  // from the car's position and then settled is aiming where the car USED to be
+  // — which put the macro shot on an empty stretch of road with no car in it at
+  // all, on the one frame whose entire job is to show the car. Read the subject
+  // AFTER the sim has moved, never before.
+  const subject = () => lead.group.position;
 
   // 2. tight chase on the leader
-  const fw = new THREE.Vector3(0, 0, 1).applyQuaternion(lead.quaternion);
-  cam.fov = 34;
-  cam.position.set(c.x - fw.x * 46 + 6, c.y + 26, c.z - fw.z * 46 + 6);
-  cam.lookAt(c.x, c.y + 2, c.z);
-  cam.updateProjectionMatrix();
-  ctx.postfx?.notifyCameraCut?.();
   settle();
+  {
+    const c = subject();
+    const fw = new THREE.Vector3(0, 0, 1).applyQuaternion(lead.quaternion);
+    cam.fov = 34;
+    cam.position.set(c.x - fw.x * 46 + 6, c.y + 26, c.z - fw.z * 46 + 6);
+    cam.lookAt(c.x, c.y + 2, c.z);
+    cam.updateProjectionMatrix();
+    ctx.postfx?.notifyCameraCut?.();
+  }
   shots.push(await window.MG.capture('crit-2-chase' + tag, 1920, 1080));
 
   // 3. macro detail: car body against the table surface
-  cam.fov = 26;
-  cam.position.set(c.x + 17, c.y + 9, c.z + 21);
-  cam.lookAt(c.x, c.y + 1.4, c.z);
-  cam.updateProjectionMatrix();
-  ctx.postfx?.notifyCameraCut?.();
   settle();
+  {
+    const c = subject();
+    cam.fov = 26;
+    cam.position.set(c.x + 17, c.y + 9, c.z + 21);
+    cam.lookAt(c.x, c.y + 1.4, c.z);
+    cam.updateProjectionMatrix();
+    ctx.postfx?.notifyCameraCut?.();
+  }
   shots.push(await window.MG.capture('crit-3-macro' + tag, 1920, 1080));
 
   // 4. wide establishing shot of the whole circuit
@@ -203,6 +215,7 @@ export async function captureSet(suffix = '', opts = {}) {
   //
   // This breaks A/B comparability with rounds 1-3 by design. Do not read a
   // difference across that boundary as a rendering change.
+  settle();
   const b = ctx.track.bounds;
   const ctr = b.getCenter(new THREE.Vector3());
   const sz = b.getSize(new THREE.Vector3());
@@ -212,7 +225,6 @@ export async function captureSet(suffix = '', opts = {}) {
   cam.lookAt(ctr.x, ctr.y - sz.y * 0.35, ctr.z);
   cam.updateProjectionMatrix();
   ctx.postfx?.notifyCameraCut?.();
-  settle();
   shots.push(await window.MG.capture('crit-4-establishing' + tag, 1920, 1080));
 
   return {

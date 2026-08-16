@@ -13,13 +13,15 @@
 //    a clearcoat lobe but hard-codes its Fresnel at IOR 1.5, so we override
 //    `material.clearcoatF0` from our own IOR uniform — a genuinely independent
 //    second specular lobe with its own roughness and its own index. On top of
-//    that, metallic flake: a two-lattice cell field in *object* space (flakes
-//    are suspended in the paint, so they must not swim as the car moves) which
-//    perturbs only the basecoat normal, never the clearcoat's. That ordering is
-//    physically right and it is what makes the sparkle look like it is under
-//    something. The flake field fades out on its own screen-space footprint, so
-//    it resolves in close-ups and replays and dissolves cleanly at race
-//    distance instead of aliasing into noise.
+//    that, metallic flake: two octaves of a two-lattice cell field in *object*
+//    space (flakes are suspended in the paint, so they must not swim as the car
+//    moves) which perturb only the basecoat normal, never the clearcoat's. That
+//    ordering is physically right and it is what makes the sparkle look like it
+//    is under something. Each octave fades out on its own screen-space
+//    footprint, and the two are sized so that the handover lands inside the
+//    range of framings the game actually composes: the coarse grain carries the
+//    race and results cameras, the fine one takes over in a close-up, and both
+//    dissolve cleanly rather than aliasing into noise.
 //
 // 2. TRIPLANAR. Terrain, banking and ramp flanks have no sane UV layout; a
 //    planar projection stretches into streaks the moment a surface tilts. The
@@ -434,6 +436,56 @@ float mgFlakeShow = 0.0;
     mgFlakeGlint = mgGlint;
     mgFlakeShow = mgAmt;
   }
+
+  // A SECOND, COARSER OCTAVE.
+  //
+  // The lattice above is 0.014 cm and the window it is measured against
+  // retires it at roughly one cell per pixel. Against the framing this game
+  // actually composes that window never opens: Director holds the car at
+  // 8.5-20 percent of frame height during a race and 42 percent in the
+  // results hero pose, which over a 9 cm car works out at 18-35 px/cm racing
+  // and 75-108 px/cm at the hero shot. One 0.014 cm cell is then a quarter of
+  // a pixel to one and a half pixels, so mgResolve above is exactly zero in
+  // every race frame and only wakes up, partially, in the results shot at a
+  // high pixel ratio. The fine octave alone is a block that costs shader
+  // instructions and returns nothing at the cameras that exist.
+  //
+  // Enlarging the fine cell is not the answer: 0.045 cm as the ONLY octave
+  // read as confetti rather than as flake, which is why it was shrunk. So the
+  // coarse grain is added ALONGSIDE at 3.2x the cell (0.014 -> 0.045 cm) and
+  // about a third of the tilt, measured through the same window on its own
+  // proportionally smaller footprint. It carries from race distance through
+  // the hero shot and hands over to the fine octave in extreme close-up, and
+  // it fades out on its own Nyquist limit exactly as the fine one does, so
+  // nothing crawls at the establishing camera either.
+  //
+  // The scale is derived from uMgFlakeScale rather than uploaded as a second
+  // uniform, deliberately: an undeclared fragment uniform is precisely how
+  // this material rendered invisible once already.
+  float mgFwC = mgFw / 3.2;
+  float mgAmtC = uMgFlakeAmount * ( 1.0 - smoothstep( 0.35, 1.60, mgFwC ) );
+  if ( mgAmtC > 0.002 ) {
+    float mgScaleC = uMgFlakeScale / 3.2;
+    vec3 mgCellC = floor( ( vMgObj + vec3( 2.17, 5.63, 8.09 ) ) * mgScaleC );
+    vec3 mgRc1 = mgHash33( mgCellC + 3.9 ) * 2.0 - 1.0;
+    // Same two-lattice trick as the fine octave, and it matters more here:
+    // a bare cubic grid shows its rows far more readably at 0.045 cm.
+    vec3 mgCellD = floor( ( vMgObj + vec3( 11.4, 3.27, 6.71 ) ) * ( mgScaleC * 1.618 ) );
+    vec3 mgRc2 = mgHash33( mgCellD + 27.3 ) * 2.0 - 1.0;
+    vec3 mgDirC = normalize( mgRc1 + mgRc2 * 0.72 + vec3( 1e-5 ) );
+    float mgGlintC = pow( fract( mgRc1.x * 0.5 + mgRc2.y * 0.5 + 0.5 ), uMgFlakeGlint );
+    vec3 mgDirCV = normalize( normalMatrix * mgDirC );
+    vec3 mgTangC = mgDirCV - normal * dot( mgDirCV, normal );
+    // A third of the fine octave's tilt: 0.13 against 0.40 at the steepest
+    // flake, about three degrees rather than ten. A coarse grain carrying the
+    // fine octave's amplitude is exactly what read as glitter before.
+    normal = normalize( normal + mgTangC * mgAmtC * ( 0.02 + mgGlintC * 0.11 ) );
+    roughnessFactor = clamp( roughnessFactor * ( 1.0 - mgGlintC * mgAmtC * 0.28 ), 0.03, 1.0 );
+    // max, not sum: where both octaves resolve, the sparkle term handed to
+    // FRAG_FLAKE_SPEC must not double up on the coverage term already there.
+    mgFlakeGlint = max( mgFlakeGlint, mgGlintC );
+    mgFlakeShow = max( mgFlakeShow, mgAmtC * 0.33 );
+  }
 }
 `;
 
@@ -714,11 +766,20 @@ export function carPaint(o = {}) {
   if (_env) mat.envMap = _env;
 
   // 0.045 cm is half a millimetre: on a 9 cm car that is glitter, not flake,
-  // and it was reading as exactly that. Real automotive flake is 10-50 microns;
-  // 0.014 cm is a deliberate compromise, small enough to read as a metallic
-  // grain rather than a scattering of confetti and still large enough to
-  // resolve in the macro shots that the whole miniature premise is built on.
-  // The Nyquist fade in FRAG_FLAKE retires it before it can crawl.
+  // and as the sole octave it was reading as exactly that. Real automotive
+  // flake is 10-50 microns; 0.014 cm is the fine octave, small enough to read
+  // as a metallic grain rather than a scattering of confetti.
+  //
+  // On its own it also never resolves. Director frames the car at 8.5-20
+  // percent of frame height racing and 42 percent in the results hero pose,
+  // which is 18-35 px/cm and 75-108 px/cm respectively over a 9 cm car, so a
+  // 0.014 cm cell is under two pixels even in the closest shot the game
+  // composes and the Nyquist fade in FRAG_FLAKE has already retired it. That
+  // is why FRAG_FLAKE now runs a second octave at 3.2x this figure, derived in
+  // the shader rather than set here: the coarse grain carries the race and
+  // hero cameras at a third the tilt, the fine one takes over only in an
+  // extreme close-up, and each fades on its own footprint. Changing this value
+  // moves both octaves together and keeps their 3.2:1 ratio.
   const flakeSize = o.flakeSize ?? 0.014;
   const uniforms = {
     uMgFlakeScale: { value: 1 / Math.max(0.004, flakeSize) },

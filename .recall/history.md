@@ -1114,3 +1114,162 @@ Wave 6 is running — three agents on the room material, the car interior and ta
 - Props read as a quota — nine mugs, ten cereal boxes — rather than as a table someone sat at.
 
 I'll boot and verify when the wave reports, then run critic round 4 to see whether the scores move off 5/5/6/6/5.
+
+**You:** <task-notification>
+<task-id>ww9a1yezx</task-id>
+<tool-use-id>toolu_019BRFPVB6RrwD7KDCLTrUUY</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/tasks/ww9a1yezx.output</output-file>
+<status>completed</status>
+<summary>Dynamic workflow "Room material, car interior and tail, prop composition" completed</summary>
+<result>[{"assignment":"Composition-and-detail pass on src/render/Sky.js (the built room), against critic findings about a grey untextured room, a missing wall/floor line, no floor material, no wall sheen, prop heights, and the nightLamp near-black case — starting from a file a previous agent had already partly rewritten.","verdict":"done","filesChanged":["/Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/render/Sky.js"],"functionsAdded":["TILED_THEMES (module const, Sky.js)","GLSL uniform uSplash (vec3: band low, band high, amount)","GLSL uniform uRoomFog (float)","setRoom({ fog }) option"],"mechanism":"FIRST, WHAT WAS ALREADY DONE — I found four and a half of the five suggested fixes already in the file from the stalled wave, and did not redo them:\n\n1. Skirting (fix 1): PRESENT. ROOM.skirt = 105 with a four-part profile (band, lip highlight, shadow reveal above, toe darkening). The comment records the 36-46 u -&gt; 105 u move.\n2. Window floor pool (fix 2): PRESENT. uWinPool = 0.30 with a full projected-pane pool, multiplied by albedo and cut by the table shadow.\n3. Real floor material + bounce (fix 3): PRESENT. floorColor 0x93673d, staggered boards, grooves, butt joints, per-board tone hash, grain, all derivative-faded; ROOM.bounce = 0.28 of Lighting's live bounce (morning 0xffc79a at 0.46) over a 420 u range. Also the whole \"palette is a description of LIGHT, not paint\" rework (mgRoomLit).\n4. Wall Fresnel sheen (fix 4): PRESENT but INERT — see below. This is the half-fix.\n5. Prop handback guard + re-heighted set (fix 5): PRESENT. #ifndef MG_ROOM_PROP wraps the handback, propHeadroom 0.95, and the prop list already carries larder 640, shelving 700, fridge 610, door jamb 760, cupboards topping out at 730.\nAlso already present: the analytic table shadow on the floor (mgTableOcc, penumbra widening with throw distance) that the critics said was missing entirely, and the nightLamp fix (_updateRoomLight reads ctx.lighting.lamp — which does exist, a SpotLight with irradiance-derived intensity — plus mgRoomLit clamping a near-black palette to a dim room rather than a black one).\n\nWHY THE ROOM WAS STILL A GREY CARD ANYWAY. I hand-evaluated the shader for the morning preset and found the albedo work is largely eaten downstream. Lighting owns scene.fog at FogExp2 density 0.0006 with colour 0x92979e (a cool neutral). The room is the farthest geometry in every frame, so at the ~1200 u of the far wall the fog factor is 1 - exp(-(1200*0.0006)^2) = 0.40. Forty percent of a flat cool neutral over every wall and board is most of the reason the reviewers measured luma 96-125 at 15% saturation. That is the open half of D13, and D13 is filed against Sky. The room shader computes its own fog term, so Sky can scale it without touching Lighting.\n\nWHY THE SHEEN DID NOTHING. It was a Schlick pow-5 term. The establishing camera meets the far wall about 25 degrees off its normal, where (1-ndv)^5 = 8e-5; times wallSheen 0.06 that is zero to the bit. The gate in front of the expensive mgEnvColor call therefore also never opened on a wall. Emulsion's real signature is a wide, weak lobe present even head-on, not a mirror edge.\n\nWHAT THE FRAME CAN ACTUALLY SEE. At 32 degrees a sightline grazing the far table rim hits the wall 44 u above the floor, so the floor beyond the far table edge is not in shot at all and the skirting is only half visible. A ray grazing the front top edge of a 300 u counter meets the wall 200 u behind it 125 u lower, so that wall is hidden below ~175 u. The strip of wall the establishing shot genuinely sees starts around 175-250 u above the floor — which is exactly the gap between the counter tops (300) and the wall units (470). That is empty wall, and it was the only large surface in frame carrying no material at all.","changes":"Five contained changes, each written complete before anything referenced it.\n\n1. COHESION ANCHOR. ROOM.wallColor 0xcfc6b8 (warm off-white) -&gt; 0xb4c8c8 (pale grey-green emulsion). Picked ISO-LUMINANT with the colour it replaces: both land at 0.554 relative luminance after uRoomTint bends them halfway toward the preset's cast, so the wall's level is exactly where it was tuned and only its hue moved. This is the direct answer to \"the room is the one thing that could carry a complementary anchor, but it is grey\" — the floor stays warm oak, so the room now reads warm floor / cool wall instead of one more amber surface. uRoomTint still pulls it halfway to the preset, so goldenHour warms it back and it cannot fight the key.\n\n2. D13, THE ROOM HALF. New uniform uRoomFog (ROOM.fog = 0.62) scaling the room's own fog factor. The far wall now arrives at ~25% fog instead of 40%: aerial perspective survives as a depth cue, the material comes back through it. Exposed as sky.setRoom({ fog: n }).\n\n3. SHEEN LOBE SPLIT. Replaced the single pow-5 term with two. The wide, weak part is taken from `pal`, the room's own light colour, which is already computed in that shader — col += pal * gloss * (0.22 + 0.60 * fres) — so it costs nothing and is present at head-on angles where paint actually shows it. The narrow mirror part still samples mgEnvColor, now with a pow-3 falloff and a gate at gloss*fres &gt; 0.004, so the expensive call fires where a surface really is grazing (the floor at 32 degrees, fres ~ 0.10) instead of essentially never. wallSheen 0.06 -&gt; 0.10, floorGloss 0.14 -&gt; 0.20. The 2.5 clamp on the environment sample is kept so the window pane cannot punch a mirror-bright hole in a floorboard.\n\n4. TILED SPLASHBACK — the new material. A running bond of 66 x 33 u metro tiles (20 x 10 cm at the room's 3.33 u per cm) between 300 and 470, on the two walls the counter runs stand against, identified from the fragment normal (inward +Z and +X). Per-tile tone variation, grout, and a local gloss boost that feeds change 3. One horizontal coordinate serves both walls because exactly one of x and z is constant on each. Derivatives are taken outside every branch and from the un-staggered coordinate, so the course boundary cannot sample a discontinuity — the same trap the floorboard code documents. Crucially, only the HIGH-frequency half (grout, tile-to-tile tone) takes the derivative fade; the band's own value lift is low frequency and survives any distance, which is the same reason the widened skirting works. Gated by TILED_THEMES (kitchen only) via uSplash.z, set in _fitRoom, so a bedroom wall does not get a splashback.\n\n5. sky.setRoom({ fog }) added to the tuning API and its JSDoc.\n\nWHAT I DELIBERATELY DID NOT DO — fix 2, \"raise the window pool on the floor\". The mechanism is present and correct; raising the value would have changed nothing visible, and I would rather report that than bank a no-op. Measured for morning: windowDir = dirArray(20, -52) = (-0.741, 0.342, 0.579), which _updateRoomWindow resolves onto the -X wall at x = -900, z = +567, centre topY+282, half extents 243 x 207. Light travels along (0.741, -0.342, -0.579). From the pane's BOTTOM edge (floorY+325) the ray drops below tabletop height after 219 u of travel, at x = -738 — still outboard of the table's -x edge at -570 — and reaches the floor at x = -196, i.e. underneath the tabletop. Every higher part of the pane lands on the tabletop itself. With a 20-degree key over a 1140 x 1020 table in an 1800 x 1680 room there is no direct window light anywhere on open floor, and mgTableOcc correctly reports that. The only unoccluded pool is under the table near the -x edge, which no shipped camera looks into. Making one appear would require either dropping the sill below the tabletop (hiding the pane, which is the stronger element) or lying about the light direction.","unverified":"I did not boot the game or drive a browser, per the brief — the orchestrator verifies centrally. So nothing here is confirmed against a rendered frame.\n\nSpecifically unverified:\n- The GLSL was never compiled. 
+... (truncated 22623 chars, full result in /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/tasks/ww9a1yezx.output)</result>
+<diagnostics>Per-agent results: /Users/michele.giacobazzi/.claude/projects/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/subagents/workflows/wf_f5004e31-3f6/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.
+If the result above is empty or unexpected, Read this file BEFORE diagnosing — do not assume agents returned non-empty results.
+To re-run with edited post-processing: Workflow({scriptPath: '/Users/michele.giacobazzi/.claude/projects/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/workflows/scripts/micro-gauntlet-wave-6-wf_f5004e31-3f6.js', resumeFromRunId: 'wf_f5004e31-3f6'}) — agents whose (prompt, opts) are unchanged replay from cache.</diagnostics>
+<usage><agent_count>3</agent_count><agents_done>3</agents_done><agents_error>0</agents_error><agents_skipped>0</agents_skipped><agents_empty_result>0</agents_empty_result><subagent_tokens>944878</subagent_tokens><tool_uses>202</tool_uses><duration_ms>2561726</duration_ms></usage>
+</task-notification>
+
+**Claude:** All three finished. Booting — the acceptance test:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git diff --stat -- src echo "=== pa`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `mcp__Claude_Browser__read_console_messages: tab-1`
+
+**Claude:** Clean boot, console clear — the room shader compiled. Let me look:
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-4-establishing-r11.png`
+
+**Claude:** The props are composed now — a real cluster bottom-right. But there's a prominent new problem: a fan of pale radial streaks across the walls. Let me isolate it properly rather than attribute it by eye:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Not the shafts — hiding them changed nothing at any sampled point. The sheen change is the new thing that made walls sample the backdrop, so let me test that:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Not the sheen either. The lighting critic mentioned "an additive cream speed-line veil from `fx:impacts`" in every delivered frame — that matches a radial fan. Testing it:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Confirmed — hiding the fx overlays drops the wall by up to 37 code values. Narrowing to which one:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** `fx:overlay` alone accounts for the whole veil — 176→125 at one point, while every other fx moves it by ≤6. It's a full-screen additive cream layer sitting over every frame, including a static wide shot.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -rn "fx:overlay" src/ | head e`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '575,625p' src/fx/Impacts.js`
+
+**Claude:** Found it. `speedLines` is keyed to the **subject's** speed, not the camera's — so a static wide shot of a table gets full-screen speed lines because a toy car somewhere in frame is going fast. Speed lines are a viewer-motion cue; they belong to the camera, not the subject.
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/fx/Impacts.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/fx/Impacts.js`
+
+**Claude:** Now the capture path — `captureSet` repositions the camera while the engine is paused, so the fx never see the new shot. They need to settle:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/tools/capture-set.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 python3 - <<'PY' import pathlib p =`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-4-establishing-r12.png`
+
+**Claude:** The speed-line veil is gone, and that's the cleanest frame this project has produced. Committing:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git add -A && git commit -q -F - <<`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Artifact: /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-`
+
+**Claude:** Three playtest findings — those take priority over polish. Let me measure each before touching anything.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 echo "=== reverse: how is brake/rev`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '1272,1292p' src/vehicle/Veh`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Reverse **gear engages** — but the car never moves. `gear: -1` with speed hovering at zero. The reason is a genuine design gap:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -n "this.throttle\b" src/vehic`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '955,975p' src/vehicle/Vehic`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/vehicle/Vehicle.js`
+
+**Claude:** That swap breaks the shift-out condition, which tests `this.throttle` — now the brake key in reverse. It must read the raw input:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/vehicle/Vehicle.js`
+
+**Claude:** Now steering — you said still too strong, so let me measure where it actually sits rather than guess again:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&quality=ultra&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Reverse now drives — **−52 u/s**. But `gear: 1` exposes a second bug, and my steering harness was invalid (the Input system overwrites `setControls` each step, so the car never accelerated).
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '1300,1322p' src/vehicle/Veh`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '1321,1345p' src/vehicle/Veh`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Input.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Input.js`
+
+**Claude:** Now a clean, isolated reverse test — nothing else in the run this time:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&quality=ultra&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Reverse works through the real input path now: gear −1 sustained, throttle 1 via the swap, speed going negative — and pressing forward shifts out cleanly (gear 1 → 5, driving forward).
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 node --input-type=module --check <`
+
+**Claude:** Two of your three are fixed and committed as `7598b7c`. Page updated: https://claude.ai/code/artifact/41a6f0af-c1d8-410f-b95a-cc2c96b66666
+
+**Reverse — and the gear was never the problem.** Reverse *engaged* perfectly: hold brake at a standstill for 0.28 s and the box goes to −1, measured. The car then went nowhere because **the same key is still the brake**. Engine torque needs throttle, you're holding brake, so the drivetrain had reverse selected, nothing driving it, and the pads clamped the wheels — speed stayed between −0.34 and +0.19 over 300 steps.
+
+And no other key could have worked either: pressing forward in reverse gear just cancelled reverse. Neither pedal could ever drive you backwards. The pedals now swap in reverse, the way every arcade racer does it. That change also breaks the two gear tests — they read `this.throttle`, which is now the brake key in reverse — so both now read the raw input, or the box would shift out of reverse the instant you pressed the key meant to drive you backwards.
+
+Worth noting: **my first test harness was invalid.** I called `setControls` directly, but the Input system overwrites controls every step, so the car never accelerated and the numbers were meaningless. Re-tested through the real input path: gear −1 sustained, speed negative, and pressing forward shifts out cleanly to gear 1 → 5.
+
+**Steering, second cut.** The first pass took a 100 ms tap from 14.6° to 5.9° and you still called it too strong, so both dials moved again — attack and expo — to about **3.1°**, roughly a fifth of where it started. Full lock is still reachable if you ask for it.
+
+**Collision I haven't touched yet** — "seems flawed" is a symptom, and I'd rather measure what's actually happening than guess at it. That's the next thing I'll do: instrument car-to-car and car-to-wall impacts and see whether it's the contact resolution, the impulse response, or cars passing through each other.
+
+Also from this wave, unprompted but worth knowing: I found a **full-screen speed-line veil painted over every frame in every round**, including static wide shots. I isolated it by elimination rather than naming a likely culprit — hiding the light shafts changed nothing, zeroing the wall sheen changed nothing, and `fx:overlay` alone moved a wall pixel from 176 to 125. It was keyed to the *subject's* speed, so a locked-off shot of a motionless table wore streaming lines because a 40-pixel toy car was going fast somewhere in frame.
+
+If you get another chance to drive, tell me what "flawed" looks like — cars interpenetrating, bouncing too hard, sticking, or passing straight through. That'll cut the search a lot.
+
+**You:** ok, retrying. continue the loop, never stop it. Consider limits can hit or I might need to close the laptop, so the more agents are self contained / reporting often the bette
+
+**Claude:** Understood — I'll optimise for interruptibility: small self-contained agents, commit after every landing, and a durable handover so nothing is lost if the laptop sleeps.
+
+Launching a wave first so it runs while I dig into collision:
+  - `Workflow: export const meta = { name: 'micro-gauntlet-wave-7', description: 'Three small self-contained fixes: capture resolution, elimination metric, flake octave', phas`
+  - `Workflow: export const meta = { name: 'micro-gauntlet-wave-7', description: 'Three small self-contained fixes: capture resolution, elimination metric, flake octave', phas`
+
+**Claude:** Now the durable handover, so an interruption costs nothing. `RESUME.md` is still from July and actively misleading:
+  - `Write: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/RESUME.md`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git add RESUME.md && git commit -q`
+
+**Claude:** Now collision. "Seems flawed" is a symptom, so let me measure what actually happens rather than guess:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** A real sequential-impulse solver with manifolds and warm starting. Let me measure whether it's actually resolving — run a race and watch for interpenetration:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** **Confirmed and quantified.** Minimum centre-to-centre distance between two cars over 45 s of racing: **1.91 u**. Two 4.15-wide cars touch at ~4.15 side by side. They're overlapping by roughly half a car width.
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Proxies exist and are flagged `isVehicle`, but the broadphase peaked at **1 pair** across 600 steps with 285 proxies. Decisive test — overlap two cars deliberately and see whether they separate:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Decisive: cars pushed apart from 1.13 u settle at **1.99 u** and stop. The solver *is* working — it just resolves to half the right separation. That smells like the collision box being half size:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Half-extents are correct — `[2.075, 1.46, 4.75]`, exactly half of 4.15 × 2.92 × 9.5. But note `radius: 1` with a `roundXZ` flag: if the rounded-box path shrinks the box by `radius` and the contact never re-inflates it, separation lands at 2 × (2.075 − 1) ≈ 2.15 — which matches the measured 1.99. Recording it with the evidence:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/DEFECTS.md`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git add DEFECTS.md && git commit -q`
+
+**Claude:** Collision is confirmed, quantified, and committed as `f5c18f4` — and it's a much narrower problem than "flawed".
+
+**Cars interpenetrate to about half a car width.** In 45 s of racing the minimum centre-to-centre distance between two cars was **1.91 u**; two 4.15-wide cars touch at 4.15.
+
+The isolation is the useful part. I placed two cars 1.13 u apart — deliberate deep overlap — and watched:
+
+| step | centre distance |
+|---|---|
+| 0 | 1.13 |
+| 60 | 1.87 |
+| 239 | **1.99** |
+
+So the solver **isn't broken or missing** — it pushes them apart monotonically and then plateaus at almost exactly half the correct separation. That's a scale error, which is a far narrower thing to hunt than "collision is flawed".
+
+The lead has a number attached: the proxy's half-extents are *exactly* right (`[2.075, 1.46, 4.75]`), but it also carries `roundXZ` and `radius: 1`, and there's a `roundCylinder` path. If the rounded-box representation shrinks the box by `radius` and contact generation never adds it back, resting separation would be 2 × (2.075 − 1) = **2.15** — which is what I measured, within slop. I've written that up as a hypothesis to check, not a conclusion, with an explicit warning not to "fix" it by inflating the half-extents, since a car that bounces off things it visibly didn't touch is worse.
+
+One thing I couldn't explain and logged rather than hand-waved: `_pairCount` peaked at **1** across 600 steps with 285 proxies and 8 cars racing. Either the field is genuinely rarely in contact, or the broadphase is under-reporting. Whoever takes D18 should settle that first.
+
+**For interruptibility**, per your note — I've done two things:
+- **Rewrote `RESUME.md`** (`3c89e37`). The old one was five weeks and twelve commits stale, and its "start here" blocker had been fixed long before. The new one leads with how to run and play it on this machine, then the nine traps that have each cost a wrong diagnosis here — including two I hit myself today: the camera drifting between tool calls, and `setControls()` being silently overwritten by Input every step, which made my first reverse harness produce meaningless numbers.
+- **Wave 7 is running** with three deliberately small, independently committable jobs — capture resolution, the elimination metric, and the metallic flake — each told to finish one thing and stop rather than start a second.
+
+Everything is committed after each landing, so a sleep or a limit costs at most one wave.

@@ -18,6 +18,12 @@
 //   start line, it cannot be gamed by cutting, and sorting by it gives exactly
 //   "lap, then checkpoint, then distance to the next one" for free.
 //
+// * ELIMINATION DOES NOT USE THAT SCALAR. `entry.score` carries the cut
+//   penalty on purpose; elimination is a spatial rule and must not. It is
+//   judged on `entry.roadDistance` — unwrapped road distance from the start
+//   line, accrued in `_accrueRoadDistance`. Classification, gaps and the
+//   results table all still use `score`.
+//
 // * ALL TIMING RUNS IN fixedUpdate. main.js fast-forwards review captures by
 //   calling engine.stepFixed() in a loop with no rendered frames at all, so
 //   anything that only advanced in update() would silently not happen.
@@ -168,6 +174,18 @@ class Entry {
     this.started = false;         // has crossed the line once
     this.score = 0;               // monotone progress metric, world units
     this.t = 0;                   // spline parameter, cached from the vehicle
+
+    // Unwrapped road distance from the start line, world units. Purely
+    // spatial: the spline parameter with the lap wrap taken out, so it is
+    // continuous across the line, never jumps when the lap counter increments,
+    // and carries no cut penalty. Anchored at the grid, which sits behind the
+    // line, so a car that has not crossed yet reads negative and therefore
+    // ranks behind a car that has. Elimination is judged on this;
+    // classification is not (see `_accrueRoadDistance`, `_checkElimination`).
+    this.roadDistance = 0;
+    this._distT = 0;              // previous t sample
+    this._distWraps = 0;          // whole laps of t already unwrapped
+    this._distSeeded = false;     // has the anchor been taken yet
     this.position = this.gridPosition;
     this.lastPosition = this.gridPosition;
     this.bestPosition = this.gridPosition;
@@ -714,6 +732,63 @@ export class Race {
   }
 
   /**
+   * Accrue `e.roadDistance`: where the car actually is, in world units along
+   * the road, unwrapped.
+   *
+   * Why this exists. `e.score` is the right scalar for classification — it
+   * carries the cut penalty, which is what makes cutting unprofitable — but it
+   * is the wrong one for elimination, which is a spatial rule: you are out when
+   * you have dropped off the back of the screen. One moderate cut costs more
+   * score than the elimination gap, so a car sitting mid-pack in plain view
+   * could be eliminated for it.
+   *
+   * Why not the obvious signals:
+   *   - `lap + t` inverts the field on the opening lap. Cars grid BEHIND the
+   *     line, so before their first crossing t is ~0.98 with lap still 0 and
+   *     they read as nearly a lap AHEAD of anyone who has crossed. Measured.
+   *   - `vehicle.lapDistance` is `t * track.length` (Track.projectXZ) — the
+   *     same wrapped parameter, only scaled. It resets to zero at the line
+   *     every lap and carries no lap count. Race already reads it, but only on
+   *     the degraded no-checkpoint path where any order beats none.
+   *
+   * So: unwrap t. Keep an integer lap-wrap count that ticks whenever t jumps
+   * across the seam, and read the distance straight off it:
+   *
+   *     roadDistance = (wraps + t) * trackLength
+   *
+   * That is a POSITION, not an integral — it is recomputed from the current t
+   * every tick, so a momentary bad projection cannot leave permanent drift
+   * behind, which matters when a fixed threshold in world units is measured
+   * against it.
+   *
+   * It deliberately follows every jump smaller than half a lap, because those
+   * are real relocations: a cut across a corner shows up as exactly such a jump
+   * (the nearest point on the centreline flips from the entry arm to the exit
+   * arm in one tick), and so does a respawn putting a car back at its last
+   * checkpoint. Both are where the car actually is, which is the only thing
+   * this signal is asked to report. An earlier version rejected steps larger
+   * than a few units of ground travel; that quietly reimposed a cut penalty on
+   * the metric — the exact defect this exists to remove — and the rejected
+   * steps accumulated as drift.
+   */
+  _accrueRoadDistance(e, t, length) {
+    if (!Number.isFinite(t) || !(length > 0)) return;
+
+    if (!e._distSeeded) {
+      e._distSeeded = true;
+      // Anchor to the start line, signed: the grid sits just behind it, so
+      // t ~0.98 must read as ~-0.02 of a lap, not +0.98.
+      e._distWraps = t > 0.5 ? -1 : 0;
+    } else {
+      const dT = t - e._distT;
+      if (dT < -0.5) e._distWraps++;        // crossed the seam forwards
+      else if (dT > 0.5) e._distWraps--;    // and backwards
+    }
+    e._distT = t;
+    e.roadDistance = (e._distWraps + t) * length;
+  }
+
+  /**
    * Checkpoint validation. One gate forward at a time, one gate back at a time,
    * and nothing else counts. Everything downstream — laps, sectors, ordering —
    * is derived from this single rule.
@@ -725,7 +800,10 @@ export class Race {
     if (!v) return;
     if (!track || !n) {
       // Degraded track (no checkpoint ring): still produce a usable order so
-      // the HUD is not stuck showing everyone in first place.
+      // the HUD is not stuck showing everyone in first place. `roadDistance`
+      // stays at zero for the whole field here, which leaves elimination
+      // dormant — the right outcome, since the only spatial signal available
+      // on this path wraps at the line and would knock out the leader.
       e.score = Number(v.lapDistance) || 0;
       return;
     }
@@ -733,6 +811,7 @@ export class Race {
     let t = v.trackT;
     if (!Number.isFinite(t)) t = this._trackTOf(v);
     e.t = t;
+    this._accrueRoadDistance(e, t, track.length || 0);
 
     const idx = this._gateFor(t);
     if (idx !== e.cp) {
@@ -1035,38 +1114,51 @@ export class Race {
     // it scales with the circuit instead of assuming a lap length.
     if ((this.leader?.lap ?? 0) < ELIM_GRACE_LAPS) return;
 
-    // NOTE (D14, second order): this judges "who is off the back" on the
-    // validated score, which carries the cut penalty. A car that takes one
-    // moderate cut loses more score than the elimination gap on this circuit,
-    // so it can be eliminated while sitting mid-pack in plain view.
+    // Judged on `roadDistance`, NOT on `e.score` (D14, second order).
     //
-    // The obvious fix — judge on road position (`lap + t`) instead, since
-    // elimination is a spatial rule — does not work as written: cars are
-    // gridded BEHIND the line, so before their first crossing `t` is ~0.98 with
-    // `lap` still 0, and they read as nearly a full lap AHEAD of anyone who has
-    // already crossed. That inverts leader and last on the opening lap and
-    // eliminates half the field inside 30 s. Measured, not predicted.
+    // `score` carries the cut penalty, which is exactly right for the
+    // classification and the results table and exactly wrong here: one
+    // moderate cut costs more score than the elimination gap on this circuit,
+    // so a car sitting mid-pack in plain view could be taken out for it.
+    // Elimination is a spatial rule — you are out when you have dropped off
+    // the back of the screen — so it is judged on where the cars actually are.
+    // `roadDistance` is that signal: unwrapped, continuous across the start
+    // line, indifferent to the lap counter and to cuts. See
+    // `_accrueRoadDistance` for why the obvious alternatives are not.
     //
-    // Doing this properly needs a monotone distance-travelled signal rather
-    // than a wrapped parameter. Left alone deliberately until that is
-    // established; the freeze that made this acute is fixed above.
+    // The car that goes is therefore the one furthest back ON THE ROAD, found
+    // by scanning rather than taken off the tail of `standings` — the
+    // classification can legitimately disagree with the road order, and here it
+    // is the road order that decides.
+    //
+    // The reference it is measured against is the leading car still running in
+    // CLASSIFICATION order, read for its ROAD distance. Not simply whoever is
+    // furthest ahead on the road: a car that cuts moves up the road without
+    // earning it, and taking the road maximum lets a cutter ANYWHERE in the
+    // field drag the threshold forward and knock out a tail car that had done
+    // nothing wrong. Measured — one cutter took an innocent car out that way.
+    //
+    // Known residual: a cutter that is still classified first despite the score
+    // it lost is the reference, so its cut does widen the measured gap to the
+    // tail. That is at least a spatial truth — it really is that far up the
+    // road — and it needs the cutter to be leading on merit, whereas the road
+    // maximum needed nothing at all.
     const order = this.standings;
     let running = 0;
-    let last = null;
+    let last = null;    // furthest back on the road
+    let ref = null;     // leading car still running, in classification order
     for (let i = 0; i < order.length; i++) {
       const e = order[i];
       if (e.finished || e.eliminated) continue;
       running++;
-      last = e;
+      if (!ref) ref = e;                                       // standings is sorted
+      if (!last || e.roadDistance < last.roadDistance) last = e;
     }
-    if (running <= ELIM_MIN_REMAINING || !last) return;
+    if (running <= ELIM_MIN_REMAINING || !last || !ref || ref === last) return;
 
-    const leader = this.leader;
-    if (!leader || leader === last) return;
-    // Only ever the car in last place, and only against the leader's progress.
-    if (leader.score - last.score < this.elimination.gap) return;
+    if (ref.roadDistance - last.roadDistance < this.elimination.gap) return;
 
-    this._eliminate(last, leader);
+    this._eliminate(last, ref);
   }
 
   _eliminate(e, by) {
@@ -1398,6 +1490,7 @@ export class Race {
       pos: `${this.playerPosition}/${this.entries.length}`,
       best: this.player?.bestLap ? formatTime(this.player.bestLap) : '—',
       gates: this.player?.gates ?? 0,
+      road: Math.round(this.player?.roadDistance ?? 0),
       elim: this.elimination.count,
       autopilot: !!this._autopilot,
     };
@@ -1423,6 +1516,12 @@ export class Race {
     // gate credit for the jump either way, so nothing is gained by taking one.
     if (delta > 1 && delta < n - 2) e.lapInvalid = true;
     e.cp = idx;
+    // `roadDistance` needs nothing here on purpose. It is a position read off
+    // the current t, not an integral, so it simply reports the car where the
+    // respawn has put it back down — which is where it actually is. Clearing
+    // its reference here would be worse than useless: the next tick would then
+    // have no previous sample to compare against and could mistake the
+    // teleport for a lap wrap.
   }
 
   dispose() {
