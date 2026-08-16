@@ -1,6 +1,6 @@
 # Open defects
 
-## D18 — Cars interpenetrate to about half a car width — MAJOR — OPEN
+## D18 — Cars interpenetrate to about half a car width — MAJOR — FIXED
 `physics/Collision.js` [A8]. Playtest note ("the collision system seems flawed"), then measured.
 
 **In a real race:** over 45 s of racing with 8 cars, the minimum centre-to-centre distance
@@ -58,8 +58,96 @@ the clipping in `prepareManifold`, and `MAX_CONTACTS`.
 Do not "fix" this by inflating the half extents — they are correct, and a car whose collision box
 is bigger than its geometry will bounce off things it visibly did not touch.
 
+**FIXED, and the root cause is one line of missing arithmetic.** `boxBox`'s SAT compared the
+nine edge-cross axes against the six face axes **without normalising them**. `|A_i × B_j|` is the
+sine of the angle between those axes, so an edge pair's raw `proj - (ra + rb)` is the true
+separation *scaled by that sine*, while the face separations are measured on unit axes. Two
+different units, compared directly.
+
+For two roughly-aligned cars that sine is ~0, so an edge pair reports a penetration crushed to
+almost nothing and wins the shallowest-axis search outright. The existing `FACE_BIAS_REL/ABS` is
+a few percent and cannot rescue a three-orders-of-magnitude scaling error. Dumped for the D18
+configuration:
+
+```
+faceA 0  -3.03018            <- the correct answer, X
+edge 2 2  raw -0.00000  sin 0.00000  (degenerate)   <- WINS
+```
+
+Two consequences, both matching what was measured in the field: a one-point manifold with a
+diagonal near-horizontal normal (the winning axis is a cross product of two nearly-parallel
+axes, so its direction is numerical noise in XZ — hence `(0.795, 0.024, 0.606)`), and a reported
+separation of ~0, which makes `solvePosition` see `err < 0` and do nothing at all. The only push
+left was the velocity constraint on closing speed, which is exactly "improves while approaching,
+then plateaus".
+
+**Worse than originally logged:** at *perfectly* equal yaw the degenerate axis makes `edgeContact`
+bail and `boxBox` return **false — no contact at all**. Two cars at identical heading passed
+through each other, as did a car hitting a wall square-on.
+
+Fix: divide edge separations by the axis length before any comparison, and skip edge pairs below
+`EDGE_PARALLEL_SQ` (parallel edges have no usable cross axis and are fully covered by the face
+tests). Plus a car-car vertical guard, without which the fix alone still fails: once two cars are
+within 1.23 u the genuinely shallowest axis is *vertical*, and an honest MTD solver stands one
+car on the other's roof — which sticks here because an upright car is held up by suspension rays,
+not contacts, so the suspension shoves it back down and the horizontal overlap never resolves.
+The guard penalises near-vertical axes for ranking only, applies only to car-car, and lifts the
+moment one car really is above the other.
+
+Verified against an independent normalised-axis reference SAT over 14 407 overlapping pairs:
+one-point manifolds 97% -> 1.9%, mean normal error 62.9° -> 2.1°. 40 000-pair fuzz: zero false
+positives or negatives before and after, so the separation test's correctness is preserved.
+
+Confirmed in the running game: two cars at 1.13 u now separate through 4.28 by step 10 instead
+of plateauing at 1.99; the manifold is `count: 4` with a face-aligned normal; and the minimum
+centre-to-centre distance over a 45 s race is **4.22 u, up from 1.91**.
+
 Do not "fix" this by inflating the half extents — they are correct, and a car whose collision box
 is bigger than its geometry will bounce off things it visibly did not touch.
+
+**FIXED, and the root cause is one line of missing arithmetic.** `boxBox`'s SAT compared the
+nine edge-cross axes against the six face axes **without normalising them**. `|A_i × B_j|` is the
+sine of the angle between those axes, so an edge pair's raw `proj - (ra + rb)` is the true
+separation *scaled by that sine*, while the face separations are measured on unit axes. Two
+different units, compared directly.
+
+For two roughly-aligned cars that sine is ~0, so an edge pair reports a penetration crushed to
+almost nothing and wins the shallowest-axis search outright. The existing `FACE_BIAS_REL/ABS` is
+a few percent and cannot rescue a three-orders-of-magnitude scaling error. Dumped for the D18
+configuration:
+
+```
+faceA 0  -3.03018            <- the correct answer, X
+edge 2 2  raw -0.00000  sin 0.00000  (degenerate)   <- WINS
+```
+
+Two consequences, both matching what was measured in the field: a one-point manifold with a
+diagonal near-horizontal normal (the winning axis is a cross product of two nearly-parallel
+axes, so its direction is numerical noise in XZ — hence `(0.795, 0.024, 0.606)`), and a reported
+separation of ~0, which makes `solvePosition` see `err < 0` and do nothing at all. The only push
+left was the velocity constraint on closing speed, which is exactly "improves while approaching,
+then plateaus".
+
+**Worse than originally logged:** at *perfectly* equal yaw the degenerate axis makes `edgeContact`
+bail and `boxBox` return **false — no contact at all**. Two cars at identical heading passed
+through each other, as did a car hitting a wall square-on.
+
+Fix: divide edge separations by the axis length before any comparison, and skip edge pairs below
+`EDGE_PARALLEL_SQ` (parallel edges have no usable cross axis and are fully covered by the face
+tests). Plus a car-car vertical guard, without which the fix alone still fails: once two cars are
+within 1.23 u the genuinely shallowest axis is *vertical*, and an honest MTD solver stands one
+car on the other's roof — which sticks here because an upright car is held up by suspension rays,
+not contacts, so the suspension shoves it back down and the horizontal overlap never resolves.
+The guard penalises near-vertical axes for ranking only, applies only to car-car, and lifts the
+moment one car really is above the other.
+
+Verified against an independent normalised-axis reference SAT over 14 407 overlapping pairs:
+one-point manifolds 97% -> 1.9%, mean normal error 62.9° -> 2.1°. 40 000-pair fuzz: zero false
+positives or negatives before and after, so the separation test's correctness is preserved.
+
+Confirmed in the running game: two cars at 1.13 u now separate through 4.28 by step 10 instead
+of plateauing at 1.99; the manifold is `count: 4` with a face-aligned normal; and the minimum
+centre-to-centre distance over a 45 s race is **4.22 u, up from 1.91**.
 
 
 Found during integration verification. Fed into the post-build fix wave.

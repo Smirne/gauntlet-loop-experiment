@@ -1273,3 +1273,103 @@ One thing I couldn't explain and logged rather than hand-waved: `_pairCount` pea
 - **Wave 7 is running** with three deliberately small, independently committable jobs — capture resolution, the elimination metric, and the metallic flake — each told to finish one thing and stop rather than start a second.
 
 Everything is committed after each landing, so a sleep or a limit costs at most one wave.
+
+**You:** <task-notification>
+<task-id>wravflco2</task-id>
+<tool-use-id>toolu_01Q1oPrHxtvN93QnNpKrCFKj</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/tasks/wravflco2.output</output-file>
+<status>completed</status>
+<summary>Dynamic workflow "Three small self-contained fixes: capture resolution, elimination metric, flake octave" completed</summary>
+<result>[{"assignment":"src/core/Capture.js only — make the headless capture path render at the game's own ultra quality instead of below it (round-3 critic finding: captures forced pixelRatio 1, so every judged frame had 1x SMAA as its only AA).","verdict":"done","filesChanged":["/Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/src/core/Capture.js"],"mechanism":"MG.capture() used to call renderer.setPixelRatio(1) before setSize(w, h, false), giving a 1920x1080 drawing buffer — below the ultra tier's maxPixelRatio 2. Engine.onResize() deliberately never resizes the renderer (its own comment says so), and PostFX derives every target and resolution uniform from renderer.getPixelRatio() (PostFX.js build() and onResize() both read `pr` and size off width*pr / height*pr). So raising only the capture's pixel ratio scales the entire post chain with it and required no change outside Capture.js. Capture now renders at pixelRatio 2 with setSize(1920, 1080, false) — a 3840x2160 drawing buffer — reads it back with toDataURL, and box-downsamples to 1920x1080 through a 2D canvas with imageSmoothingQuality 'high' before POSTing. The downsample is the supersample: extra samples become edge quality, and the payload stays a 1920x1080 PNG at roughly the old file size.","changes":"1. New module-level constant CAPTURE_SS = 2 and a fourth optional arg `ssWant` on MG.capture(name, w, h, ssWant) — existing 3-arg callers (REVIEW.md, tools/capture-set.js, Debug.js F2) get 2x automatically; pass 1 to opt out.\n\n2. New helper affordableSS(renderer, w, h, want): reads MAX_TEXTURE_SIZE and MAX_RENDERBUFFER_SIZE and returns 1 if w*ss or h*ss exceeds them, or if the context is already lost. Never throws.\n\n3. The render is now in a local `shootAt(ss)` closure that preserves the original ordering exactly: setPixelRatio -&gt; setSize -&gt; engine.onResize -&gt; notifyCameraCut AFTER the resize (the load-bearing ordering, with its comment intact) -&gt; two renderFrame calls -&gt; toDataURL. It returns null instead of throwing when the frame cannot be had: context lost before or after rendering, gl.drawingBufferWidth/Height smaller than requested (drivers clamp an unallocatable buffer rather than erroring), or an implausibly short data URL.\n\n4. Fallback chain: try 2x; on null or throw, set note = \"supersample x2 unavailable; fell back to 1x\" and re-shoot at 1x. If device limits ruled out 2x up front the note is \"device limits forbid supersampling; rendered 1x\". If even 1x yields nothing, capture returns { ok: false, error, ... } rather than throwing.\n\n5. The restore block (pixel ratio, size, onResize, notifyCameraCut, resume) moved into a `finally`, so a throwing renderFrame can no longer leave the live viewport resized and the engine paused. Its ordering and comment are unchanged.\n\n6. Return value gains ss, renderW, renderH, downsampled, and note (only when non-empty). w/h still mean the requested output size, and kb now measures the actual POSTed payload. If the downsample fails, the full-resolution PNG is posted with downsampled:false and a note saying so, rather than losing the shot.\n\n7. MG.probe() is untouched.","unverified":"I did not boot the page or run a capture — no dev server, per the assignment. Everything below is reasoning from the source plus a node --check parse of the file:\n- That a real 2x capture actually completes on the review machine. Ultra PostFX allocates several half-float targets; at 3840x2160 each full-res RGBA16F target is ~66 MB, so peak VRAM is materially higher than before. I did not measure it.\n- Whether any PostFX pass allocates a target at build() time that composer.setSize/onResize does not resize. If one exists it would now run at a different fraction of the frame than before. (The old path also changed pixel ratio, from the live 2 down to 1, so this hazard is not new — the new path is closer to the live configuration, not further from it.)\n- Visual confirmation that aliasing actually improves, and that the browser's 'high' smoothing does a clean 2:1 reduction rather than something soft. Exact-integer 2x through Chrome's smoothing path should be a proper filtered reduction, but I have not looked at a resulting PNG.\n- Capture wall-clock. Two frames at 4x the pixels plus a 3840x2160 PNG encode, decode and redraw — I would guess a few hundred ms more per shot; tools/capture-set.js takes four shots.","watchFor":"- A lost WebGL context is unrecoverable, so if 2x OOMs the driver the 1x retry will also return null and the capture reports { ok: false, error: 'capture produced no image', note: 'supersample x2 unavailable; fell back to 1x' }. That is the honest failure surface, but it means one bad shot can poison the rest of a capture-set run. If the orchestrator sees that, call MG.capture(name, 1920, 1080, 1) to force the old behaviour and reload the page first.\n- Callers that destructure the result: the shape only gained fields, but tools/capture-set.js pushes the returned objects into a list that may be printed — the new keys will show up there.\n- Shot file size should stay in the same ballpark (still a 1920x1080 PNG); a sudden 4x jump in the logged KB means the downsample fell through and the note field will say so.\n- I did NOT commit. src/core/Capture.js is modified in the working tree alongside another agent's src/game/Race.js; I avoided touching the git index to prevent a race with the agents editing in parallel.\n- ARCHITECTURE.md, RESUME.md and REVIEW.md document the capture call as `MG.capture('name', 1920, 1080)`. That call still works and now supersamples, but none of those files mention supersampling — they are outside my assignment and someone should add a line."},{"assignment":"src/game/Race.js only — fix at root the standing defect that elimination is judged on the cut-penalised score, by giving the rule a monotone distance-travelled signal. Do not change the elimination tuning (gap fraction, cooldown, grace laps); keep classification and the results table on the existing score.","verdict":"done","filesChanged":["/Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/game/Race.js"],"mechanism":"FIRST, the signal the assignment pointed me at is NOT usable, and here is precisely why. `v.lapDistance` is set in `Vehicle._updateTrackState` from `Track.projectXZ`, and `projectXZ` computes it as `res.distance = t * this.length` (src/world/Track.js:890). It is the same wrapped spline parameter, only scaled by track length: it resets to zero at the start line on every lap and carries no lap count. It is neither monotone nor continuous across the line. Race already reads it, but only on the degraded no-checkpoint branch of `_advanceEntry`, where any ordering beats none — that branch is why it \"sounded like\" the right signal. (Worth noting the old rule was actively broken on that branch: comparing wrapped lapDistances means a leader just past the line reads 0 and the true tail reads ~1790, so the leader was the elimination candidate.)\n\nSo I built the smallest correct thing: `entry.roadDistance`, unwrapped road distance from the start line, in world units.\n\nIt is deliberately a POSITION, not an integral: an integer wrap counter ticks whenever t jumps the seam, and the distance is recomputed every tick as `(wraps + t) * trackLength`. A transient bad projection therefore cannot leave permanent drift behind — which matters a lot, because a fixed threshold in world units is measured against this. It is anchored at the grid with `wraps = t &gt; 0.5 ? -1 : 0`, so a car gridded behind the line at t≈0.98 reads −0.02 lap rather than +0.98 lap. That is the exact inversion that killed the previous attempt, and it is the reason the anchor is signed.\n\nElimination now picks the victim by scanning for the road minimum among running cars, and measures it against the leading still-running car in CLASSIFICATION order, read for its road distance. Classificati
+... (truncated 15279 chars, full result in /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/tasks/wravflco2.output)</result>
+<diagnostics>Per-agent results: /Users/michele.giacobazzi/.claude/projects/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/subagents/workflows/wf_a49d4a0c-21b/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.
+If the result above is empty or unexpected, Read this file BEFORE diagnosing — do not assume agents returned non-empty results.
+To re-run with edited post-processing: Workflow({scriptPath: '/Users/michele.giacobazzi/.claude/projects/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/workflows/scripts/micro-gauntlet-wave-7-wf_a49d4a0c-21b.js', resumeFromRunId: 'wf_a49d4a0c-21b'}) — agents whose (prompt, opts) are unchanged replay from cache.</diagnostics>
+<usage><agent_count>3</agent_count><agents_done>3</agents_done><agents_error>0</agents_error><agents_skipped>0</agents_skipped><agents_empty_result>0</agents_empty_result><subagent_tokens>294024</subagent_tokens><tool_uses>103</tool_uses><duration_ms>754451</duration_ms></usage>
+</task-notification>
+
+**Claude:** All three finished — but the capture agent reports editing a path **outside the worktree**. Checking:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 echo "=== worktree status ==="; git`
+
+**Claude:** False alarm — the parent repo is untouched (Aug 13); the agent just abbreviated the path in its report. All three edits are in the worktree. Verifying:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 for f in src/core/Capture.js src/ga`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** `roadDistance` is correct and continuous — car0 on lap 1 at t=0.107 reads 2052.6, car3 still on lap 0 at t=0.999 reads 1852.5, so a car just past the line correctly ranks ahead of one just before it. That's the inversion that killed the previous attempt. Now the capture path:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-3-macro-r13.png`
+
+**Claude:** 2× supersampling works and the frame is visibly cleaner — but **the macro shot has no car in it.** That's a regression I introduced: `settle()` advances the sim 0.4 s *after* the camera was posed from the car's old position, so the car drives out of frame. Settle has to come first.
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/tools/capture-set.js`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/tools/capture-set.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '/4. wide establishing/,/cri`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 python3 - <<'PY' import pathlib p =`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-3-macro-r14.png`
+
+**Claude:** That's the best frame the project has produced — two cars in a pack, clean AA from the supersampling, a real contact shadow, and the tail reading as a rolled corner with exhaust tips rather than a flat plate.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git add -A && git commit -q -F - <<`
+
+**Claude:** Wave 7 is in — `48d53ca`. All three agents finished, and the frames took a visible step up.
+
+**Captures were being judged below shipping quality.** Every review frame this project has ever been scored on rendered at pixelRatio 1 while the game's ultra tier runs at 2 — so critics have been marking down aliasing no player ever sees. Captures now render at 3840×2160 and downsample, with a device-limit check and a self-reporting 1× fallback.
+
+**Elimination finally runs on a real distance signal — and the agent refuted my brief to get there.** I pointed it at `v.lapDistance` as "probably already the monotone signal you need". It isn't: `Track.projectXZ` computes it as `t * length`, the same wrapped parameter scaled, resetting to zero at the line every lap. Race only ever read it on the degraded no-checkpoint branch, which is exactly why it *looked* right. It also spotted that branch was actively broken — comparing wrapped distances there made a leader just past the line read 0 while the true tail read 1790, so **the leader was the elimination candidate**.
+
+It built `roadDistance` instead: unwrapped, recomputed per tick rather than integrated (so a bad projection can't leave permanent drift against a fixed threshold), and anchored so a car gridded *behind* the line reads negative. Verified live — car0 on lap 1 reads 2052.6, car3 still on lap 0 reads 1852.5. Crossing the line no longer reorders anything.
+
+**And a regression I caused, which I only found by looking at the frames rather than trusting the report.** The `settle()` I added last wave advances the sim *after* the camera is posed from the car's position — so the macro shot, the one frame whose entire job is showing the car, came back aimed at an empty stretch of road. Settle first, read the subject after. Fixed and re-verified.
+
+Current state, all committed:
+- `f5c18f4` — D18 collision, measured and quantified
+- `3c89e37` — RESUME.md rewritten as a real handover
+- `7598b7c` — reverse works, steering second cut
+- `48d53ca` — wave 7
+
+The loop keeps going. Next is **D18**, which is now a well-specified hunt rather than a vague complaint — the solver plateaus at half the correct separation, and there's a hypothesis with arithmetic attached (`roundXZ` shrinking the box by `radius` without re-inflating). After that, critic round 4 on supersampled frames, which will be the first round where the critics are looking at what the game actually renders.
+
+**You:** go
+
+**Claude:** Continuing. Launching critic round 4 on the supersampled frames — the first round where critics see what the game actually renders — then I'll take D18 while they work.
+  - `Workflow: export const meta = { name: 'micro-gauntlet-critique-r4', description: 'Round 4: four hostile critics re-score the supersampled frames', phases: [{ title: 'Crit`
+
+**Claude:** Now D18. Let me test the `roundXZ` hypothesis directly in the source:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -n "roundXZ" src/physics/*.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '425,478p' src/physics/World`
+
+**Claude:** The vehicle's shape is `'box'`, so `roundXZ` is **false** for cars — `radius: 1` is just an unused default. My hypothesis was wrong. Let me measure the manifold directly instead:
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__preview_start: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** **That's the mechanism.** Two overlapping boxes produce a manifold with **`count: 1`** — a single contact point where a face-face overlap should yield up to four. And the normal is diagonal `(0.795, 0.024, 0.606)` rather than close to ±X for two roughly-aligned cars. The solver can only push at one point, so it rotates and slides instead of separating cleanly.
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/DEFECTS.md`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git add DEFECTS.md && git commit -q`
+
+**Claude:** Now a focused agent on the actual mechanism:
+  - `Agent: general-purpose`
+
+**Claude:** Both running. Committed as `7adeb4e`.
+
+**D18 is now diagnosed rather than described**, and the diagnosis overturned my own first hypothesis.
+
+I'd guessed the `roundXZ` rounded-box path was shrinking the collision box by its `radius`. That's wrong — vehicles are shape `'box'`, so `roundXZ` is `false` and `roundCylinder` never runs for a car; the `radius: 1` I latched onto is just an unused default. I've written that up as explicitly ruled out so nobody spends a slot re-checking it.
+
+The real mechanism, from forcing an overlap and reading the manifold:
+
+```
+proxy:    box, roundXZ false, half [2.075, 1.46, 4.75]   ← all correct
+manifold: count 1, normal (0.795, 0.024, 0.606)
+```
+
+**One contact point** where a face-to-face overlap should give four from the clipped face polygon. One point is enough to push at — which is why separation improves at all — but it can't resolve a face overlap: the pair rotates and slides around that single point and the position solver settles shallow. That's precisely the measured "pushes apart, then plateaus at half".
+
+The normal corroborates it. Two roughly axis-aligned cars overlapping along X should give a normal near ±X; a diagonal one is what a separating-axis search returns when it picks an edge-cross feature over a face. The likely culprit is a missing bias that prefers face axes when depths are near-equal, so numerical noise selects an edge.
+
+An agent is on it in `Collision.js` with that brief and a concrete acceptance test: two cars at 1.13 u should separate to ~4.15, not plateau at 1.99.
+
+**Critic round 4** is also running, on the supersampled frames — the first round where critics judge what the game actually renders rather than a 1× capture. Round 3 was marking down aliasing no player ever saw.
+
+I'll report both as they land, committing each separately so an interruption costs at most one.

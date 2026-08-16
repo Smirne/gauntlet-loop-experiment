@@ -75,6 +75,16 @@ export const RESTITUTION_FLOOR = 9;
 const FACE_BIAS_REL = 0.98;
 const FACE_BIAS_ABS = 0.02;
 
+/**
+ * sin^2 of the angle between two edge directions, below which their cross
+ * product is not a usable separating axis. Parallel edges are fully covered by
+ * the six face axes, so the pair is skipped rather than normalised.
+ */
+const EDGE_PARALLEL_SQ = 1e-6;
+
+/** |axis . worldUp| above which an axis counts as vertical — see boxBox(). */
+const VERTICAL_AXIS_DOT = 0.5;
+
 const EPS = 1e-6;
 
 /* ==========================================================================
@@ -229,12 +239,31 @@ export function orthoBasis(n, t1, t2) {
  * Narrowphase — box / box
  * ========================================================================== */
 
+/** Half extent of an oriented box measured along world up. */
+function worldHalfUp(p) {
+  return p.half.x * Math.abs(p.axX.y)
+    + p.half.y * Math.abs(p.axY.y)
+    + p.half.z * Math.abs(p.axZ.y);
+}
+
 /**
  * Oriented box against oriented box, by separating axis with face clipping.
  *
  * Returns true when a manifold was produced. A manifold may be produced with
  * every point still separated (up to `margin`): that is the speculative case
  * and the solver treats it correctly.
+ *
+ * Two things below are easy to get wrong and both cost a face manifold:
+ *
+ *  1. The nine edge-cross axes are NOT unit vectors. |A_i x B_j| is the sine of
+ *     the angle between them, so the raw `proj - (ra + rb)` for an edge pair is
+ *     the true separation *scaled by that sine*. Comparing it against the face
+ *     separations, which are measured on unit axes, compares two different
+ *     units: a nearly-parallel edge pair reports a penetration shrunk towards
+ *     zero and wins the "shallowest axis" search outright, no matter how large
+ *     the face bias is. Every edge separation is therefore divided by the axis
+ *     length before it is compared with anything.
+ *  2. See the car-car note on `vertPenalty` below.
  */
 export function boxBox(A, B, mf, margin = 0) {
   _axesA[0] = A.axX; _axesA[1] = A.axY; _axesA[2] = A.axZ;
@@ -256,8 +285,36 @@ export function boxBox(A, B, mf, margin = 0) {
   }
   for (let j = 0; j < 3; j++) _tB[j] = _rel.dot(_axesB[j]);
 
-  let best = -Infinity;
-  let bestKind = 0;      // 0 = face of A, 1 = face of B, 2 = edge pair
+  // Car against car, at the same height: the true shallowest axis of a deep
+  // side-by-side overlap points straight up. A car is 2.92 tall and 4.15 wide,
+  // so as soon as two of them are closer than 1.23 u the vertical overlap is
+  // the smaller one and an honest minimum-translation solver stands one car on
+  // the other's roof. That is the wrong answer here for a reason outside this
+  // file: an upright car is held off the ground by its four suspension rays,
+  // not by a contact (World._terrainContacts skips upright vehicles), so the
+  // suspension shoves the lifted car straight back down and the horizontal
+  // overlap never resolves at all. So while neither car is meaningfully above
+  // the other, push near-vertical axes out of the running and let the pair
+  // separate in the plane they race in. The penalty only reorders the choice —
+  // the `s > margin` separation test always uses the true value — and it lifts
+  // the moment one car IS on top of the other, where a vertical resting
+  // contact is exactly right. Nothing here touches car-wall or car-prop.
+  let vertPenalty = 0;
+  if (A.isVehicle && B.isVehicle) {
+    const upHalf = worldHalfUp(A) + worldHalfUp(B);
+    if (Math.abs(_rel.y) < 0.5 * upHalf) {
+      // Larger than any penetration two boxes can have, so a penalised axis
+      // can still be chosen if every axis is penalised, but never otherwise.
+      vertPenalty = 4 * (
+        Math.max(_halfA[0], _halfA[1], _halfA[2])
+        + Math.max(_halfB[0], _halfB[1], _halfB[2])
+      );
+    }
+  }
+
+  let best = -Infinity;      // ranking value: separation minus any penalty
+  let bestTrue = -Infinity;  // the real separation on the chosen axis
+  let bestKind = 0;          // 0 = face of A, 1 = face of B, 2 = edge pair
   let bestIndex = 0;
   let bestJ = 0;
 
@@ -267,7 +324,8 @@ export function boxBox(A, B, mf, margin = 0) {
     const rb = _halfB[0] * _absC[i][0] + _halfB[1] * _absC[i][1] + _halfB[2] * _absC[i][2];
     const s = Math.abs(_tA[i]) - (ra + rb);
     if (s > margin) return false;
-    if (s > best) { best = s; bestKind = 0; bestIndex = i; }
+    const sel = Math.abs(_axesA[i].y) > VERTICAL_AXIS_DOT ? s - vertPenalty : s;
+    if (sel > best) { best = sel; bestTrue = s; bestKind = 0; bestIndex = i; }
   }
 
   // Faces of B.
@@ -276,32 +334,54 @@ export function boxBox(A, B, mf, margin = 0) {
     const ra = _halfA[0] * _absC[0][j] + _halfA[1] * _absC[1][j] + _halfA[2] * _absC[2][j];
     const s = Math.abs(_tB[j]) - (ra + rb);
     if (s > margin) return false;
-    if (s > best * FACE_BIAS_REL + FACE_BIAS_ABS) { best = s; bestKind = 1; bestIndex = j; }
+    const sel = Math.abs(_axesB[j].y) > VERTICAL_AXIS_DOT ? s - vertPenalty : s;
+    if (sel > best * FACE_BIAS_REL + FACE_BIAS_ABS) {
+      best = sel; bestTrue = s; bestKind = 1; bestIndex = j;
+    }
   }
 
-  // Edge pairs. Biased against so a near-face contact stays a face contact.
+  // Edge pairs. Every separation is divided by |A_i x B_j| so that it is a real
+  // distance and can be compared with the face axes at all — see the header
+  // note. Then biased against, so a near-face contact stays a face contact.
   let edgeBest = -Infinity;
+  let edgeTrue = -Infinity;
   let edgeI = 0;
   let edgeJ = 0;
   for (let i = 0; i < 3; i++) {
     const i1 = (i + 1) % 3;
     const i2 = (i + 2) % 3;
     for (let j = 0; j < 3; j++) {
+      // |A_i x B_j|^2 = 1 - (A_i . B_j)^2 for unit axes. Parallel edges have no
+      // usable cross axis and are already covered by the face tests.
+      const c = _C[i][j];
+      const sinSq = 1 - c * c;
+      if (sinSq < EDGE_PARALLEL_SQ) continue;
+      const invLen = 1 / Math.sqrt(sinSq);
+
       const j1 = (j + 1) % 3;
       const j2 = (j + 2) % 3;
       const ra = _halfA[i1] * _absC[i2][j] + _halfA[i2] * _absC[i1][j];
       const rb = _halfB[j1] * _absC[i][j2] + _halfB[j2] * _absC[i][j1];
       const proj = Math.abs(_tA[i2] * _C[i1][j] - _tA[i1] * _C[i2][j]);
-      const s = proj - (ra + rb);
+      const s = (proj - (ra + rb)) * invLen;
       if (s > margin) return false;
-      if (s > edgeBest) { edgeBest = s; edgeI = i; edgeJ = j; }
+
+      let sel = s;
+      if (vertPenalty > 0) {
+        const eA = _axesA[i];
+        const eB = _axesB[j];
+        // y component of the unit cross-product axis.
+        const upDot = (eA.z * eB.x - eA.x * eB.z) * invLen;
+        if (Math.abs(upDot) > VERTICAL_AXIS_DOT) sel = s - vertPenalty;
+      }
+      if (sel > edgeBest) { edgeBest = sel; edgeTrue = s; edgeI = i; edgeJ = j; }
     }
   }
   if (edgeBest > best * FACE_BIAS_REL + FACE_BIAS_ABS) {
-    best = edgeBest; bestKind = 2; bestIndex = edgeI; bestJ = edgeJ;
+    best = edgeBest; bestTrue = edgeTrue; bestKind = 2; bestIndex = edgeI; bestJ = edgeJ;
   }
 
-  if (bestKind === 2) return edgeContact(A, B, mf, bestIndex, bestJ, best, margin);
+  if (bestKind === 2) return edgeContact(A, B, mf, bestIndex, bestJ, bestTrue, margin);
 
   const ref = bestKind === 0 ? A : B;
   const inc = bestKind === 0 ? B : A;
