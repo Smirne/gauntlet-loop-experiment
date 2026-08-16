@@ -1,132 +1,108 @@
 # MICRO GAUNTLET — how to resume
 
-Paused 2026-07-31 08:10. Everything is committed on `main`. Nothing is in flight.
+Rewritten 2026-08-16. The previous version of this file was five weeks and a dozen commits
+stale and its "start here" blocker had been fixed long before anyone read it again. **If this
+header is more than a few commits behind `git log`, trust the commit messages instead — they
+are unusually detailed in this repo and they are the real record.**
+
+## Running it, on this machine
+
+macOS. Node is present, so:
+
+```bash
+node server.js
+```
+
+Then `http://localhost:8791`. `server.ps1` is the Windows original and is kept for that box.
+
+**The server is not just a static file server.** The capture pipeline POSTs PNGs to `/__shot`
+and the server writes them to `shots/`. `python3 -m http.server` would serve the page perfectly
+and silently break every review frame.
+
+## Playing it
+
+Enter to start from the menu. `W/↑` throttle, `S/↓` brake — **hold `S` at a standstill for
+0.28 s to select reverse, then `S` drives you backwards** (the pedals swap in reverse). `A D`
+steer, `Space` handbrake, `Shift` boost, `R` respawn, `V` camera, `Esc` pause, `\` restart.
+
+URL params: `?track=kitchen|garden|workbench|pool|bedroom` `&skipmenu=1` `&t=30` (fast-forward
+seconds, capped at 60) `&quality=low|medium|high|ultra` `&cars=8` `&seed=N` `&nohud=1`
+`&autopilot=1`.
+
+## Reviewing it — read this before capturing anything
+
+```js
+const m = await import('/tools/capture-set.js'); await m.captureSet('r13');
+```
+
+Boot with `/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`.
+
+**`autopilot=1` is not optional.** Without it nobody drives car0, it trails the field, gets
+eliminated, and the race ends — rounds 1 and 2 of the critique were both scored on a stopped
+race with two of four cameras showing no car at all. `captureSet()` now refuses to shoot unless
+the field is measurably moving, and it establishes that by *driving* the simulation rather than
+watching it.
+
+## The traps, each of which cost a wrong diagnosis
+
+1. **The sim does not run while the browser pane is hidden.** `Engine` pauses itself on
+   `document.hidden`. An agent-driven pane is hidden nearly always, so every progress sample
+   reads frozen. This is what made two boots of one seeded URL look non-deterministic.
+2. **The camera drifts between tool calls.** `captureSet` disables the director and repositions
+   the camera for shots 2–4, and the sim advances between calls. Any probe that spans two calls
+   is looking at a different camera on a different frame. Freeze the engine and do the whole
+   measurement inside ONE call.
+3. **Isolate one variable at a time.** A "black wedge" was blamed on the skid ribbon because an
+   isolation hid *two* ribbons at once and a plausible story fit. It cost an agent its whole
+   slot. It was the ambient-occlusion pass.
+4. **`visible = false` and `material.colorWrite = false` are not the same test.** If hiding a
+   mesh changes the frame but disabling its colour write does not, something is drawing it
+   *without its material* — an override pass. That gap is what found the AO bug.
+5. **The browser caches a failed dynamic import for the document's lifetime.** Hard-reload
+   before verifying a module that 404'd.
+6. **Read the console unfiltered.** A filtered read returned "no logs" while the shader error
+   was right there.
+7. **Backticks cannot appear in a `/* glsl */` comment.** Four times now, including once in a
+   workflow script written to warn agents about it.
+8. **`setControls()` is overwritten by Input every step.** Driving the car from a probe requires
+   going through `ctx.input.raw`, or the car simply never accelerates and your numbers are
+   meaningless.
+9. **Parsing is not booting.** Two agents once left files that parsed perfectly and hung the
+   boot, because they had written calls to methods they never defined. **Boot is the acceptance
+   test.** `grep` for `this.foo(` against defined methods catches this class in seconds.
 
 ## Where it stands
 
-**1,317 KB of source across 28 modules.** The game boots, builds the kitchen circuit
-(1854 units, 20 checkpoints, 12 spawn points) and renders it. See `shots/first-world.png`.
+34 modules, 0 failures, 8 cars from 3 chassis on the kitchen circuit, races run to a real
+classification. Scope is locked to **one track (kitchen) and three chassis (muscle, wedge,
+rally)**; the other four tracks still load but get no quality budget.
 
-| Area | State |
-|---|---|
-| core | ✅ Engine (fixed 120 Hz), Settings, Random, EventBus, Debug |
-| render | ✅ Renderer, Lighting (cascaded shadows, 6 presets), PostFX (12 passes), Sky |
-| textures | ✅ ProcTex foundry, Surfaces library |
-| materials | ✅ incl. carPaint with metallic flake + clearcoat (bug fixed, verified) |
-| world | ✅ Track, TrackBuilder, RacingLine, Props, Decals, **5 circuits** |
-| vehicle | ✅ Vehicle, Tires, CarModels (8 chassis), VehicleVisual |
-| physics | ✅ World, Collision |
-| game | ✅ Race, Director, Input |
-| ai | ❌ `src/ai/Driver.js` |
-| fx | ❌ `src/fx/Particles.js`, `Trails.js`, `Impacts.js` |
-| audio | ❌ `src/audio/Audio.js`, `EngineSound.js`, `Sfx.js`, `Music.js` |
-| ui | ❌ `src/ui/HUD.js`, `Menu.js`, `Results.js` (`style.css` exists) |
+Critic round 3 — the first ever run on a moving race — scored it against a rubric whose anchors
+are 5 = competent hobby, 7 = good indie, 9 = commercial:
 
-## Start here — the one blocker
+| Dimension | R2 | R3 |
+|---|---|---|
+| Lighting, shadow, grounding | 3 | 5 |
+| Materials and texture | 4 | 5 |
+| Modelling and silhouette | 4 | 6 |
+| Post, colour, tell test | 4 | 6 |
+| Camera, composition, world | 5 | 5 |
 
-**No cars spawn.** `window.__mgReady.vehicles === 0` even though `CarModels` exposes 8 models
-and the track has 12 spawn points. The vehicle construction loop in `src/main.js` (search
-`FIELD`) builds `Vehicle` with a `model` id taken from `Object.keys(CAR_MODELS)`; either the
-constructor is throwing (check `window.MG.status.failed` for `Vehicle[0]`) or the id shape
-doesn't match what `Vehicle.js` expects. Diagnose that first — nothing else can be judged
-until cars are on the track.
+## Open, in rough priority order
 
-Then, from `shots/first-world.png`, the visual issues to hand to a critic pass:
-- The road ribbon reads washed-out and pale against the table; it doesn't sit *on* the wood.
-- The whole frame is hazy and low-contrast — fog density or exposure is likely too high.
-- Tilt-shift isn't visibly reading; the miniature illusion depends on it.
-- Some props (napkins, cutlery) are flat quads that read as decals, not objects.
+- **Collision "seems flawed"** — a playtest note, not yet measured. Symptom unspecified: could be
+  interpenetration, over-bouncy impulses, sticking, or pass-through. `physics/Collision.js`.
+- **`SPEED_FRAG` documents the wrong blend function.** It claims additive is `(SrcAlpha, One)`;
+  the renderer sets `premultipliedAlpha`, so r180 uses `(ONE, ONE)`. Not currently causing a
+  visible defect, but it is a live trap for the next agent in `fx/Trails.js`.
+- The tail cap, mirrors and exhaust stubs on the muscle chassis (round-3 modelling findings).
+- Round 4 of the critique, to see whether the scores move.
 
-## Running it
+## Working method that has actually worked
 
-No build step, no dependencies — Three.js r180 is vendored in `vendor/three/` and committed.
-Any static file server works. Serve the repo root, open the page.
-
-Windows (what this session used):
-
-```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File server.ps1
-```
-
-macOS / Linux — anything equivalent is fine:
-
-```bash
-python3 -m http.server 8791
-```
-
-Then open `http://localhost:8791`. In Claude Code, the `micro-gauntlet` entry in
-`.claude/launch.json` starts the PowerShell server via `preview_start`; on a non-Windows
-machine, edit that entry to your server command and keep `"port": 8791`.
-
-### URL parameters
-
-`?track=kitchen|garden|workbench|pool|bedroom` `&skipmenu=1` `&t=6` (fast-forward seconds)
-`&quality=low|medium|high|ultra` `&cars=8` `&seed=N` `&nohud=1`
-
-### Screenshots (how visual review works)
-
-The browser pane doesn't reliably composite frames, so normal screenshotting fails. The page
-renders on demand and POSTs a PNG to the dev server, which writes it to `shots/`:
-
-```js
-await window.MG.capture('name', 1920, 1080)   // -> shots/name.png
-window.MG.probe()                             // { meanLuma, maxLuma } black-frame check
-window.MG.status                              // per-module load/construct results
-```
-
-Then read the PNG off disk. `shots/` is gitignored.
-
-**Two traps that cost time in this session — don't repeat them:**
-1. The browser caches a *failed* dynamic import for the document's lifetime. A module that
-   404'd at boot keeps returning the cached rejection after the file lands. **Hard-reload
-   before verifying anything.**
-2. Read the console **unfiltered**. A filtered read returned "no logs" and I concluded there
-   was no shader error when the error was right there. That cost two wrong diagnoses.
-3. Boot takes several seconds on a slow CPU (texture baking + track build). Probing too early
-   looks like a boot failure. Check `window.MG.status` exists before concluding anything.
-
-## Switching machines — yes, easily
-
-The repo is fully self-contained: vendored Three.js, zero npm dependencies, no build step,
-all art generated procedurally in code. Nothing is machine-specific except `server.ps1`.
-
-The remote is `https://github.com/Smirne/gauntlet-loop-experiment` and `main` tracks
-`origin/main`, so on another machine it is just:
-
-```bash
-git clone https://github.com/Smirne/gauntlet-loop-experiment
-```
-
-Copying the folder directly also works (~15 MB, mostly `vendor/`). Either way, serve the root
-with any static server as above — there is nothing to install.
-
-**Do not commit or push while a fix workflow is in flight.** Agents edit files in the working
-tree as they go, so a commit taken mid-wave captures half-written modules. Wait for the wave
-to report, boot the game, confirm 34 modules and zero failures, then commit.
-
-A faster machine is worth it. This one is a 2-core i7-7500U, which capped parallel agents at
-`min(16, cores-2)` = **2 at a time**. A 8+ core machine would run 6+ agents concurrently and
-cut the remaining build from hours to well under one.
-
-## Resuming the build
-
-Remaining work is one batch of four independent subsystems — AI, fx, audio, UI — with no
-interdependencies, so they can all run in parallel. The prompt pattern that worked is in
-`.claude`-adjacent workflow scripts under the session dir, but it's simple to restate:
-
-> Read `ARCHITECTURE.md` (binding contract), `REVIEW.md` (quality bar) and `DEFECTS.md`.
-> Everything except ai/fx/audio/ui is already built — read the real exports of the modules
-> you depend on, especially `src/main.js` for wiring. Zero dependencies, zero binary assets,
-> everything procedural, 1 unit = 1 cm, gravity 260, seeded RNG only. Build `<subsystem>`.
-
-After that: fix the remaining items in `DEFECTS.md` (D3 rubber too black, D4
-brushedAluminium reads as matte blue paint, D5 oak knots blue-tinted), then run the critic
-loop in `REVIEW.md` — capture at 1920×1080, score against the rubric, fix, re-capture, and
-blind-A/B successive iterations with randomised labels so regressions can win.
-
-## Honest state of the goal
-
-This is a solid, real foundation with a genuine art direction — not a demo. It is **not yet**
-at the bar the brief set. No frame has been through a hostile critic pass, the cars aren't
-on track, and four subsystems are missing. The remaining work is well-specified rather than
-exploratory, which is the good position to be paused in.
+Small waves of 3–5 agents on **disjoint files**, each told to write the helper complete before
+the call site. Agents cannot drive the browser — one shared pane — so they do source-level work
+and the orchestrator verifies centrally by booting and capturing. Commit after every wave that
+boots clean. Critics get read access to the source and are told a false finding costs a fix
+agent its whole slot; that discipline has produced several "this is not a defect, here is the
+arithmetic" results, which are worth as much as the fixes.
