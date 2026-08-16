@@ -506,6 +506,22 @@ void main() {
 // it stays self-consistent with the thing it surrounds: table height 75 cm ->
 // 250 u, ceiling 2.5 m -> ~825 u, counter 90 cm -> 300 u. Building the room at
 // literal cm around a 4.6 m tabletop would read as a table in a doll's house.
+//
+// MATERIAL, NOT TONE. The first pass built the room by multiplying the backdrop
+// palette by a brightness — tone 0.46 for walls, 0.78 for the floor. That is why
+// it read as an untextured card: the palette is a *lighting* description (what
+// colour the far side of the room is glowing), so using it as paint gives a
+// surface whose albedo changes with the time of day and whose hue is whatever
+// the sky happens to be. It also puts the floor at luma 87-94 in morning, five
+// points of saturation from neutral, next to a 0.54-saturation oak tabletop.
+//
+// Now the room has its own albedos — painted emulsion on the walls, a boarded
+// oak floor — and the palette is read as the LEVEL and CAST of the light in the
+// room: `lit = a + b * luminance(palette)`, tinted toward the palette's own hue.
+// Morning lands within a couple of levels of where it was, which is deliberate
+// (nobody complained about the level); goldenHour picks up its warmth; and
+// nightLamp stops being 9/255, because a near-black palette now means a dimly
+// lit room rather than a black-painted one.
 const ROOM = Object.freeze({
   floorDrop: 250,      // tabletop -> floor, i.e. the table's height
   margin: 330,         // table edge -> wall: room to walk round it
@@ -515,13 +531,27 @@ const ROOM = Object.freeze({
   wallMin: 560,
   wallMax: 1000,
   plank: [52, 420],    // floorboard width and stagger length
-  tone: 0.46,          // wall brightness against the backdrop palette
-  floorTone: 0.78,
+
+  wallColor: 0xcfc6b8, // emulsion, warm off-white
+  floorColor: 0x93673d, // mid oak board
+  tint: 0.50,          // how far each albedo bends toward the preset's own cast
+  tone: 0.46,          // wall level against the backdrop palette
+  floorTone: 1.0,
   propTone: 0.62,
-  amb: 0.72,           // shading floor, unlit faces
-  key: 0.55,           // extra for a face turned to the window
-  pool: 0.038,         // strength of the light the window throws on the room
-  tableShade: 0.85,    // how much of that the table blocks
+  wallSheen: 0.06,     // emulsion has a real Fresnel edge; this is what sells it
+  floorGloss: 0.14,    // satin varnish: the window smears along the boards
+  skirt: 105,          // skirting height. Below ~90 it dies at establishing distance.
+
+  amb: 0.58,           // shading floor, unlit faces
+  key: 0.82,           // extra for a face turned to the window
+  pool: 0.30,          // the window's own patch, as a fraction of surface albedo
+  tableShade: 0.95,    // how much of the key the table blocks
+  tableAO: 0.42,       // ambient the table steals from the floor directly under it
+  bounce: 0.28,        // fraction of Lighting's warm bounce the room floor picks up
+  bounceRange: 420,    // how far past the table edge that warmth reaches
+  lampGain: 1.0,       // practical (nightLamp) spot, read live off Lighting
+  lampSpill: 0.35,     // a shade leaks in every direction, not just down the cone
+  propHeadroom: 0.95,  // tallest a room prop may stand, as a fraction of wall height
 });
 
 /** Themes that are not in a room. The shell keeps the sky for these. */
@@ -543,26 +573,43 @@ const FLOOR_THEMES = new Map([['bedroom', 8]]);
  *   w/d/h - width along the wall, depth into the room, height
  *   base  - height of the underside above the floor (wall units hang)
  * Kept deliberately dumb and few: this is a silhouette, not a set.
+ *
+ * HEIGHTS ARE NOT ARBITRARY and must not be scaled to taste: the room is built
+ * at the same stretched scale as the table (250 u = 75 cm, so 3.33 u per cm), so
+ * a counter is 90 cm -> 300 u and a larder unit 192 cm -> 640 u. The complaint
+ * that "only three of eight props clear the tabletop" is true, but the cure is not
+ * to inflate a bin into a wardrobe — everything below 250 u is genuinely hidden
+ * behind a 250 u table. The cure is more things that are legitimately tall, so
+ * the silhouette above the tabletop has something in it: a fridge, an open
+ * shelving stack and a door jamb are added here for exactly that.
  */
 const ROOM_PROPS = Object.freeze([
   { wall: '-z', along: -0.30, w: 900, d: 200, h: 300, base: 0 },     // counter run
   { wall: '-x', along: -0.62, w: 520, d: 200, h: 300, base: 0 },     // its return
-  { wall: '-z', along: 0.58, w: 300, d: 230, h: 640, base: 0 },      // tall unit
+  { wall: '-z', along: 0.58, w: 300, d: 230, h: 640, base: 0 },      // tall larder unit
   { wall: '-z', along: -0.42, w: 560, d: 120, h: 260, base: 470 },   // wall cupboard
   { wall: '-x', along: -0.55, w: 380, d: 120, h: 260, base: 470 },   // wall cupboard
-  { wall: '+x', along: 0.18, w: 200, d: 190, h: 290, base: 0 },      // chair back
-  { wall: '+z', along: -0.46, w: 170, d: 170, h: 230, base: 0 },     // bin
+  { wall: '-x', along: 0.34, w: 300, d: 230, h: 610, base: 0 },      // fridge
+  { wall: '+x', along: 0.18, w: 200, d: 190, h: 300, base: 0 },      // chair back
+  { wall: '+x', along: -0.44, w: 260, d: 160, h: 700, base: 0 },     // open shelving
+  { wall: '+z', along: -0.46, w: 170, d: 170, h: 260, base: 0 },     // bin
   { wall: '+z', along: 0.40, w: 160, d: 160, h: 250, base: 0 },      // stool
+  { wall: '+z', along: 0.02, w: 120, d: 90, h: 760, base: 0 },       // door jamb
 ]);
 
 const ROOM_VERT = /* glsl */ `
 varying vec3 vRoomPos;
 varying vec3 vRoomN;
+varying vec3 vObjC;
 #include <fog_pars_vertex>
 
 void main() {
   vec4 wp = modelMatrix * vec4( position, 1.0 );
   vRoomPos = wp.xyz;
+  // The mesh origin in world space. Constant across the object, so the fragment
+  // stage can key a per-prop tint and box-local coordinates off it without
+  // needing an attribute or a second material.
+  vObjC = ( modelMatrix * vec4( 0.0, 0.0, 0.0, 1.0 ) ).xyz;
   // Every room mesh is an axis-aligned plane or box under axis-aligned scale,
   // so the plain model rotation is enough here and no normal matrix is needed.
   vRoomN = normalize( mat3( modelMatrix ) * normal );
@@ -595,9 +642,29 @@ uniform float uRoomWindow;
 uniform vec3  uTableCenter;  // x, tabletop level, z
 uniform vec2  uTableHalf;
 uniform float uTableShade;
+uniform float uTableAO;
+
+uniform vec3  uWallColor;    // emulsion albedo
+uniform vec3  uFloorColor;   // board albedo
+uniform float uRoomTint;     // how far each albedo bends toward the preset cast
+uniform float uWallSheen;
+uniform float uFloorGloss;
+uniform float uSkirt;
+
+uniform vec3  uBounceColor;  // warm light coming back off the tabletop
+uniform float uBounceAmt;
+uniform float uBounceRange;
+
+uniform vec3  uLampPos;      // the practical, when a preset has one
+uniform vec3  uLampAxis;
+uniform vec3  uLampColor;
+uniform vec2  uLampCos;      // cos(outer), cos(inner)
+uniform float uLampPower;
+uniform float uLampSpill;
 
 varying vec3 vRoomPos;
 varying vec3 vRoomN;
+varying vec3 vObjC;
 
 #include <fog_pars_fragment>
 
@@ -605,9 +672,47 @@ float mgBoardTone( float i ) {
   return fract( sin( i * 12.9898 + 4.1 ) * 43758.5453 ) - 0.5;
 }
 
+/**
+ * Shadow of the tabletop, cast along an arbitrary direction L that points
+ * TOWARD the light. The penumbra widens with how far the ray has to travel to
+ * reach the slab, which is the difference between a table shadow and a decal of
+ * one: 730 u below a tabletop the edge is 70 u soft, on the wall behind it more.
+ */
+float mgTableOcc( vec3 P, vec3 L ) {
+  float occ = 0.0;
+  if ( uTableHalf.x > 1.0 && L.y > 0.05 ) {
+    float tt = ( uTableCenter.y - P.y ) / L.y;
+    if ( tt > 0.0 ) {
+      vec3 hp = P + L * tt;
+      vec2 dd = abs( hp.xz - uTableCenter.xz ) - uTableHalf;
+      float sd = length( max( dd, vec2( 0.0 ) ) ) + min( max( dd.x, dd.y ), 0.0 );
+      float soft = clamp( tt * 0.10, 18.0, 260.0 );
+      occ = 1.0 - smoothstep( -soft, soft, sd );
+    }
+  }
+  return occ;
+}
+
+/** Signed distance from a point to the table footprint, in the XZ plane. */
+float mgTableDist( vec3 P ) {
+  vec2 dd = abs( P.xz - uTableCenter.xz ) - uTableHalf;
+  return length( max( dd, vec2( 0.0 ) ) ) + min( max( dd.x, dd.y ), 0.0 );
+}
+
+/**
+ * How lit this room is, from the luminance of the preset's own backdrop palette.
+ * The palette is a description of light, not of paint, so it sets the level the
+ * room's real albedos are seen at. Clamped low rather than to zero so a
+ * near-black preset gives a dim room instead of a black hole.
+ */
+float mgRoomLit( float palLum, float a, float b ) {
+  return clamp( a + b * palLum, 0.05, 1.15 );
+}
+
 void main() {
   vec3 N = normalize( vRoomN );
   vec3 P = vRoomPos;
+  vec3 V = normalize( P - cameraPosition );
 
   float floorness = smoothstep( 0.55, 0.85, N.y );
   #ifdef MG_ROOM_PROP
@@ -618,16 +723,48 @@ void main() {
   float t = clamp( h / max( uRoomHalf.y, 1.0 ), 0.0, 1.0 );
   vec3 wdir = normalize( uWindowDir );                // toward the window
 
-  // --- base palette, taken from the same uniforms the shell paints with, so
-  // --- the two can never disagree about what colour this room is.
-  vec3 wallLow  = mix( uGround, uHorizon, 0.42 );
-  vec3 wallHigh = mix( uHorizon, uCeiling, 0.55 );
-  vec3 wallCol  = mix( wallLow, wallHigh, smoothstep( 0.0, 0.62, t ) ) * uRoomTone;
-  vec3 floorCol = mix( uGround, uHorizon, 0.22 ) * uFloorTone;
-  vec3 col = mix( wallCol, floorCol, floorness );
+  // --- the light in the room, read off the same uniforms the shell paints
+  // --- with, so the two can never disagree about what time of day it is.
+  vec3 wallPal = mix( mix( uGround, uHorizon, 0.42 ),
+                      mix( uHorizon, uCeiling, 0.55 ),
+                      smoothstep( 0.0, 0.62, t ) );
+  vec3 floorPal = mix( uGround, uHorizon, 0.22 );
+  vec3 pal = mix( wallPal, floorPal, floorness );
+  float palLum = max( dot( pal, vec3( 0.2126, 0.7152, 0.0722 ) ), 1e-5 );
+  // Not named "cast": that is a reserved word in GLSL ES and the program will
+  // not compile.
+  vec3 palCast = mix( vec3( 1.0 ), pal / palLum, uRoomTint );
+
+  // --- and the surfaces themselves, which are painted plaster and oak boards
+  // --- whatever the light is doing.
+  vec3 wallCol  = uWallColor * mgRoomLit( palLum, 0.06, 2.2 ) * uRoomTone;
+  vec3 floorCol = uFloorColor * mgRoomLit( palLum, 0.10, 3.9 ) * uFloorTone;
+  vec3 col = mix( wallCol, floorCol, floorness ) * palCast;
 
   #ifdef MG_ROOM_PROP
     col *= uPropTone;
+    // Units are not all the same colour. One hash off the mesh origin spreads
+    // them between warm timber and cool painted board.
+    float pid = fract( sin( dot( vObjC.xz, vec2( 0.0173, 0.0311 ) ) ) * 43758.5453 );
+    col *= mix( vec3( 1.08, 0.99, 0.86 ), vec3( 0.88, 0.92, 1.02 ), pid );
+    // A worktop or a cupboard top is the one face that catches the room light.
+    col *= 1.0 + 0.30 * smoothstep( 0.6, 0.95, N.y );
+    {
+      // Door and drawer seams. The sum of x and z varies along whichever
+      // vertical face this is and stays constant across the other, so one
+      // coordinate serves all four sides of the box.
+      vec3 lp = P - vObjC;
+      float sc = ( lp.x + lp.z ) / 150.0;
+      float sv = lp.y / 150.0;
+      float fs = fwidth( sc );
+      float fv = fwidth( sv );
+      float seam = smoothstep( 0.90, 1.0, abs( fract( sc ) - 0.5 ) * 2.0 )
+                 * ( 1.0 - smoothstep( 0.08, 0.30, fs ) );
+      float shelf = smoothstep( 0.93, 1.0, abs( fract( sv ) - 0.5 ) * 2.0 )
+                  * ( 1.0 - smoothstep( 0.08, 0.30, fv ) )
+                  * ( 1.0 - smoothstep( 0.6, 0.95, N.y ) );
+      col *= 1.0 - 0.30 * max( seam, shelf );
+    }
   #endif
 
   col *= 1.0 + mgMottle( P * 0.0045 ) * uMottle * 1.2;
@@ -639,19 +776,58 @@ void main() {
     // fwidth stays out of any branch: a derivative taken inside non-uniform
     // control flow is undefined, and this is cheap enough not to guard.
     vec2 g = ( P.xz - uRoomCenter.xz ) / max( uPlank, vec2( 1.0 ) );
-    float sharp = 1.0 - smoothstep( 0.06, 0.30, fwidth( g.x ) );
+    float fwx = fwidth( g.x );
+    float fwy = fwidth( g.y );
+    float sharp = 1.0 - smoothstep( 0.06, 0.30, fwx );
+    float fine = 1.0 - smoothstep( 0.006, 0.030, fwx );
+    // Boards are laid in a stagger, so the butt joints do not line up across
+    // the floor. Staggering AFTER the derivatives keeps the board edge from
+    // sampling a discontinuity and drawing a one-pixel line down the room.
+    float gy = g.y + 0.37 * floor( g.x );
     float edge = abs( fract( g.x ) - 0.5 ) * 2.0;
     float groove = smoothstep( 0.86, 1.0, edge );
-    float tone = mgBoardTone( floor( g.x ) + 7.0 * floor( g.y ) );
-    col *= 1.0 + ( tone * 0.16 - groove * 0.32 ) * sharp * floorness;
+    float joint = smoothstep( 0.94, 1.0, abs( fract( gy ) - 0.5 ) * 2.0 )
+                * ( 1.0 - smoothstep( 0.10, 0.40, fwy ) );
+    float tone = mgBoardTone( floor( g.x ) + 7.0 * floor( gy ) );
+    // Grain runs along the board, and only resolves close enough to see it.
+    float grain = sin( g.x * 57.0 + tone * 13.0 + gy * 1.7 ) * 0.5 + 0.5;
+    col *= 1.0 + ( tone * 0.16 - groove * 0.32 - joint * 0.26 ) * sharp * floorness;
+    col *= 1.0 + ( grain * grain * 0.10 - 0.05 ) * fine * floorness;
   }
   #endif
+
+  // Skirting. This is paint, so it belongs in the albedo and takes the room
+  // light like any other part of the wall. The band was 36-46 u and vanished at
+  // establishing distance; at ~105 u it survives, and the lip highlight plus the
+  // shadow reveal above it are what turn a grey field into a room.
+  #ifndef MG_ROOM_PROP
+  {
+    // Written as 1 - smoothstep, never as a descending one: GLSL leaves
+    // smoothstep undefined when edge0 >= edge1.
+    float sTop = max( uSkirt, 8.0 );
+    float band = ( 1.0 - smoothstep( sTop * 0.88, sTop, h ) ) * smoothstep( 0.0, sTop * 0.10, h );
+    float lip = smoothstep( sTop * 0.70, sTop * 0.90, h ) * ( 1.0 - smoothstep( sTop * 0.90, sTop, h ) );
+    float reveal = smoothstep( sTop, sTop * 1.07, h ) * ( 1.0 - smoothstep( sTop * 1.07, sTop * 1.34, h ) );
+    float toe = 1.0 - smoothstep( 0.0, sTop * 0.06, h );
+    float k = ( 1.0 - floorness );
+    col *= 1.0 + k * ( band * 0.20 + lip * 0.26 - reveal * 0.20 - toe * 0.34 );
+    // Skirting is gloss white over an emulsion wall: desaturate it a little too.
+    col = mix( col, vec3( dot( col, vec3( 0.2126, 0.7152, 0.0722 ) ) ) * 1.06, k * band * 0.28 );
+  }
+  #endif
+
+  vec3 albedo = col;
 
   // --- shading. One key, from the window, plus a flat ambient. A wall with the
   // --- window in it faces away from it and stays dark, which is correct and is
   // --- most of what makes the room read as lit rather than coloured in.
   float lam = max( dot( N, wdir ), 0.0 );
-  float shade = uRoomAmb + uRoomKey * lam;
+
+  // The table blocks the window. This is the one cast shadow in the room and it
+  // is the reason the table reads as an object standing in it rather than a lit
+  // card. It removes the key only: the room fill still reaches the floor.
+  float tableOcc = uTableShade > 0.0 ? mgTableOcc( P, wdir ) : 0.0;
+  float shade = uRoomAmb + uRoomKey * lam * ( 1.0 - tableOcc * uTableShade );
 
   // Corner occlusion, on both sides of the wall-floor join.
   float dWall = min( uRoomHalf.x - abs( P.x - uRoomCenter.x ),
@@ -660,23 +836,20 @@ void main() {
   float cornerWall = 1.0 - smoothstep( 0.0, 80.0, max( h, 0.0 ) );
   shade *= 1.0 - 0.34 * mix( cornerWall, cornerFloor, floorness );
 
-  // The table blocks the window. This is the one shadow in the room and it is
-  // the reason the table reads as an object standing in it.
-  float tableOcc = 0.0;
-  if ( uTableShade > 0.0 && wdir.y > 0.05 && uTableHalf.x > 1.0 ) {
-    float tt = ( uTableCenter.y - P.y ) / wdir.y;
-    if ( tt > 0.0 ) {
-      vec3 hp = P + wdir * tt;
-      vec2 d2 = abs( hp.xz - uTableCenter.xz ) - uTableHalf;
-      float sdT = length( max( d2, vec2( 0.0 ) ) ) + min( max( d2.x, d2.y ), 0.0 );
-      tableOcc = 1.0 - smoothstep( 0.0, 60.0, sdT );
-    }
+  // Ambient the table steals from the floor immediately beneath it. Separate
+  // from the cast shadow above, which is displaced along the key direction and
+  // lands somewhere else entirely.
+  float sdTable = mgTableDist( P );
+  if ( P.y < uTableCenter.y - 1.0 && uTableHalf.x > 1.0 ) {
+    shade *= 1.0 - uTableAO * ( 1.0 - smoothstep( -60.0, 220.0, sdTable ) );
   }
-  shade *= 1.0 - tableOcc * uTableShade * 0.22;
-  col *= shade;
+
+  col = albedo * shade;
 
   // --- the light the window actually throws into the room: the window pane
-  // --- projected along its own direction onto whatever this fragment is.
+  // --- projected along its own direction onto whatever this fragment is. Times
+  // --- the albedo, so the boards keep reading through the patch instead of it
+  // --- sitting on top of them as a flat additive rectangle.
   if ( uRoomWindow > 0.001 && lam > 0.0 && uWinHalf.x > 1.0 ) {
     float denom = min( dot( wdir, uWinNormal ), -1e-3 );
     float tw = dot( uWinPos - P, uWinNormal ) / denom;
@@ -687,11 +860,38 @@ void main() {
       float soft = max( uWinHalf.x * 0.24, 8.0 );
       float pool = 1.0 - smoothstep( -soft, soft, sdp );
       pool *= 1.0 - tableOcc * uTableShade;
-      col += uWindowColor * uWindowIntensity * uRoomWindow * uWinPool * pool * lam;
+      col += albedo * uWindowColor * uWindowIntensity * uRoomWindow * uWinPool * pool * lam;
     }
   }
 
-  // --- the pane itself, drawn on the wall it is actually in.
+  // --- the practical. nightLamp's key is a spot over the table, not the
+  // --- directional, and until now the room knew nothing about it, which is why
+  // --- that preset came back at 9/255. Read live off Lighting, so a preset that
+  // --- has no lamp costs one compare.
+  if ( uLampPower > 0.0 ) {
+    vec3 toL = uLampPos - P;
+    float d2 = max( dot( toL, toL ), 1.0 );
+    vec3 L = toL * inversesqrt( d2 );
+    float ndl = max( dot( N, L ), 0.0 );
+    if ( ndl > 0.0 ) {
+      float cone = smoothstep( uLampCos.x, uLampCos.y, dot( -L, uLampAxis ) );
+      float lampShade = 1.0 - mgTableOcc( P, L ) * uTableShade;
+      col += albedo * uLampColor * ( uLampPower / d2 ) * ndl * ( cone + uLampSpill ) * lampShade;
+    }
+  }
+
+  // --- warm bounce off the tabletop. It is oak in a raking key, so the floor
+  // --- just past the table edge and the bottom of the nearest wall pick up its
+  // --- colour; directly underneath gets none, because the slab is in the way.
+  if ( uBounceAmt > 0.0 && uTableHalf.x > 1.0 ) {
+    float bnc = exp( -max( sdTable, 0.0 ) / max( uBounceRange, 1.0 ) )
+              * smoothstep( -120.0, 40.0, sdTable )
+              * exp( -max( h, 0.0 ) / max( uBounceRange * 0.75, 1.0 ) );
+    col += albedo * uBounceColor * uBounceAmt * bnc;
+  }
+
+  // --- the pane itself, drawn on the wall it is actually in. Not multiplied by
+  // --- the albedo: this one is the source, not a surface catching it.
   #ifndef MG_ROOM_PROP
   if ( uRoomWindow > 0.001 && uWinHalf.x > 1.0 ) {
     vec3 rel = P - uWinPos;
@@ -711,16 +911,21 @@ void main() {
   }
   #endif
 
-  // Skirting: a lighter band at the foot of the wall. Cheap, and it is what
-  // turns the wall-floor join from a gradient into a line.
-  #ifndef MG_ROOM_PROP
-  // Written as 1 - smoothstep, never as a descending one: GLSL leaves
-  // smoothstep undefined when edge0 >= edge1.
-  float skirt = ( 1.0 - floorness )
-    * ( 1.0 - smoothstep( 36.0, 46.0, h ) )
-    * smoothstep( 0.0, 7.0, h );
-  col = mix( col, col * 1.26, skirt * 0.85 );
-  #endif
+  // --- grazing sheen. Emulsion paint and a varnished floor both have a real
+  // --- Fresnel edge, and it is the single thing that separates a painted wall
+  // --- from a flat card: at a shallow angle a wall picks up the room, and the
+  // --- floor smears the window along the boards. The reflection is sampled from
+  // --- the same environment function the shell paints with, clamped so the pane
+  // --- cannot put a mirror-bright hole in a floorboard.
+  float gloss = mix( uWallSheen, uFloorGloss, floorness );
+  float fres = pow( clamp( 1.0 - max( dot( N, -V ), 0.0 ), 0.0, 1.0 ), 5.0 );
+  // The gate is worth having: mgEnvColor is the most expensive thing in this
+  // shader and the room can cover a third of the frame. A surface seen close to
+  // head-on contributes under half a level and is skipped.
+  if ( gloss * ( 0.03 + 0.97 * fres ) > 0.002 ) {
+    vec3 env = min( mgEnvColor( reflect( V, N ) ), vec3( 2.5 ) );
+    col += env * gloss * ( 0.03 + 0.97 * fres );
+  }
 
   // Same master the shell applies, applied at the same point in the chain, so
   // a preset that dims the backdrop dims the room with it.
@@ -737,10 +942,19 @@ void main() {
 
   // Hand back to the painted shell across the top of the wall. Done after fog
   // so the two agree exactly at the join and the geometry has no visible rim.
-  float topT = ( 1.0 - floorness ) * smoothstep( 0.86, 1.0, t );
-  if ( topT > 0.001 ) {
-    col = mix( col, mgEnvColor( normalize( P - cameraPosition ) ), topT );
+  //
+  // Props are excluded. The handback exists to hide the upper rim of the wall
+  // planes; a box standing in the room has no such rim, and dissolving the one
+  // tall silhouette in the set into the backdrop was throwing away the only
+  // prop that clears the tabletop by any margin.
+  #ifndef MG_ROOM_PROP
+  {
+    float topT = ( 1.0 - floorness ) * smoothstep( 0.86, 1.0, t );
+    if ( topT > 0.001 ) {
+      col = mix( col, mgEnvColor( normalize( P - cameraPosition ) ), topT );
+    }
   }
+  #endif
 
   gl_FragColor = vec4( col, 1.0 );
   #include <tonemapping_fragment>
@@ -782,6 +996,27 @@ export function makeRoomUniforms(envUniforms) {
   u.uTableCenter = { value: new THREE.Vector3(0, 0, 0) };
   u.uTableHalf = { value: new THREE.Vector2(0, 0) };
   u.uTableShade = { value: ROOM.tableShade };
+  u.uTableAO = { value: ROOM.tableAO };
+
+  u.uWallColor = { value: new THREE.Color(ROOM.wallColor) };
+  u.uFloorColor = { value: new THREE.Color(ROOM.floorColor) };
+  u.uRoomTint = { value: ROOM.tint };
+  u.uWallSheen = { value: ROOM.wallSheen };
+  u.uFloorGloss = { value: ROOM.floorGloss };
+  u.uSkirt = { value: ROOM.skirt };
+
+  // Overwritten every frame from ctx.lighting.bounce when there is one; these
+  // are the morning values so the room is never wrong before Lighting reports.
+  u.uBounceColor = { value: new THREE.Color(0xffc79a) };
+  u.uBounceAmt = { value: 0.46 * ROOM.bounce };
+  u.uBounceRange = { value: ROOM.bounceRange };
+
+  u.uLampPos = { value: new THREE.Vector3(0, 0, 0) };
+  u.uLampAxis = { value: new THREE.Vector3(0, -1, 0) };
+  u.uLampColor = { value: new THREE.Color(0xffc27a) };
+  u.uLampCos = { value: new THREE.Vector2(0.5, 0.9) };
+  u.uLampPower = { value: 0 };
+  u.uLampSpill = { value: ROOM.lampSpill };
   return u;
 }
 
@@ -797,6 +1032,9 @@ const _up = new THREE.Vector3(0, 1, 0);
 const _fwdAlt = new THREE.Vector3(0, 0, 1);
 const _look = new THREE.Matrix4();
 const _zero = new THREE.Vector3();
+const _lampPos = new THREE.Vector3();
+const _lampAim = new THREE.Vector3();
+const _lampDir = new THREE.Vector3(0, -1, 0);
 
 export class Sky {
   name = 'sky';
@@ -1144,7 +1382,10 @@ export class Sky {
     u.uTableCenter.value.set(cx, topY, cz);
     u.uTableHalf.value.set(tableHX, tableHZ);
 
-    const hCap = wallH * 0.72;
+    // Was 0.72, which clipped the one prop tall enough to matter. The handback
+    // no longer touches props, so they can stand their real height; the cap is
+    // only here to keep a unit from poking through the top of the wall plane.
+    const hCap = wallH * ROOM.propHeadroom;
     for (let i = 0; i < room.props.length; i++) {
       const d = ROOM_PROPS[i];
       const mesh = room.props[i];
@@ -1265,6 +1506,73 @@ export class Sky {
     }
   }
 
+  /**
+   * Read the two lights the room cannot infer from the backdrop palette and
+   * write them into its uniforms.
+   *
+   *  - the practical spot. nightLamp's key is a desk lamp over the table, not
+   *    the directional, and the backdrop palette for that preset is near black
+   *    (0x0d0c12 / 0x2a2c47), so a room derived from the palette alone came out
+   *    at 9/255. Lighting already owns the lamp; this just looks at it.
+   *  - the warm bounce off the tabletop, whose colour and level are a preset
+   *    decision (morning is 0xffc79a at 0.46) and would otherwise have to be
+   *    duplicated here and kept in sync by hand.
+   *
+   * Entirely guarded: Lighting may still be a stub, and most presets have no
+   * lamp at all, in which case the power goes to zero and the shader skips it.
+   */
+  _updateRoomLight(ctx = this.ctx) {
+    const room = this.room;
+    if (!room) return;
+    const u = room.uniforms;
+    const lighting = ctx && ctx.lighting;
+
+    const lamp = lighting && lighting.lamp;
+    const lit =
+      lamp &&
+      typeof lamp.getWorldPosition === 'function' &&
+      lamp.visible !== false &&
+      Number.isFinite(lamp.intensity) &&
+      lamp.intensity > 0;
+    if (lit) {
+      // getWorldPosition updates the matrix chain itself, so this is correct
+      // even before the renderer has walked the scene graph this frame.
+      lamp.getWorldPosition(_lampPos);
+      u.uLampPos.value.copy(_lampPos);
+
+      if (lamp.target && typeof lamp.target.getWorldPosition === 'function') {
+        lamp.target.getWorldPosition(_lampAim);
+        _lampDir.copy(_lampAim).sub(_lampPos);
+      } else {
+        _lampDir.set(0, -1, 0);
+      }
+      if (_lampDir.lengthSq() < 1e-8) _lampDir.set(0, -1, 0);
+      u.uLampAxis.value.copy(_lampDir.normalize());
+
+      if (lamp.color) u.uLampColor.value.copy(lamp.color);
+
+      const angle = Math.min(Math.max(Number.isFinite(lamp.angle) ? lamp.angle : 0.6, 0.05), 1.45);
+      const penumbra = Math.min(Math.max(Number.isFinite(lamp.penumbra) ? lamp.penumbra : 0.5, 0), 1);
+      const cosOuter = Math.cos(angle);
+      const cosInner = Math.cos(angle * (1 - penumbra * 0.85));
+      u.uLampCos.value.set(cosOuter, Math.max(cosInner, cosOuter + 1e-3));
+
+      // three's punctual intensity is candela and its irradiance is
+      // intensity / d^2; the room's shading term is a plain reflectance
+      // multiplier, so divide by pi to land in the same space as uRoomAmb.
+      u.uLampPower.value = (lamp.intensity / Math.PI) * ROOM.lampGain;
+    } else {
+      u.uLampPower.value = 0;
+    }
+
+    const bounce = lighting && lighting.bounce;
+    if (bounce) {
+      if (bounce.color) u.uBounceColor.value.copy(bounce.color);
+      const i = Number.isFinite(bounce.intensity) ? bounce.intensity : 0;
+      u.uBounceAmt.value = Math.max(0, i) * ROOM.bounce;
+    }
+  }
+
   _disposeRoom() {
     const room = this.room;
     if (!room) return;
@@ -1321,7 +1629,10 @@ export class Sky {
    * @param {{enabled?: boolean, floorDrop?: number, tone?: number,
    *          floorTone?: number, propTone?: number, ambient?: number,
    *          key?: number, pool?: number, tableShade?: number,
-   *          window?: number}} opts
+   *          window?: number, tableAO?: number, tint?: number,
+   *          wallSheen?: number, floorGloss?: number, skirt?: number,
+   *          bounceRange?: number, lampSpill?: number,
+   *          wallColor?: number, floorColor?: number}} opts
    */
   setRoom(opts = {}) {
     if (opts.enabled != null) this.roomEnabled = !!opts.enabled;
@@ -1336,6 +1647,15 @@ export class Sky {
       if (Number.isFinite(opts.pool)) u.uWinPool.value = opts.pool;
       if (Number.isFinite(opts.tableShade)) u.uTableShade.value = opts.tableShade;
       if (Number.isFinite(opts.window)) u.uRoomWindow.value = opts.window;
+      if (Number.isFinite(opts.tableAO)) u.uTableAO.value = opts.tableAO;
+      if (Number.isFinite(opts.tint)) u.uRoomTint.value = opts.tint;
+      if (Number.isFinite(opts.wallSheen)) u.uWallSheen.value = opts.wallSheen;
+      if (Number.isFinite(opts.floorGloss)) u.uFloorGloss.value = opts.floorGloss;
+      if (Number.isFinite(opts.skirt)) u.uSkirt.value = opts.skirt;
+      if (Number.isFinite(opts.bounceRange)) u.uBounceRange.value = opts.bounceRange;
+      if (Number.isFinite(opts.lampSpill)) u.uLampSpill.value = opts.lampSpill;
+      if (Number.isFinite(opts.wallColor)) u.uWallColor.value.set(opts.wallColor);
+      if (Number.isFinite(opts.floorColor)) u.uFloorColor.value.set(opts.floorColor);
     }
     this._roomSig = null;   // force a refit on the next update
     return this;
@@ -1369,6 +1689,7 @@ export class Sky {
 
     this._fitRoom(ctx);
     this._updateRoomWindow();
+    this._updateRoomLight(ctx);
 
     const camera = ctx.camera;
     if (camera && this.backdrop) {

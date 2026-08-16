@@ -612,6 +612,76 @@ function insetRing(ring, d) {
   return { pts, nrm: ring.nrm, count: ring.count, per: ring.per, vertices: ring.vertices };
 }
 
+/** Even-odd crossing test of (x, y) against a closed cross-section ring. */
+function ringContains(ring, x, y) {
+  let inside = false;
+  const n = ring.count;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = ring.pts[i * 2];
+    const yi = ring.pts[i * 2 + 1];
+    const xj = ring.pts[j * 2];
+    const yj = ring.pts[j * 2 + 1];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * How far back (dir < 0) or forward (dir > 0) the body shell actually reaches
+ * at (x, y), in world z. Null when the point is outside the silhouette.
+ *
+ * This exists because the end caps are built by insetting rings, so the shell
+ * runs a whole cap radius past its last key station and the surface over any
+ * given (x, y) is nowhere near where the key stations suggest. Rear hardware
+ * authored by eye against the stations therefore sits *inside* the car: on the
+ * muscle the tail lamps span z -4.73..-4.43 while the body's rear face is a
+ * flat n-gon at z = -4.75, so the lens is behind the paint and the only thing
+ * the macro camera sees from behind is blank bodywork. Marching the real cap
+ * rings is the only way to know, and it stays correct when a cap radius is
+ * retuned.
+ */
+function endSurfaceZ(shell, x, y, dir) {
+  const S = shell.slices;
+  if (dir < 0) {
+    for (let i = 0; i < S.length; i++) if (ringContains(S[i].ring, x, y)) return S[i].z;
+  } else {
+    for (let i = S.length - 1; i >= 0; i--) if (ringContains(S[i].ring, x, y)) return S[i].z;
+  }
+  return null;
+}
+
+/**
+ * Slide a flat lamp plate along z until its outer face clears the bodywork
+ * everywhere under its footprint, and never the other way: a lamp that already
+ * stands proud keeps the z it was authored with.
+ *
+ * @param {object} shell  the built body shell
+ * @param {object} l      lamp record { x, y, w, h, z }
+ * @param {number} depth  plate depth before the bevel
+ * @param {number} dir    -1 for the tail, +1 for the nose
+ * @param {number} proud  how far the face should stand off the paint
+ */
+function lampZ(shell, l, depth, dir, proud = 0.05) {
+  const half = depth * 0.5 + Math.min(0.05, depth * 0.4);
+  const ax = Math.abs(l.x);
+  const hw = (l.w ?? 0.4) * 0.5 * 0.92;
+  const hh = (l.h ?? 0.3) * 0.5 * 0.92;
+  let reach = null;
+  for (const px of [ax - hw, ax, ax + hw]) {
+    for (const py of [l.y - hh, l.y, l.y + hh]) {
+      const z = endSurfaceZ(shell, px, py, dir);
+      if (z === null) continue;
+      // The most extreme surface under the footprint is the one to clear.
+      if (reach === null) reach = z;
+      else reach = dir < 0 ? Math.min(reach, z) : Math.max(reach, z);
+    }
+  }
+  if (reach === null) return l.z;
+  // Face sits at reach + dir * proud; the centre is half a plate in from that.
+  const want = reach + dir * (proud - half);
+  return dir < 0 ? Math.min(l.z, want) : Math.max(l.z, want);
+}
+
 /** Revolve a (radius, axial) profile about the local X axis. */
 export function revolveX(profile, segments = 28, phiStart = 0, phiLength = TAU) {
   const pts = profile.map((p) => new THREE.Vector2(Math.max(1e-4, p[0]), p[1]));
@@ -1024,13 +1094,21 @@ export function tyreTexture(style = 'road', treadV = [0.35, 0.65], size = 1024) 
   const treadTop = Math.min(y0, y1);
   const treadH = Math.abs(y1 - y0);
 
-  // DEFECTS D3. This palette used to run #202124-#2c2d32, about 0.019 linear,
-  // and then the material multiplied a 0x303236 tint over it for a final
-  // albedo of 0.0006 — a hole, not a substance. Carbon-black rubber measures
-  // 0.05-0.08 linear and the anti-ozonant bloom on a moulded tyre lifts the
-  // sidewall further, which is #48-#52 in sRGB, and slightly warm rather than
-  // the blue these were. Everything below is keyed off that.
-  g.fillStyle = '#4a4845';
+  // DEFECTS D3 said this palette was too dark (#202124, 0.019 linear, then
+  // multiplied by a tint down to 0.0006 — a hole). The correction overshot:
+  // #4a4845 is 0.068 linear, the top of the plausible range for a bloomed
+  // sidewall, and with the sheen the material was adding on top the tyre
+  // measured luma 95-115 in the macro frame against a rim face at ~140. That
+  // is 1.4:1, and it made the rubber *brighter* than the sunlit paint and the
+  // sunlit table, which is backwards: rubber is the value anchor of a die-cast,
+  // the darkest thing on the object, and the tyre/rim boundary is its
+  // highest-contrast edge.
+  //
+  // Carbon-black tyre rubber measures 3-7% diffuse reflectance. #333230 is
+  // 0.033 linear — squarely inside that, 55x above the D3 void, and dark enough
+  // that the alloy rim finally out-values it by the margin a photograph shows.
+  // The tread band below is darker again because it is scrubbed of bloom.
+  g.fillStyle = '#333230';
   g.fillRect(0, 0, W, H);
   gh.fillStyle = '#808080';
   gh.fillRect(0, 0, hc.w, hc.h);
@@ -1040,7 +1118,7 @@ export function tyreTexture(style = 'road', treadV = [0.35, 0.65], size = 1024) 
     for (let y = top; y < bottom; y += 3) {
       const t = (y - top) / Math.max(1, bottom - top);
       const shade = 0.86 + Math.sin(t * 22) * 0.05 + (rng.next() - 0.5) * 0.03;
-      g.fillStyle = `rgb(${(84 * shade) | 0},${(81 * shade) | 0},${(77 * shade) | 0})`;
+      g.fillStyle = `rgb(${(58 * shade) | 0},${(56 * shade) | 0},${(53 * shade) | 0})`;
       g.fillRect(0, y, W, 3);
       gh.fillStyle = `rgba(${(128 + Math.sin(t * 22) * 26) | 0},0,0,1)`;
       gh.fillRect(0, (y * 0.5) | 0, hc.w, 2);
@@ -1062,7 +1140,11 @@ export function tyreTexture(style = 'road', treadV = [0.35, 0.65], size = 1024) 
       if (k === 1) g.scale(1, -1);
       g.font = `700 ${fs}px ${HEADLINE_FONT}`;
       g.textBaseline = 'middle';
-      g.fillStyle = 'rgba(214,210,202,0.30)';
+      // Raised lettering is the same rubber catching a little more light, not
+      // white ink. Against a #333230 sidewall this lands about 45% brighter,
+      // which is what a moulded relief actually does; the old 214-grey at 0.30
+      // was painting near-white text onto the darkest part of the car.
+      g.fillStyle = 'rgba(140,136,130,0.26)';
       g.fillText(txt, 0, 0);
       g.restore();
       gh.save();
@@ -1080,13 +1162,13 @@ export function tyreTexture(style = 'road', treadV = [0.35, 0.65], size = 1024) 
   // edges, which is what gives the normal map something to catch light on.
   // The tread band is the working surface: scrubbed clean of bloom, so it is
   // the darkest part of the tyre rather than the same value as the sidewall.
-  g.fillStyle = '#3a3937';
+  g.fillStyle = '#262523';
   g.fillRect(0, treadTop, W, treadH);
   gh.fillStyle = '#8c8c8c';
   gh.fillRect(0, treadTop * 0.5, hc.w, treadH * 0.5);
 
   const drawBlock = (x, y, bw, bh, shade) => {
-    g.fillStyle = `rgb(${(78 * shade) | 0},${(76 * shade) | 0},${(72 * shade) | 0})`;
+    g.fillStyle = `rgb(${(54 * shade) | 0},${(52 * shade) | 0},${(49 * shade) | 0})`;
     g.fillRect(x, y, bw, bh);
     g.fillStyle = 'rgba(255,255,255,0.05)';
     g.fillRect(x, y, bw, 1.5);
@@ -1683,7 +1765,13 @@ function buildBodyShell(cfg) {
   const slices = stations.map((z) => ({ z, ring: ringAt(z) }));
 
   /* --- rounded end caps ------------------------------------------------- */
-  const capSteps = 3;
+  // Three steps over a 0.3-0.4 u radius is a chamfer, not a roll: the tail of a
+  // 9.5 u car came out as a flat n-gon with three faceted rings around it and a
+  // razor crease at every ring boundary — which is exactly what the macro
+  // camera looks straight at from behind. Eight steps costs ten extra rings of
+  // 49 vertices per body (about 960 triangles, once, at build time) and turns
+  // the crease into a continuous bullnose that carries a highlight around it.
+  const capSteps = 8;
   const head = [];
   for (let k = capSteps; k >= 1; k--) {
     const a = (k / capSteps) * (Math.PI * 0.5);
@@ -2112,22 +2200,33 @@ function dressChassis(env, d) {
     if (l.x !== 0) lights.head.push({ x: -l.x, y: l.y, z: l.z });
   }
 
+  // The tail is what the macro camera points straight at, and every one of
+  // these was authored against the body's last key station rather than against
+  // the end cap that runs a third of a unit past it. lampZ pushes each plate
+  // out to the real surface and refuses to pull any of them in, so a lamp that
+  // was already proud is left exactly where it was.
   for (const l of (d.taillamps || [])) {
-    const g = makeBarLamp(l.w, l.h, l.d ?? 0.20, l.r ?? 0.08);
-    out.pair('lampRed', g, xform(l.x, l.y, l.z, l.pitch ?? 0, 0, l.roll ?? 0));
+    const depth = l.d ?? 0.20;
+    const lz = (l.pitch || l.roll) ? l.z : lampZ(shell, l, depth, -1, 0.05);
+    const g = makeBarLamp(l.w, l.h, depth, l.r ?? 0.08);
+    out.pair('lampRed', g, xform(l.x, l.y, lz, l.pitch ?? 0, 0, l.roll ?? 0));
     if (l.surround !== false) {
-      const s = makeBarLamp(l.w + 0.16, l.h + 0.16, (l.d ?? 0.20) * 0.7, (l.r ?? 0.08) + 0.05);
-      out.pair('trim', s, xform(l.x, l.y, l.z + 0.06, l.pitch ?? 0, 0, l.roll ?? 0));
+      const s = makeBarLamp(l.w + 0.16, l.h + 0.16, depth * 0.7, (l.r ?? 0.08) + 0.05);
+      // Just inboard of the lens, so the bezel reads flush with the paint and
+      // the lens stands out of it rather than the whole assembly floating.
+      out.pair('trim', s, xform(l.x, l.y, lz + 0.02, l.pitch ?? 0, 0, l.roll ?? 0));
     }
-    lights.brake.push({ x: l.x, y: l.y, z: l.z });
-    if (l.x !== 0) lights.brake.push({ x: -l.x, y: l.y, z: l.z });
+    lights.brake.push({ x: l.x, y: l.y, z: lz });
+    if (l.x !== 0) lights.brake.push({ x: -l.x, y: l.y, z: lz });
   }
 
   for (const l of (d.reverselamps || [])) {
-    const g = makeBarLamp(l.w, l.h, l.d ?? 0.16, l.r ?? 0.06);
-    out.pair('lampAmber', g, xform(l.x, l.y, l.z));
-    lights.reverse.push({ x: l.x, y: l.y, z: l.z });
-    if (l.x !== 0) lights.reverse.push({ x: -l.x, y: l.y, z: l.z });
+    const depth = l.d ?? 0.16;
+    const lz = lampZ(shell, l, depth, -1, 0.04);
+    const g = makeBarLamp(l.w, l.h, depth, l.r ?? 0.06);
+    out.pair('lampAmber', g, xform(l.x, l.y, lz));
+    lights.reverse.push({ x: l.x, y: l.y, z: lz });
+    if (l.x !== 0) lights.reverse.push({ x: -l.x, y: l.y, z: lz });
   }
 
   if (d.grille) {
@@ -2144,12 +2243,24 @@ function dressChassis(env, d) {
   }
 
   for (const m of (d.mirrors || [])) {
-    const pod = bevelBox(0.34, 0.30, 0.52, 0.13, 3);
+    // A door mirror head is about 16 x 10 x 7 cm. At this project's die-cast
+    // scale — 9.5 u for a 4.8 m car, so 0.0198 u per real cm — that is
+    // 0.32 x 0.20 x 0.14 u. The pod was 0.34 x 0.30 x 0.52 with a 0.13 fillet:
+    // right in lateral extent, two to four times over in the other two axes,
+    // and filleted hard enough on all three that it read as a sphere. On a
+    // 4.15-wide car a pair of those are ping-pong balls, and they were the
+    // brightest thing on the flank as well, because only the wedge and the
+    // rally set `role` — everything else fell through to 'accent', which is
+    // near-white on most liveries. The stalk already defaulted to 'trim'; the
+    // pod now agrees with it.
+    const pod = bevelBox(0.30, 0.21, 0.17, 0.07, 3);
     const stalk = sweep([[m.x * 0.72, m.y - 0.22, m.z - 0.10], [m.x, m.y, m.z]],
-      circleProfile(0.075, 6), { up: [0, 1, 0] });
+      circleProfile(0.055, 6), { up: [0, 1, 0] });
     out.pair(m.role || 'trim', stalk);
-    out.pair(m.role || 'accent', pod, xform(m.x, m.y, m.z));
-    out.pair('glass', bevelBox(0.10, 0.24, 0.42, 0.05, 2), xform(m.x + 0.16, m.y + 0.01, m.z - 0.03));
+    out.pair(m.role || 'trim', pod, xform(m.x, m.y, m.z));
+    // The reflective face belongs on the rearward side of the head, not the
+    // outboard one: +Z is the nose, so the glass sits a hair proud at -Z.
+    out.pair('glass', bevelBox(0.24, 0.15, 0.05, 0.02, 2), xform(m.x + 0.01, m.y, m.z - 0.08));
   }
 
   for (const e of (d.exhausts || [])) {
@@ -2223,6 +2334,14 @@ export const CAR_MODELS = {
     tires: { muLat: 0.585, muLong: 0.675 },
     stats: { speed: 0.72, accel: 0.86, grip: 0.58, handling: 0.52, toughness: 0.80 },
     body: {
+      // capTail was raised to 0.48 here and then put back. Growing it does not
+      // shrink the flat rear face: the cap insets the ring at zTail + capTail,
+      // so a bigger radius also starts from a bigger section and the two very
+      // nearly cancel — measured across 0.30 to 1.00 the muscle's flat face
+      // only narrows from 1.37 u tall to 1.00, while the fold that insetRing
+      // puts in the final ring at the corners (where the offset exceeds the
+      // fillet radius) grows from 0.025 u to 0.166. All cost, almost no gain.
+      // The tail was fixed by capSteps and by putting hardware on it instead.
       floorY: 0.42, capNose: 0.40, capTail: 0.34, rTop: 0.36, rMid: 0.34, rSill: 0.22,
       keys: [
         K(-4.75, 2.24, 1.58, 1.30, 1.24, 1.36),
@@ -2283,6 +2402,15 @@ export const CAR_MODELS = {
       out.pair('chrome', makeExhaust([[1.78, 0.74, 1.30], [1.83, 0.70, -0.30], [1.80, 0.74, -1.92]], 0.19, { flare: 0.10 }));
       // Boot lip.
       out.add('paint', bevelBox(3.20, 0.16, 0.55, 0.10, 2), xform(0, 2.50, -4.02, 4 * DEG, 0, 0));
+      // Rear panel. The tail is the view the macro camera holds longest and it
+      // was bare paint: the lamps sit above the bumper line, the exhausts below
+      // it, and the whole band between y 0.9 and 1.2 had nothing on it at all.
+      // A recessed black valance with a chrome-framed plate set into it is what
+      // a 60s coupe actually has there, and it gives the boot face a highlight,
+      // a shadow and a straight edge to read scale against.
+      out.add('grille', bevelBox(2.10, 0.44, 0.12, 0.05, 2), xform(0, 1.02, -4.72));
+      out.add('chrome', bevelBox(1.30, 0.34, 0.10, 0.04, 2), xform(0, 1.02, -4.80));
+      out.add('base', bevelBox(1.10, 0.22, 0.05, 0.02, 2), xform(0, 1.02, -4.84));
       return lights;
     },
   },

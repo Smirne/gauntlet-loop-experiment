@@ -413,8 +413,17 @@ export class VehicleVisual {
       // shoulder into frosted plastic. At 0.62 it reads as lacquer over the
       // paint and as glass over a hole, which is the read that matters.
       opacity: 0.30,
-      edgeOpacity: 0.62,
-      envMapIntensity: 1.5,
+      // Both of these were tuned before the pane was drawing at all, against a
+      // brighter environment than the one that shipped. Measured on the macro
+      // frame the side glass clipped at 254,251,234 with no cabin visible
+      // behind it — a white slab over an interior that is fully modelled. At
+      // envMapIntensity 1.5 the sky reflection alone exceeded display white at
+      // the shallow flank angle the macro camera uses, and edgeOpacity 0.62
+      // then compounded it, because that angle is almost all "edge". 0.52 keeps
+      // the lacquer-over-paint read the number was chosen for; 0.5 leaves a
+      // real reflection without it being the only thing the pane returns.
+      edgeOpacity: 0.52,
+      envMapIntensity: 0.5,
     });
     M.trim = mats.plasticToy({ color: 0x1a1c20, gloss: 0.35 });
     M.grille = mats.plasticToy({ color: 0x0d0f12, gloss: 0.18 });
@@ -456,26 +465,37 @@ export class VehicleVisual {
     const wf = this.chassis.wheels.front;
     const wr = this.chassis.wheels.rear;
     const tyreTex = wheelTexture(wf, { size: this.ctx?.settings?.quality === 'low' ? 512 : 1024 });
-    // DEFECTS D3. This used to multiply a 0x303236 tint over an albedo map that
-    // already bakes ~0.019 linear, for a product of 0.0006 — six ten-thousandths
-    // of the incoming light, which is not dark rubber, it is a hole. Measured
-    // 36.6 mean luma at 2.3 standard deviation across a top-lit curved surface:
-    // no shading variation whatsoever, because there was no diffuse term left
-    // to shade. The tint is now neutral and the moulded texture carries the
-    // 0.05-0.08 albedo real carbon-black rubber has, and the broad Charlie
-    // sheen is what makes the sidewall bulge and the tread shoulder separate
-    // from the underbody — a wide grazing lobe traces curvature on a dark
-    // object exactly where a narrow GGX one returns nothing.
+    // DEFECTS D3 was real: a 0x303236 tint over a 0.019 albedo gave 0.0006
+    // linear, which is a hole rather than a substance. The correction then
+    // overshot in the other direction, and the overshoot was almost all in
+    // this material rather than in the texture.
+    //
+    // three multiplies `sheenColor` by `sheen` into one uniform (see
+    // refreshMaterialUniforms), so the old pair was an *additive* Charlie lobe
+    // with an albedo of linear(0x8f) * 0.6 = 0.165 — two and a half times the
+    // diffuse albedo underneath it, spread broadly by sheenRoughness 0.8 over
+    // the whole carcass. That single term is why the tyre measured luma 95-115
+    // and out-valued both the sunlit paint and the sunlit table. envMapIntensity
+    // 0.95 compounded it: on a Physical material that scales the diffuse
+    // irradiance as well as the specular radiance, so the rubber was also
+    // collecting a full share of sky.
+    //
+    // The lobe is kept, because D3's lesson is that a dark object with no
+    // specular response reads as a void — a broad grazing sheen is exactly what
+    // traces the sidewall bulge and separates the tread shoulder from the
+    // underbody, where a narrow GGX one returns nothing. It is kept at
+    // linear(0x45) * 0.34 = 0.021, an eighth of what it was: still visible as a
+    // soft rolled highlight, no longer a light source.
     M.tyre = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       map: tyreTex.map || null,
       normalMap: tyreTex.normalMap || null,
       metalness: 0,
-      roughness: 0.74,
-      envMapIntensity: 0.95,
-      sheen: 0.6,
-      sheenRoughness: 0.8,
-      sheenColor: new THREE.Color(0x8f8880),
+      roughness: 0.78,
+      envMapIntensity: 0.45,
+      sheen: 0.34,
+      sheenRoughness: 0.85,
+      sheenColor: new THREE.Color(0x454340),
     });
     M.tyre.name = 'tyre';
     if (M.tyre.normalScale) M.tyre.normalScale.set(1.1, 1.1);

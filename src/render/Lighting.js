@@ -174,10 +174,21 @@ function clampFogDensity(v) {
  *    the key a fully shadowed fragment *loses*; `1 - it` is what still leaks
  *    through. Never 1.0: a cast shadow that removes 100% of the key leaves only
  *    the fill, and a chase camera looking into a large shadow returns a frame
- *    that is three-quarters black. The set runs 0.80-0.95, i.e. a 5-20% leak,
- *    deepest on overcast where the key is barely a key at all. (The previous
+ *    that is three-quarters black. The set runs 0.80-0.98, i.e. a 2-20% leak,
+ *    shallowest on overcast where the key is barely a key at all. (The previous
  *    note here had the sense inverted and quoted a 0.10-0.18 leak that matched
  *    none of the values below.)
+ *
+ *    The three daylight presets went 0.95/0.95/0.93 -> 0.98/0.98/0.96 because
+ *    the leak was the one part of a shadowed pixel that is pure waste. Solving
+ *    the critic's measurement of the establishing frame — deepest cast shadow at
+ *    0.38 of its lit value — for the two terms: with a 5% leak, unshadowed fill
+ *    is 0.347 of the lit value and the key is 0.653, so the leak was 0.033 of
+ *    it. Removing most of that lands ~0.36. The honest conclusion is that this
+ *    is a 5% move on a number whose problem is the other 0.347: shadowless fill,
+ *    of which the largest single share is IBL diffuse at `env.intensity` 0.60,
+ *    which is also what makes the clearcoat on the cars work. It is not shadow
+ *    intensity, and it is not a number this file should keep grinding blind.
  *  - **motivation.** A key with no visible source is most of the difference
  *    between a lit set and a rendered one, and the backdrop already draws a
  *    window. Until this pass no preset set `backdrop.windowDir` or
@@ -225,9 +236,15 @@ export const LIGHT_PRESETS = {
     sun: { color: 0xffd8ae, intensity: 5.91, elevation: 24, azimuth: -52 },
     fill: { sky: 0xa4b3c6, ground: 0x7a5f42, intensity: 0.42 },
     bounce: { color: 0xffc79a, intensity: 0.46, elevation: -16, azimuth: 128 },
-    rim: { color: 0xa9c8ff, intensity: 0.26, elevation: 30, azimuth: 128 },
+    // The rim dropped 30 -> 18 degrees at the same intensity. A shadowless light
+    // hands a horizontal surface sin(e) and a vertical one cos(e), so lowering
+    // it moves the rim off the tabletop and onto the car flanks it exists for:
+    // the floor share goes 0.130 -> 0.080 while the flank share goes
+    // 0.225 -> 0.247. Strictly better placement, and it takes ~4% off the
+    // unshadowed floor of a cast shadow for free.
+    rim: { color: 0xa9c8ff, intensity: 0.26, elevation: 18, azimuth: 128 },
     ambient: { color: 0x38455e, intensity: 0.11 },
-    shadow: { intensity: 0.95 },
+    shadow: { intensity: 0.98 },
     lamp: { intensity: 0 },
     fog: { color: 0x92979e, density: 0.00060 },
     env: { intensity: 0.60 },
@@ -262,7 +279,7 @@ export const LIGHT_PRESETS = {
     bounce: { color: 0xffd9b0, intensity: 0.30, elevation: -22, azimuth: 158 },
     rim: { color: 0xbcd7ff, intensity: 0.18, elevation: 24, azimuth: 158 },
     ambient: { color: 0x3a4763, intensity: 0.11 },
-    shadow: { intensity: 0.95 },
+    shadow: { intensity: 0.98 },
     lamp: { intensity: 0 },
     fog: { color: 0xa6adb5, density: 0.00060 },
     env: { intensity: 0.66 },
@@ -302,7 +319,7 @@ export const LIGHT_PRESETS = {
     bounce: { color: 0xffa066, intensity: 0.60, elevation: -13, azimuth: 102 },
     rim: { color: 0x9fc0ff, intensity: 0.38, elevation: 22, azimuth: 102 },
     ambient: { color: 0x3a3048, intensity: 0.20 },
-    shadow: { intensity: 0.93 },
+    shadow: { intensity: 0.96 },
     lamp: { intensity: 0 },
     fog: { color: 0xbc9771, density: 0.00080 },
     env: { intensity: 0.80 },
@@ -1558,6 +1575,15 @@ export class Lighting {
       groundY: Number.isFinite(opts.groundY) ? opts.groundY : null,
       normal: toVec3(opts.normal),
       lift: finiteOr(opts.lift, 0.08),
+      // Effective occluder height, u, for the lean the blob keeps while its
+      // owner is still ON the ground. 0 pins a prop's blob exactly under it,
+      // which is right for anything modelled on its base. A car uses its sill
+      // height: the first centimetre or two of the cast shadow is fused with
+      // the contact occlusion and does slide with the key even at rest.
+      // Deliberately small — every unit of this is a unit of reach taken off
+      // the camera-facing side of the blob, which is the side that has to do
+      // the grounding (see the lean note in _writeContact).
+      groundLean: Math.max(0, finiteOr(opts.groundLean, 0)),
       yaw: opts.yaw !== false,
       tilt: opts.tilt !== false,
       static: opts.static === true,
@@ -1585,11 +1611,34 @@ export class Lighting {
     e = this._makeContactEntry(v, {
       // The occlusion under a car is wider than the car: it takes in the tyre
       // contact patches and the shadowed air under the sills.
-      length: len * 1.30,
-      width: wid * 1.70,
+      //
+      // These multipliers were 1.30 / 1.70, which on a 9.12 x 4.11 u chassis
+      // left 1.28 u of blob past the bumper and 1.40 u past the flank. Almost
+      // all of that sits under the car's own silhouette from any camera the
+      // game uses, and what did escape was the outermost ring of the falloff,
+      // where the profile has already decayed to nothing. Measured on the macro
+      // frame: hiding the whole 264-instance pool changed 0.27% of pixels, and
+      // the delta mask was a single sliver under the front bumper.
+      //
+      // Sized now against the *margin* rather than as a ratio: the blob reaches
+      // ~3.4 u past the bumper and ~2.7 u past the flank, of which the part
+      // that reads as darkening (>10% multiply) is the inner ~1.7 u. That is
+      // the gradient a die-cast car actually lays on a table — dense at the
+      // sill, gone by three centimetres — and crucially it exists on the side
+      // of the car facing the camera, which the cast shadow never can.
+      length: len * 1.75,
+      width: wid * 2.30,
       opacity: 1,
       maxHeight: 9,
-      softness: 0.42,
+      // Slightly firmer than the old 0.42. softness drives core = 0.72 - 0.58s
+      // and exponent = 0.70 + 1.50s, so lowering it widens the dense plateau
+      // and lengthens the tail — which is what keeps a bigger quad reading as
+      // contact instead of as an airbrushed puddle. At 0.38 the plateau edge
+      // (core 0.50) lands just outside the tyre line on both axes.
+      softness: 0.38,
+      // Sill height, near enough. Small on purpose: 0.6 u of occluder against
+      // morning's 24-degree key is ~0.5 u of blob offset away from the camera.
+      groundLean: 0.6,
       // Vehicle.position is the centre of mass, sitting cgHeight above the
       // contact patch (see the header of vehicle/Vehicle.js). Measuring height
       // from the origin instead is what made every resting car's blob fade to
@@ -1769,10 +1818,24 @@ export class Lighting {
 
     /* --- place ------------------------------------------------------------- */
     // Airborne objects get a bigger, softer, fainter blob that leans away from
-    // the key — the cue that reads as "this has left the ground". Grounded ones
-    // get no lean at all, because h is 0.
+    // the key — the cue that reads as "this has left the ground". A grounded
+    // one leans only by its own `groundLean` (0 for props, the sill height for
+    // a car), because at rest the blob is occlusion, not a cast shadow.
+    //
+    // Why the grounded lean is kept deliberately tiny. All four daylight
+    // presets put the key in the western half (azimuth -22 to -78), so it
+    // travels toward +X/-Z; the macro camera was measured looking from -X/+Z,
+    // i.e. straight into the side of every car that its own shadow is NOT on.
+    // Lean spends darkening on the far side, and a 2.8 u car at that camera's
+    // 19-degree depression already hides 2.8/tan(19) = 8.1 u of ground behind
+    // itself, so the far side is not merely unhelpful, it is invisible.
+    // Whatever the player reads as contact has to live on the near side, and
+    // that is reach, not lean.
     const spread = 1 + air * 0.9;
-    let lean = h * this._leanScale;
+    // Written as a positive test so an entry that predates the field, or one a
+    // peer has poked a bad value into, contributes 0 rather than a NaN matrix.
+    const restLean = e.groundLean > 0 ? e.groundLean : 0;
+    let lean = (h + restLean) * this._leanScale;
     const leanMax = e.length * 0.6;
     if (lean > leanMax) lean = leanMax;
 

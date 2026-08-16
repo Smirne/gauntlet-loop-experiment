@@ -733,7 +733,7 @@ const GradeShader = {
     uLutAmount: { value: 1.0 },
     uExposure: { value: 1.0 },
     uLookExposure: { value: 1.0 },
-    uToe: { value: new THREE.Vector3(0.016, 0.018, 0.024) },
+    uToe: { value: new THREE.Vector3(0.0045, 0.0050, 0.0067) },
     uLift: { value: new THREE.Vector3(0, 0, 0) },
     uGamma: { value: new THREE.Vector3(1, 1, 1) },
     uGain: { value: new THREE.Vector3(1, 1, 1) },
@@ -990,14 +990,42 @@ const VignetteShader = {
   `,
 };
 
+/**
+ * Film grain.
+ *
+ * THE DOMAIN IS THE WHOLE EFFECT. Everything between the grade and OutputPass
+ * works in display-referred LINEAR — OutputPass owns the sRGB transfer — so an
+ * add of a constant here is NOT a constant once encoded. The code-value it
+ * lands as scales with x^(1/2.4 - 1), i.e. inversely with how bright that
+ * CHANNEL already is. On the red car paint, red sits near 0.5 linear and blue
+ * near 0.02, so one shared linear delta arrives as roughly six times more blue
+ * noise than red noise. That is not grain, that is chroma noise: it read as
+ * sensor grain or compression, and it was worst exactly where the frame is most
+ * saturated. Measured at three times stronger in blue than in red.
+ *
+ * So: encode, add a scalar to all three channels, decode. The perturbation is
+ * then perceptually uniform and colour-neutral by construction — real film
+ * grain is a density fluctuation, which is a luma event.
+ *
+ * The luma mask moved into the same domain for the same reason. It used to test
+ * LINEAR luma against 0.20 and 0.60, which are sRGB ~124 and ~200: grain only
+ * began to appear above middle grey and the entire lower half of the image had
+ * none. Backwards — film grain peaks in the midtones and thins into the toe and
+ * the shoulder, which is what these thresholds now describe.
+ */
 const GrainShader = {
   name: 'MG.Grain',
   uniforms: {
     tDiffuse: { value: null },
-    uAmount: { value: 0.032 },
+    uAmount: { value: 0.030 },
     uTime: { value: 0 },
     uResolution: { value: new THREE.Vector2(1920, 1080) },
-    uSize: { value: 1.35 },
+    // Grain-cell size in device pixels. At 1.35 the cell was smaller than two
+    // pixels everywhere, which is per-pixel noise by another name. Deliberately
+    // not an integer: an exact 2.0 tiles a regular 2x2 grid and reads as
+    // macroblocking, while 1.9 lets the cell drift between 1 and 2 px across
+    // the frame and clumps the way emulsion does.
+    uSize: { value: 1.9 },
   },
   vertexShader: POST_VERT,
   fragmentShader: /* glsl */ `
@@ -1012,15 +1040,22 @@ const GrainShader = {
 
     void main() {
       vec4 src = texture2D( tDiffuse, vUv );
+
       // Quantised to 24 steps a second: grain that updates every frame at 60 fps
       // reads as electronic noise, not film.
       vec2 cell = floor( vUv * uResolution / max( uSize, 1.0 ) );
       float n = mgHash13( vec3( cell, floor( uTime * 24.0 ) ) ) * 2.0 - 1.0;
 
-      float lum = mgLuma( src.rgb );
-      float w = smoothstep( 0.0, 0.20, lum ) * ( 1.0 - smoothstep( 0.60, 1.0, lum ) * 0.80 );
+      // Into the perceptual domain, where a fixed offset is a fixed number of
+      // code values on every channel alike.
+      vec3 e = pow( max( src.rgb, vec3( 0.0 ) ), vec3( 1.0 / 2.2 ) );
 
-      gl_FragColor = vec4( clamp( src.rgb + n * uAmount * w, 0.0, 1.0 ), src.a );
+      float lum = mgLuma( e );
+      float w = smoothstep( 0.06, 0.26, lum ) * ( 1.0 - smoothstep( 0.62, 1.0, lum ) * 0.80 );
+
+      e = clamp( e + n * uAmount * w, 0.0, 1.0 );
+
+      gl_FragColor = vec4( pow( e, vec3( 2.2 ) ), src.a );
     }
   `,
 };
@@ -1095,6 +1130,33 @@ const CrtShader = {
  *   - The toe is always lifted and always cooler than the midtones. Nothing in
  *     this game is allowed to fall into a black hole; a shadow is air, and air
  *     here is blue. `crush` is zero everywhere — it was the wrong tool.
+ *
+ *     BUT the toe is a LIFT, not a fog. It shipped about 3.5x too high: morning
+ *     at [0.018, 0.021, 0.032] came out of the encode at sRGB (31, 36, 55) and
+ *     that triple WAS the darkest pixel in every review frame — no frame used
+ *     the bottom 13% of the range, and the flat +0.032 on blue outweighed the
+ *     albedo of anything genuinely dark. Sunlit oak's darkest decile measured
+ *     hue 340: the wood had pink grain, because the toe was adding more blue
+ *     than the grain had to begin with while the shadow tint below added red.
+ *     Every toe here is the old value x 0.28, which keeps the tint RATIO — and
+ *     so the signature — and drops the floor about 20 code values.
+ *
+ *   - The shadow tint's GREEN must sit on or above the geometric mean of its
+ *     own red and blue. A tint with red 0.86 and blue 1.20 but green 0.94 is
+ *     not a blue shift, it is a magenta shift wearing a blue label: it opens
+ *     the red-blue gap and leaves green in the hole between them, so every
+ *     dark warm surface goes plum. Blue still leads — the cool shade is the
+ *     complementary anchor in an otherwise amber frame and is the whole point —
+ *     but green now rides with it instead of being left behind.
+ *
+ *   - Saturation lives in `cdl.saturation` ONLY; every `lut.sat` is 1.00.
+ *     They used to compound — morning ran 1.12 x 1.10 = 1.232 — which nobody
+ *     intended and which is half of why 88% of a gameplay frame fell inside one
+ *     40-degree amber band. Keeping it in the CDL also means all of it gets the
+ *     highlight bleach rolloff, and it keeps the LUT's low end honest: at
+ *     lut.sat > 1 the table drove dark off-hue channels negative and the 8-bit
+ *     write clamped them to zero, quietly crushing the very shadows the toe was
+ *     trying to protect.
  *   - Highlights always run warmer than the midtones and always bleach toward
  *     white in the top quarter, so a specular reads as light rather than as
  *     tinted paper.
@@ -1109,86 +1171,97 @@ const CrtShader = {
  */
 export const GRADE_LOOKS = {
   neutral: {
-    cdl: { lift: [0, 0, 0], gamma: [1, 1, 1], gain: [1, 1, 1], contrast: 1.06, saturation: 1.04, balance: [0, 0] },
+    cdl: { lift: [0, 0, 0], gamma: [1, 1, 1], gain: [1, 1, 1], contrast: 1.06, saturation: 1.02, balance: [0, 0] },
     lut: {
       shadow: [0.96, 0.99, 1.06], mid: [1, 1, 1], high: [1.02, 1.01, 0.99],
-      sat: 1.04, contrast: 1.06, crush: 0.0, bleach: 0.10,
+      sat: 1.00, contrast: 1.06, crush: 0.0, bleach: 0.10,
     },
-    toe: [0.016, 0.018, 0.024], exposure: 1.00, bloom: 0.45, bloomKnee: 3.1,
+    toe: [0.0045, 0.0050, 0.0067], exposure: 1.00, bloom: 0.45, bloomKnee: 3.1,
   },
   // Low warm window light raking across the table, cool skylight in the shade.
+  //
+  // The only look that has been measured off a frame, so it is the reference
+  // for the three signature rules above. The gain used to run 1.050 / 0.950, an
+  // R:B ratio of 1.105, on top of a balance that already warms by 1.037 and a
+  // LUT whose highs are 1.09 / 0.90 — four warm pushes stacked. The gain is the
+  // one that carries least intent, so it is the one that gives way: at
+  // 1.026 / 0.986 the ratio is 1.041 and the warm/cool split is left to the
+  // shadow and high tints, where it is shaped rather than global.
   morning: {
     cdl: {
-      lift: [-0.004, -0.001, 0.008], gamma: [1.0, 1.0, 1.02], gain: [1.050, 1.005, 0.950],
-      contrast: 1.13, saturation: 1.12, balance: [0.13, -0.02],
+      lift: [-0.004, -0.001, 0.008], gamma: [1.0, 1.0, 1.02], gain: [1.026, 1.004, 0.986],
+      contrast: 1.13, saturation: 1.02, balance: [0.13, -0.02],
     },
     lut: {
-      shadow: [0.86, 0.94, 1.20], mid: [1.03, 1.0, 0.965], high: [1.09, 1.02, 0.900],
-      sat: 1.10, contrast: 1.12, crush: 0.0, bleach: 0.16,
+      shadow: [0.89, 1.00, 1.15], mid: [1.03, 1.0, 0.965], high: [1.09, 1.02, 0.900],
+      sat: 1.00, contrast: 1.12, crush: 0.0, bleach: 0.16,
     },
-    toe: [0.018, 0.021, 0.032], exposure: 1.00, bloom: 0.45, bloomKnee: 3.1,
+    toe: [0.0050, 0.0059, 0.0090], exposure: 1.00, bloom: 0.45, bloomKnee: 3.1,
   },
   // Hard overhead sun. Whites stay white, shade goes properly blue, and the key
   // trim pulls the brightest preset back rather than letting it blow.
   noon: {
     cdl: {
       lift: [-0.002, -0.001, 0.006], gamma: [1, 1, 1], gain: [1.015, 1.005, 0.995],
-      contrast: 1.16, saturation: 1.10, balance: [0.03, 0.0],
+      contrast: 1.16, saturation: 1.02, balance: [0.03, 0.0],
     },
     lut: {
-      shadow: [0.90, 0.96, 1.16], mid: [1.0, 1.0, 1.0], high: [1.03, 1.015, 0.980],
-      sat: 1.08, contrast: 1.14, crush: 0.0, bleach: 0.14,
+      shadow: [0.92, 1.00, 1.13], mid: [1.0, 1.0, 1.0], high: [1.03, 1.015, 0.980],
+      sat: 1.00, contrast: 1.14, crush: 0.0, bleach: 0.14,
     },
-    toe: [0.014, 0.017, 0.028], exposure: 0.96, bloom: 0.50, bloomKnee: 3.4,
+    toe: [0.0039, 0.0048, 0.0078], exposure: 0.96, bloom: 0.50, bloomKnee: 3.4,
   },
-  // Heavy amber key, violet shade. The most opinionated look in the set.
+  // Heavy amber key, violet shade. The most opinionated look in the set, and it
+  // keeps that — but a negative green LIFT under a green-deficient shadow tint
+  // is the magenta mechanism twice over, so the lift's green goes to zero and
+  // the gain's R:B eases 1.188 -> 1.120. Still by some way the warmest table.
   goldenHour: {
     cdl: {
-      lift: [0.006, -0.003, 0.012], gamma: [0.985, 1.0, 1.06], gain: [1.075, 1.005, 0.905],
-      contrast: 1.12, saturation: 1.16, balance: [0.26, -0.05],
+      lift: [0.006, 0.000, 0.012], gamma: [0.985, 1.0, 1.06], gain: [1.055, 1.008, 0.942],
+      contrast: 1.12, saturation: 1.02, balance: [0.26, -0.05],
     },
     lut: {
-      shadow: [0.80, 0.90, 1.26], mid: [1.07, 1.0, 0.900], high: [1.10, 1.02, 0.860],
-      sat: 1.14, contrast: 1.10, crush: 0.0, bleach: 0.22,
+      shadow: [0.84, 0.99, 1.18], mid: [1.07, 1.0, 0.900], high: [1.10, 1.02, 0.860],
+      sat: 1.00, contrast: 1.10, crush: 0.0, bleach: 0.22,
     },
-    toe: [0.024, 0.020, 0.038], exposure: 0.98, bloom: 0.70, bloomKnee: 2.6,
+    toe: [0.0067, 0.0056, 0.0110], exposure: 0.98, bloom: 0.70, bloomKnee: 2.6,
   },
   // A flat sky gives the frame nothing, so the grade supplies the contrast the
   // light will not, and desaturates rather than pretending there is colour.
   overcast: {
     cdl: {
       lift: [0.008, 0.009, 0.014], gamma: [1.01, 1.0, 0.995], gain: [0.985, 0.995, 1.020],
-      contrast: 1.14, saturation: 0.92, balance: [-0.07, 0.02],
+      contrast: 1.14, saturation: 0.88, balance: [-0.07, 0.02],
     },
     lut: {
       shadow: [0.97, 1.00, 1.10], mid: [0.99, 1.0, 1.02], high: [0.99, 1.00, 1.040],
-      sat: 0.92, contrast: 1.10, crush: 0.0, bleach: 0.08,
+      sat: 1.00, contrast: 1.10, crush: 0.0, bleach: 0.08,
     },
-    toe: [0.022, 0.024, 0.032], exposure: 1.04, bloom: 0.32, bloomKnee: 3.6,
+    toe: [0.0062, 0.0067, 0.0090], exposure: 1.04, bloom: 0.32, bloomKnee: 3.6,
   },
   // Cyan-violet ambient, warm practicals. Highest contrast of the daylight set.
   dusk: {
     cdl: {
-      lift: [0.004, -0.002, 0.018], gamma: [1.0, 1.01, 1.07], gain: [1.060, 0.970, 1.030],
-      contrast: 1.20, saturation: 1.12, balance: [0.08, -0.07],
+      lift: [0.004, 0.000, 0.018], gamma: [1.0, 1.01, 1.07], gain: [1.045, 0.985, 1.030],
+      contrast: 1.20, saturation: 1.02, balance: [0.08, -0.07],
     },
     lut: {
-      shadow: [0.74, 0.86, 1.34], mid: [1.07, 0.97, 1.06], high: [1.12, 0.99, 0.920],
-      sat: 1.10, contrast: 1.16, crush: 0.0, bleach: 0.20,
+      shadow: [0.80, 0.98, 1.24], mid: [1.07, 0.97, 1.06], high: [1.12, 0.99, 0.920],
+      sat: 1.00, contrast: 1.16, crush: 0.0, bleach: 0.20,
     },
-    toe: [0.020, 0.020, 0.044], exposure: 0.97, bloom: 0.85, bloomKnee: 2.1,
+    toe: [0.0056, 0.0056, 0.0120], exposure: 0.97, bloom: 0.85, bloomKnee: 2.1,
   },
   // One tungsten source; everything it does not reach falls into blue.
   nightLamp: {
     cdl: {
-      lift: [-0.001, 0.001, 0.012], gamma: [1.0, 1.0, 1.06], gain: [1.090, 0.985, 0.940],
-      contrast: 1.24, saturation: 1.08, balance: [0.18, -0.06],
+      lift: [-0.001, 0.001, 0.012], gamma: [1.0, 1.0, 1.06], gain: [1.060, 0.995, 0.960],
+      contrast: 1.24, saturation: 1.00, balance: [0.18, -0.06],
     },
     lut: {
-      shadow: [0.70, 0.85, 1.40], mid: [1.07, 0.99, 0.94], high: [1.13, 1.01, 0.860],
-      sat: 1.06, contrast: 1.20, crush: 0.0, bleach: 0.24,
+      shadow: [0.76, 0.96, 1.30], mid: [1.07, 0.99, 0.94], high: [1.13, 1.01, 0.860],
+      sat: 1.00, contrast: 1.20, crush: 0.0, bleach: 0.24,
     },
-    toe: [0.014, 0.016, 0.040], exposure: 1.02, bloom: 1.00, bloomKnee: 1.7,
+    toe: [0.0039, 0.0045, 0.0110], exposure: 1.02, bloom: 1.00, bloomKnee: 1.7,
   },
 };
 
@@ -1295,6 +1368,14 @@ export function buildLutTexture(look, size = LUT_SIZE) {
  * Tap spacing is what governs whether a bokeh disc looks solid or ringed, so
  * dofTaps has to move with dofRadius. Cost at ultra is 27 taps in each of two
  * separable directions over 2.07 Mpx, and only outside the sharp band.
+ *
+ * `grain` is now the peak excursion in the ENCODED domain (see GrainShader), so
+ * it reads directly as a fraction of the output range: ultra's 0.030 is +/- 7.6
+ * code values peak, about 4.4 RMS on a uniform distribution, which is where a
+ * 35 mm scan sits at 1080p. It is roughly a 12% trim off the old numbers, taken
+ * because the mask now lets grain into the whole midtone range instead of only
+ * the top half of it — the total amount of grain in the frame goes UP at these
+ * lower values. The architecture ceiling of 0.04 at ultra still holds.
  */
 const POST_TIERS = {
   low: {
@@ -1305,17 +1386,17 @@ const POST_TIERS = {
   medium: {
     ao: 'ssao', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 8, motion: true,
     mbTaps: 7, grade: true, lut: true, chromatic: true, vignette: true,
-    grain: 0.022, smaa: true, dofRadius: 0.0115, edgeDefocus: 0.13,
+    grain: 0.020, smaa: true, dofRadius: 0.0115, edgeDefocus: 0.13,
   },
   high: {
     ao: 'gtao', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 11, motion: true,
     mbTaps: 9, grade: true, lut: true, chromatic: true, vignette: true,
-    grain: 0.028, smaa: true, dofRadius: 0.0135, edgeDefocus: 0.15,
+    grain: 0.025, smaa: true, dofRadius: 0.0135, edgeDefocus: 0.15,
   },
   ultra: {
     ao: 'gtao', bloom: true, bloomRes: 0.5, tilt: true, dofTaps: 13, motion: true,
     mbTaps: 12, grade: true, lut: true, chromatic: true, vignette: true,
-    grain: 0.034, smaa: true, dofRadius: 0.0155, edgeDefocus: 0.16,
+    grain: 0.030, smaa: true, dofRadius: 0.0155, edgeDefocus: 0.16,
   },
 };
 

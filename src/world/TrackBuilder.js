@@ -14,10 +14,15 @@
 //     computeVertexNormals(). Faceting disappears over ramps, and the road and
 //     its shoulder share exactly the same normal along their shared edge, so
 //     there is no lighting crease where they meet.
-//   * **UVs are metric.** u = lateral / texScale, v = arcLength / texScale, both
-//     in world units. Texel density is therefore constant: the wood grain does
-//     not stretch on the outside of a corner or bunch up on the inside, which
-//     is the single most common tell of a swept road.
+//   * **UVs are metric, and the substrate is projected in world XZ.** The deck,
+//     the shoulder and the ground slab all use uv = (x / texScale, z / texScale)
+//     in world units, so texel density is constant and — more importantly — the
+//     material does not bend with the circuit. Wood is a thing the track is
+//     lying on, not a thing it is wearing: the grain runs straight through a
+//     corner and the road crosses the plank joints rather than dragging them
+//     round the hairpin with it. Ribbon-space UVs (u = lateral, v = arc length)
+//     are reserved for what genuinely follows the circuit — markings, kerbs,
+//     the racing line, skid deposits.
 //   * **The road does not sit on the ground, it becomes the ground.** The same
 //     grid carries the ribbon out through a cubic-eased shoulder until it is
 //     level with the surrounding surface, and the material transition is hidden
@@ -174,6 +179,9 @@ const _n = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _up = new THREE.Vector3();
 const _col = new THREE.Color();
+// A second colour scratch, for the cases that need a tint sampled while the
+// primary one is already being written into by a sweep callback.
+const _tint = new THREE.Color();
 const _uv = new THREE.Vector2();
 
 /* ========================================================================== */
@@ -1706,8 +1714,10 @@ export class TrackBuilder {
     const groundIndex = this.roadMaterials.length;
     const materials = [...this.roadMaterials, this.offMaterial];
 
+    // One metric scale for the whole deck. surfaceNames[0] is the track's
+    // default surface, which is also the one that covers most of the lap, so
+    // the majority of the road sits at the density its bake was authored for.
     const roadScale = this.roadMaterials[0]?.userData.texScale ?? ROAD_TEX_SCALE;
-    const roadScaleV = this.fitToLap(roadScale);
     const groundScale = this.offMaterial.userData.texScale;
 
     // Where the racing line runs at each row — the rubbered-in groove is drawn
@@ -1740,15 +1750,19 @@ export class TrackBuilder {
       uv: (i, j) => {
         const c = cols[j];
         const lat = lateralOf(i, j);
-        if (c.group === 'road') {
-          _uv.set(lat / roadScale, this.rowS[i] / roadScaleV);
-        } else {
-          // The shoulder is projected in world XZ exactly like the ground slab,
-          // so the two share a continuous texture instead of meeting at a
-          // direction change.
-          track.surfacePoint(this.rowTAt(i), lat, _pd);
-          _uv.set(_pd.x / groundScale, _pd.z / groundScale);
-        }
+        // Both the deck and its shoulder are projected in world XZ, exactly
+        // like the ground slab. The deck used to be parameterised in ribbon
+        // space (u = lateral, v = arc length), which made the timber's grain
+        // and its plank joints follow the spline: the boards bent through every
+        // corner and wrapped 180 degrees round the hairpins. No board does
+        // that. A world projection is what "the road is a piece of the table"
+        // actually means — the grain runs straight and the road crosses the
+        // joints instead of carrying them along with it. Only the things that
+        // genuinely follow the circuit keep ribbon UVs: the racing line, the
+        // lane and edge markings, the kerbs, the skid deposits.
+        track.surfacePoint(this.rowTAt(i), lat, _pd);
+        const scale = c.group === 'road' ? roadScale : groundScale;
+        _uv.set(_pd.x / scale, _pd.z / scale);
         return _uv;
       },
       color: (i, j, out) => {
@@ -1768,8 +1782,18 @@ export class TrackBuilder {
           const k = smoothstep(hw + EDGE_OVERHANG, hw + shoulder, al);
           v = lerp(0.80, 1.0, k);
         }
-        const blot = fbm2DTiled(this.rowS[i] * 0.010, lat * 0.010, 32, 3, 2, 0.5, track.seed + 77) * 0.06;
-        const s = clamp(v + blot, 0, 1.4);
+        // Grime is world-space for the same reason the grain is: a stain lies
+        // where it was spilled, it does not run round the circuit. The broad
+        // component is literally the field the table slab is tinted by, so the
+        // deck, the shoulder and the ground beyond now share one continuous
+        // tonal map instead of each carrying its own. The deck takes two thirds
+        // of the swing — a driven, varnished surface is more even than bare
+        // board, but not flat.
+        track.surfacePoint(this.rowTAt(i), lat, _pd);
+        this.groundTint(_pd.x, _pd.z, _tint);
+        const tone = c.group === 'road' ? lerp(1, _tint.r, 0.65) : _tint.r;
+        const blot = fbm2DTiled(_pd.x * 0.020, _pd.z * 0.020, 32, 3, 2, 0.5, track.seed + 77) * 0.06;
+        const s = clamp(v * tone + blot, 0, 1.4);
         out.setRGB(s, s * 0.997, s * 0.99);
       },
       quadGroup: (i, j) => {
