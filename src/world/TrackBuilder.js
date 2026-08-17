@@ -907,12 +907,13 @@ function finaliseGeometry(geo, { tangents = true } = {}) {
 // the arch of grain, the pore field, the pile direction. That is what this is.
 //
 // The mechanism is the standard one. Sample every map a second time through a
-// rotated, rescaled, shifted copy of the same UVs, and cross-fade the two by a
-// mask whose blobs are a couple of tiles across. Where the mask is 0 you see the
-// bake as authored; where it is 1 you see a different part of it, arriving at a
-// different angle; in between, one soft band a good fraction of a tile wide. The
-// grid pitch survives nowhere, because no two neighbouring blobs are showing the
-// same piece of texture.
+// displaced copy of the same UVs — shifted, and depending on the surface also
+// rotated and rescaled — and cross-fade the two by a mask whose blobs are about
+// one and a half tiles across and never under a metre. Where the mask is 0 you
+// see the bake as authored; where it is 1 you see a different part of it; in
+// between, a band some 50 cm wide covering about 15% of the table. The lattice
+// does not survive that: the feature that used to land every 96 cm now lands in
+// one blob and not in its neighbour.
 //
 // Two details are not optional:
 //
@@ -929,33 +930,50 @@ function finaliseGeometry(geo, { tangents = true } = {}) {
 //    wood, a bit nearer".
 //  * Roughness and AO are scalar fields, so they mix linearly and are done.
 //
-// Anisotropy is the reason there are two profiles. A rotation is exactly the
-// right move on grass, felt, carpet, sawdust — fields with no direction in them.
-// It is exactly the wrong move on a timber top, where it would run a second set
-// of staves diagonally across the table. GEN.oak lays its staves out from the
-// texel column alone, so a joint is a line of constant u and nothing else: an
-// offset along v slides the grain a long way down the board while leaving every
-// joint, and every stave's width and colour, exactly where it was. That is the
-// whole grain profile — no rotation, no rescale, and consequently no normal
-// correction to get wrong either.
+// Anisotropy is the reason there are three profiles rather than one, and the
+// reason the rotation is the *rare* case here instead of the default. Almost
+// nothing in this library is actually directionless. GEN.poolFelt stretches its
+// nap hard along one axis and Surfaces backs it with anisotropyRotation PI/2, so
+// a rotated second layer would light a nap running one way with a specular lobe
+// stretched the other. GEN.carpet has vacuum marks, GEN.grass has mow streaks,
+// GEN.rug is a warp-and-weft weave. All of those keep their axes.
+//
+//  * grain — timber. GEN.oak lays its staves out from the texel column alone, so
+//    a joint is a line of constant u and nothing else. An offset along v slides
+//    the grain a long way down the board while leaving every joint, and every
+//    stave's width and colour, exactly where it was.
+//  * shift — anything with a direction in it but no structural lines: felt,
+//    carpet, grass, rug. A translation in both axes, which decorrelates the
+//    lattice without turning a single feature by a single degree.
+//  * field — genuine scatters, sawdust and gravel and crumbs, where there is no
+//    direction to preserve and the rotation is free.
+//
+// Note what the first two have in common: cos = 1, sin = 0, so the tangent-space
+// correction on the second normal sample is the identity and cannot be wrong.
+// The rotation path is only ever taken by surfaces that have no axis to lose.
 
 const STOCH_PROFILE = {
-  // Isotropic fields: rotate hard, and rescale enough that the two layers do
-  // not beat against each other at any distance.
-  field: { angle: 0.82, scale: 1.31, off: [0.37, 0.71], fade: 0.18 },
-  // Grained boards: slide along the stave only. 0.5 of a repeat is the furthest
-  // the shift can be from itself, and the u axis is untouched by construction.
-  grain: { angle: 0, scale: 1, off: [0, 0.5], fade: 0.24 },
+  grain: { angle: 0, scale: 1, off: [0, 0.5], fade: 0.05 },
+  shift: { angle: 0, scale: 1, off: [0.41, 0.63], fade: 0.05 },
+  field: { angle: 0.82, scale: 1.31, off: [0.37, 0.71], fade: 0.06 },
 };
 
-// Anything not named here is treated as a field. Named as null are the surfaces
-// whose repetition is the point — a tiled floor is supposed to be a grid, and
-// smashing it would be the defect, not the fix.
+// Unlisted kinds get the conservative profile, which is where felt, carpet,
+// grass and rug all land. Named as null are the surfaces whose repetition is
+// the point — a tiled floor is supposed to be a grid, and smashing it would be
+// the defect, not the fix.
+const STOCH_DEFAULT_PROFILE = 'shift';
 const STOCH_KIND = {
   oak: 'grain',
   pine: 'grain',
   varnishedWood: 'grain',
   laminate: 'grain',
+  sawdust: 'field',
+  sand: 'field',
+  gravel: 'field',
+  soil: 'field',
+  crumbs: 'field',
+  concrete: 'field',
   ceramicTile: null,
   chromePlate: null,
   plasticGloss: null,
@@ -965,12 +983,16 @@ const STOCH_KIND = {
 
 // One blob spans this many texture repeats, but never less than this many
 // centimetres: on a 24 cm felt the tile is the small number and the mask has to
-// stay well above it, on a 96 cm oak the tile is the large one.
-const STOCH_MASK_TILES = 1.8;
+// stay well above it, on a 96 cm oak the tile is the large one. Above about 2
+// the playfield stops fitting enough blobs to break anything; below about 1.2
+// the transitions start cutting individual features in half, and a knot caught
+// half way through one is a ghost rather than a knot.
+const STOCH_MASK_TILES = 1.6;
 const STOCH_MASK_MIN_CM = 110;
 
 function stochProfileFor(kind) {
-  const named = Object.prototype.hasOwnProperty.call(STOCH_KIND, kind) ? STOCH_KIND[kind] : 'field';
+  const named = Object.prototype.hasOwnProperty.call(STOCH_KIND, kind)
+    ? STOCH_KIND[kind] : STOCH_DEFAULT_PROFILE;
   if (!named) return null;
   const p = STOCH_PROFILE[named];
   return p ? { name: named, ...p } : null;
@@ -1009,10 +1031,22 @@ float mgStValue( vec2 p ) {
 }
 // Which of the two layers this fragment is showing. Two octaves: the coarse one
 // sizes the blobs, the fine one stops their outlines reading as one wavelength.
+//
+// The threshold is the noise's own median, measured over a table-sized patch
+// rather than assumed: this field means 0.444 and medians 0.428, so thresholding
+// at 0.5 would have shown layer A over twice the area of layer B. The half-width
+// is small on purpose. Both layers are visible together only inside the
+// transition, and a fragment there is a 50/50 average of two samplings of the
+// same texture — which is to say, blurred. At the measured gradient of this
+// field, 0.05 spans some 50 cm of table, wide enough that no eye finds an edge,
+// while leaving 85% of the surface showing one crisp layer or the other. The
+// original 0.24 would have left two thirds of the table permanently averaged,
+// which trades a visible repeat for a visible mush.
+const float MG_ST_MEDIAN = 0.4277;
 float mgStMask( vec2 uvBase ) {
   vec2 p = uvBase * uMgStoch.w;
   float n = mgStValue( p ) * 0.66 + mgStValue( p * 2.17 + 11.7 ) * 0.34;
-  return smoothstep( 0.5 - uMgStochOff.z, 0.5 + uMgStochOff.z, n );
+  return smoothstep( MG_ST_MEDIAN - uMgStochOff.z, MG_ST_MEDIAN + uMgStochOff.z, n );
 }
 // The second layer's UVs. Rotation and scale are about the UV origin, which
 // commutes with a texture repeat, so every map in the set is displaced by the
