@@ -15,9 +15,11 @@
 //    second specular lobe with its own roughness and its own index. On top of
 //    that, metallic flake: two octaves of a two-lattice cell field in *object*
 //    space (flakes are suspended in the paint, so they must not swim as the car
-//    moves) which perturb only the basecoat normal, never the clearcoat's. That
-//    ordering is physically right and it is what makes the sparkle look like it
-//    is under something. Each octave fades out on its own screen-space
+//    moves) whose tilted normal is handed to the basecoat's *direct* specular
+//    lobe and to nothing else — not the diffuse term, not the environment lobe,
+//    not the clearcoat. That is what makes the sparkle live inside the specular
+//    sweep and look like it is under something, instead of dusting the whole
+//    body in stipple. Each octave fades out on its own screen-space
 //    footprint, and the two are sized so that the handover lands inside the
 //    range of framings the game actually composes: the coarse grain carries the
 //    race and results cameras, the fine one takes over in a close-up, and both
@@ -250,7 +252,7 @@ function patch(material, feat, uniforms, keyParts, install) {
     if (feat.objPos) fDecl.push(VERT_OBJ_DECL);
     if (feat.macro) fDecl.push('uniform float uMgMacroScale;\nuniform float uMgMacroColor;\nuniform float uMgMacroRough;');
     if (feat.triplanar) fDecl.push('uniform float uMgTriScale;\nuniform float uMgTriSharp;');
-    if (feat.flake) fDecl.push('uniform float uMgFlakeScale;\nuniform float uMgFlakeAmount;\nuniform float uMgFlakeGlint;\nuniform vec3 uMgFlakeColor;');
+    if (feat.flake) fDecl.push(FRAG_FLAKE_DECL);
     if (feat.clearcoatIor) fDecl.push('uniform float uMgCcIor;\nuniform float uMgCcRough;\nuniform float uMgCcFromRough;');
     if (feat.specAA) fDecl.push('uniform float uMgSaaVar;\nuniform float uMgSaaMax;\nuniform float uMgRoughMin;');
     if (feat.peel) fDecl.push('uniform float uMgPeelScale;\nuniform float uMgPeelAmount;');
@@ -303,14 +305,9 @@ roughnessFactor = clamp( roughnessFactor * ( 1.0 + ( mgMacro - 0.5 ) * uMgMacroR
     let normalBlock = feat.triplanar
       ? '#include <normal_fragment_maps>\n' + FRAG_TRI_NORMAL
       : '#include <normal_fragment_maps>';
-    // Snapshot the shading normal *before* the flake field perturbs it. The
-    // specular antialiasing filter measures how far the normal sweeps across
-    // one pixel and widens the lobe to match, which is right for a normal map
-    // but wrong for flake: flake is faded out on its own screen footprint
-    // precisely so that whatever survives is resolved, and feeding a resolved
-    // per-pixel sparkle field into the filter simply pins the base roughness at
-    // its ceiling and turns the whole car matte.
-    if (feat.specAA) normalBlock += '\nvec3 mgSaaNormal = normal;\n';
+    // The flake field writes to mgFlakeNormal, never to `normal`, so everything
+    // downstream of here — the diffuse term, the IBL irradiance, the specular
+    // antialiasing filter — sees the paint's own smooth shading normal.
     if (feat.flake) normalBlock += FRAG_FLAKE;
     if (normalBlock !== '#include <normal_fragment_maps>') {
       fs = fs.replace('#include <normal_fragment_maps>', normalBlock);
@@ -329,9 +326,15 @@ roughnessFactor = clamp( roughnessFactor * ( 1.0 + ( mgMacro - 0.5 ) * uMgMacroR
     let physBlock = '#include <lights_physical_fragment>';
     if (feat.flake) physBlock += '\n' + FRAG_FLAKE_SPEC;
     if (feat.clearcoatIor) physBlock += '\n' + FRAG_CC_IOR;
-    if (feat.specAA) physBlock += '\n' + specAaBlock(feat.flake ? 'mgSaaNormal' : 'normal');
+    if (feat.specAA) physBlock += '\n' + specAaBlock('normal');
     if (physBlock !== '#include <lights_physical_fragment>') {
       fs = fs.replace('#include <lights_physical_fragment>', physBlock);
+    }
+
+    /* ---- the flake's one and only consumer: the direct specular lobe ---- */
+    if (feat.flake) {
+      fs = fs.replace('#include <lights_physical_pars_fragment>',
+        '#include <lights_physical_pars_fragment>\n' + FRAG_FLAKE_DIRECT);
     }
 
     /* ---- glazing: alpha rises toward the grazing angle ---- */
@@ -384,17 +387,50 @@ roughnessFactor = clamp( roughnessFactor * ( 1.0 + ( mgMacro - 0.5 ) * uMgMacroR
   return material;
 }
 
-// Flakes perturb `normal` only. `nonPerturbedNormal` (and therefore
-// clearcoatNormal) is left alone, which is exactly the physical arrangement:
-// aluminium flakes are suspended in the basecoat, underneath the lacquer.
+// The flake field's outputs are file-scope globals because their only consumer,
+// mgRE_Direct, is a function declared long before main() ever runs.
+const FRAG_FLAKE_DECL = /* glsl */`
+uniform float uMgFlakeScale;
+uniform float uMgFlakeAmount;
+uniform float uMgFlakeGlint;
+uniform vec3 uMgFlakeColor;
+vec3 mgFlakeNormal = vec3( 0.0, 0.0, 1.0 );
+float mgFlakeGlint = 0.0;
+float mgFlakeShow = 0.0;
+float mgFlakeSharp = 0.0;
+`;
+
+// FLAKE IS A SPECULAR EFFECT AND NOTHING ELSE, and "specular" here means the
+// *direct* lobe specifically. A flake is a two-micron mirror suspended in the
+// binder; it is not a change of pigment and it is not a change of the surface
+// the light meets.
 //
-// FLAKE IS A SPECULAR EFFECT AND NOTHING ELSE. A flake is a two-micron mirror
-// suspended in the binder; it is not a change of pigment. The previous version
-// mixed the flake tint into `diffuseColor`, which put sparkle on panels
-// receiving no direct light at all — the single tell that gave the old paint
-// away, because real sparkle vanishes the instant the panel turns away from
-// the source. The tint now goes to `material.specularColor` (FRAG_FLAKE_SPEC),
-// where a metal's reflectance actually lives.
+// Two earlier versions each leaked it somewhere else and each leak read the
+// same way — a dense, uniform, high-contrast stipple that looks like
+// bead-blasted metal or stone-effect spray rather than paint. First the flake
+// tint was mixed into `diffuseColor`. Then, after that was removed, the field
+// still wrote to `normal` and to `roughnessFactor`, which is subtler but worse:
+// `normal` feeds the Lambert term and the IBL irradiance as well as the
+// specular, and `roughnessFactor` feeds the *environment* lobe, so a per-pixel
+// random field arrived on every panel of the car at equal density whether it
+// faced the key or sat in the shadow of the valance. Measured on a macro frame
+// that was a high-frequency deviation of 13% of panel mean, four to five times
+// the film-grain floor, and it sat on the livery bands and the deep shade
+// exactly as strongly as on the specular sweep — which is the giveaway, because
+// real flake only exists inside the sweep.
+//
+// So the field now writes to `mgFlakeNormal`, `mgFlakeGlint`, `mgFlakeShow` and
+// `mgFlakeSharp` and touches nothing three will read on its own. mgRE_Direct
+// (FRAG_FLAKE_DIRECT) is the only thing that consumes them, and it hands them
+// to BRDF_GGX for the direct lobe alone. Diffuse, IBL irradiance, IBL radiance,
+// the clearcoat and the specular-antialiasing filter all keep the smooth
+// shading normal. A tilted flake then brightens only where the half-vector
+// happens to swing onto it, which is what puts the sparkle in the sweep and
+// nowhere else.
+//
+// `nonPerturbedNormal` (and therefore clearcoatNormal) was already left alone,
+// which is the physical arrangement: aluminium flakes are suspended in the
+// basecoat, underneath the lacquer.
 //
 // The field is also split into a statistical half and a resolved half.
 // *Coverage* — what fraction of the basecoat is aluminium rather than binder —
@@ -404,8 +440,7 @@ roughnessFactor = clamp( roughnessFactor * ( 1.0 + ( mgMacro - 0.5 ) * uMgMacroR
 // per-flake glint and the normal tilt fade with the screen footprint, because
 // those are the two parts that would alias.
 const FRAG_FLAKE = /* glsl */`
-float mgFlakeGlint = 0.0;
-float mgFlakeShow = 0.0;
+mgFlakeNormal = normal;
 {
   // Screen-space footprint of one flake cell, in cells per pixel. Past about
   // one cell per pixel the field is beyond Nyquist and is faded out rather
@@ -425,14 +460,15 @@ float mgFlakeShow = 0.0;
     // Only a minority of flakes are steeply tilted; those are the glints.
     float mgGlint = pow( fract( mgR1.x * 0.5 + mgR2.y * 0.5 + 0.5 ), uMgFlakeGlint );
     vec3 mgDirV = normalize( normalMatrix * mgDir );
-    vec3 mgTang = mgDirV - normal * dot( mgDirV, normal );
+    vec3 mgTang = mgDirV - mgFlakeNormal * dot( mgDirV, mgFlakeNormal );
     // Milled aluminium flake floats nearly parallel to the film surface: the
     // spread is a few degrees, not the forty the old constants asked for. A
     // tangent offset of 0.17 is about ten degrees at the steepest flake.
-    normal = normalize( normal + mgTang * mgAmt * ( 0.06 + mgGlint * 0.34 ) );
+    mgFlakeNormal = normalize( mgFlakeNormal + mgTang * mgAmt * ( 0.06 + mgGlint * 0.34 ) );
     // A tilted flake is a mirror, so the basecoat sharpens locally where one
-    // catches the key.
-    roughnessFactor = clamp( roughnessFactor * ( 1.0 - mgGlint * mgAmt * 0.85 ), 0.03, 1.0 );
+    // catches the key. Accumulated rather than applied: it is a narrowing of
+    // the direct lobe only, and the environment lobe must not see it.
+    mgFlakeSharp = 1.0 - ( 1.0 - mgFlakeSharp ) * ( 1.0 - mgGlint * mgAmt * 0.85 );
     mgFlakeGlint = mgGlint;
     mgFlakeShow = mgAmt;
   }
@@ -475,32 +511,68 @@ float mgFlakeShow = 0.0;
     vec3 mgDirC = normalize( mgRc1 + mgRc2 * 0.72 + vec3( 1e-5 ) );
     float mgGlintC = pow( fract( mgRc1.x * 0.5 + mgRc2.y * 0.5 + 0.5 ), uMgFlakeGlint );
     vec3 mgDirCV = normalize( normalMatrix * mgDirC );
-    vec3 mgTangC = mgDirCV - normal * dot( mgDirCV, normal );
+    vec3 mgTangC = mgDirCV - mgFlakeNormal * dot( mgDirCV, mgFlakeNormal );
     // A third of the fine octave's tilt: 0.13 against 0.40 at the steepest
     // flake, about three degrees rather than ten. A coarse grain carrying the
     // fine octave's amplitude is exactly what read as glitter before.
-    normal = normalize( normal + mgTangC * mgAmtC * ( 0.02 + mgGlintC * 0.11 ) );
-    roughnessFactor = clamp( roughnessFactor * ( 1.0 - mgGlintC * mgAmtC * 0.28 ), 0.03, 1.0 );
+    mgFlakeNormal = normalize( mgFlakeNormal + mgTangC * mgAmtC * ( 0.02 + mgGlintC * 0.11 ) );
+    mgFlakeSharp = 1.0 - ( 1.0 - mgFlakeSharp ) * ( 1.0 - mgGlintC * mgAmtC * 0.28 );
     // max, not sum: where both octaves resolve, the sparkle term handed to
-    // FRAG_FLAKE_SPEC must not double up on the coverage term already there.
+    // mgRE_Direct must not double up on the coverage term already folded into
+    // material.specularColor by FRAG_FLAKE_SPEC.
     mgFlakeGlint = max( mgFlakeGlint, mgGlintC );
     mgFlakeShow = max( mgFlakeShow, mgAmtC * 0.33 );
   }
 }
 `;
 
-// The flake's contribution to the specular lobe, injected after three has
-// built `material`. In a metallic paint it is the aluminium, not the pigment,
-// that owns F0: that is why a black metallic panel is not black but a dim
-// mirror, and why lifting the coverage term is what gives a dark livery a
-// continuous basecoat instead of scattered glitter over a void.
+// The *statistical* half of the flake: coverage. In a metallic paint it is the
+// aluminium, not the pigment, that owns F0 — that is why a black metallic panel
+// is not black but a dim mirror, and why lifting the coverage term is what
+// gives a dark livery a continuous basecoat instead of scattered glitter over a
+// void. Coverage is a property of the paint, identical on every pixel, so it is
+// safe here on `material` where both lobes will read it: a constant cannot
+// stipple. The per-pixel half of the tint lives in mgRE_Direct instead.
 const FRAG_FLAKE_SPEC = /* glsl */`
 {
   float mgCov = clamp( uMgFlakeAmount * 1.15, 0.0, 1.0 );
   vec3 mgFlakeF0 = uMgFlakeColor * 0.92;
-  float mgMix = clamp( mgCov * 0.55 + mgFlakeShow * mgFlakeGlint * 0.55, 0.0, 1.0 );
-  material.specularColor = mix( material.specularColor, mgFlakeF0, mgMix );
+  material.specularColor = mix( material.specularColor, mgFlakeF0, clamp( mgCov * 0.55, 0.0, 1.0 ) );
 }
+`;
+
+// The direct-lighting wrapper: the one place the resolved flake field is
+// allowed to act.
+//
+// three routes diffuse and specular through a single geometryNormal inside
+// RE_Direct_Physical, so there is no argument to hand a second normal to. The
+// wrapper calls the stock function with the flake normal into a scratch
+// accumulator, keeps its specular, throws its diffuse away, and re-derives the
+// diffuse from the unperturbed normal — which is exactly the two lines
+// RE_Direct_Physical would have run. Substituting the RE_Direct macro is what
+// three's own material variants do, so the call site in lights_fragment_begin
+// needs no patching.
+//
+// The cost is one extra saturate/dot/multiply per light on car paint only. The
+// clearcoat and sheen accumulators are globals written inside the stock
+// function, so it must be called exactly once — hence the scratch
+// ReflectedLight rather than two calls with a difference taken.
+const FRAG_FLAKE_DIRECT = /* glsl */`
+void mgRE_Direct( const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in PhysicalMaterial material, inout ReflectedLight reflectedLight ) {
+  PhysicalMaterial mgMat = material;
+  mgMat.roughness = clamp( material.roughness * ( 1.0 - mgFlakeSharp ), 0.03, 1.0 );
+  mgMat.specularColor = mix( material.specularColor, uMgFlakeColor * 0.92,
+    clamp( mgFlakeShow * mgFlakeGlint * 0.55, 0.0, 1.0 ) );
+
+  ReflectedLight mgRl = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
+  RE_Direct_Physical( directLight, geometryPosition, mgFlakeNormal, geometryViewDir, geometryClearcoatNormal, mgMat, mgRl );
+  reflectedLight.directSpecular += mgRl.directSpecular;
+
+  float mgDotNL = saturate( dot( geometryNormal, directLight.direction ) );
+  reflectedLight.directDiffuse += mgDotNL * directLight.color * BRDF_Lambert( material.diffuseColor );
+}
+#undef RE_Direct
+#define RE_Direct mgRE_Direct
 `;
 
 // Orange peel: the long-wavelength ripple every sprayed lacquer has. Tiny
@@ -793,9 +865,9 @@ export function carPaint(o = {}) {
     uMgCcFromRough: { value: 0 },
     uMgPeelScale: { value: 1 / 0.55 },
     uMgPeelAmount: { value: (o.orangePeel ?? 1) * 0.55 },
-    // The filter now measures the pre-flake normal, so the extra headroom the
-    // sparkle field used to need is gone; what is left is the paint's own
-    // normal map, which is gentle.
+    // The flake never reaches the shading normal, so the filter measures only
+    // the paint's own normal map, which is gentle; the extra headroom the
+    // sparkle field used to need is gone.
     uMgSaaVar: { value: 0.18 },
     uMgSaaMax: { value: 0.16 },
     uMgRoughMin: { value: SAA_MIN },

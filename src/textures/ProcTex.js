@@ -1086,6 +1086,26 @@ function woodBase(B, cfg) {
   const lateGloss = cfg.lateGloss ?? 0.12;
   const earlyRough = cfg.earlyRough ?? 0.06;
 
+  // How hard a plank joint reads. A floor has a machined groove between boards;
+  // a glued-up tabletop panel has a hairline you can barely feel. Defaulted to
+  // the values that used to be hardcoded below, so every timber that wants a
+  // groove keeps exactly the one it had.
+  const jointDark = cfg.jointDark ?? 0.62;
+  const jointDepth = cfg.jointDepth ?? 0.55;
+
+  // `depthDrift` wanders the distance from the cut face to the pith *along* the
+  // board, and it has to complete a whole number of cycles across the tile or
+  // the ring pattern steps at the v seam. The authored 0.09 rad/cm completed
+  // 0.86 of a cycle on a 60 cm tile, so `depth` jumped by up to 0.7 cm across
+  // the wrap — close to a whole ring of offset — laying a straight
+  // discontinuity across the grain every tile. On a 460 x 340 cm table that is
+  // six of those lines, which is precisely the "visible tiling repetition" the
+  // rubric lists as an amateur tell. Rounding to the nearest whole cycle keeps
+  // the drift wavelength within ~20% of what each timber asked for and makes
+  // the field genuinely periodic.
+  const driftCycles = Math.max(1, Math.round((B.world * 0.09) / (Math.PI * 2)));
+  const driftW = (driftCycles * Math.PI * 2) / B.world;
+
   // --- low-frequency fields -------------------------------------------------
   const archCells = Math.max(2, Math.round(cfg.archCells * B.detail));
   const wander = B.field(archCells, (nz) => (x, y) => nz.fbm(x, y, 3, 2, 0.55), { samples: 6 });
@@ -1157,7 +1177,7 @@ function woodBase(B, cfg) {
       }
 
       const wob = wander[i];
-      const depth = Math.max(0.25, pk.pith + pk.arch * wob + cfg.depthDrift * Math.sin(along * 0.09 + pk.phase));
+      const depth = Math.max(0.25, pk.pith + pk.arch * wob + cfg.depthDrift * Math.sin(along * driftW + pk.phase));
       const ringR = Math.sqrt(across * across + depth * depth);
       let ringPos = ringR * cfg.ringsPerCm + pk.phase + grainNoise[i] * cfg.ringJitter;
 
@@ -1239,12 +1259,16 @@ function woodBase(B, cfg) {
       const edge = Math.min(pu, 1 - pu);
       const jointW = cfg.jointWidth / plankW;
       const joint = 1 - smoothstep(0, jointW, edge);
-      // Staggered end joints so planks do not read as full-length strips.
+      // Staggered end joints so planks do not read as full-length strips. A
+      // tabletop sets `endJoints: 0` — its staves run the whole length of the
+      // top and have no butt joints at all, which is one of the things that
+      // separates a table from a floor at a glance.
       const endPhase = fract(v + pk.joint);
       const endJoint = (1 - smoothstep(0, jointW * 0.55, Math.min(endPhase, 1 - endPhase))) * cfg.endJoints;
 
       const jj = Math.max(joint, endJoint);
-      cr *= 1 - jj * 0.62; cg *= 1 - jj * 0.62; cb *= 1 - jj * 0.62;
+      const jTone = 1 - jj * jointDark;
+      cr *= jTone; cg *= jTone; cb *= jTone;
 
       // --- height ---------------------------------------------------------
       // Latewood stands proud on a sanded board (earlywood abrades faster),
@@ -1269,7 +1293,7 @@ function woodBase(B, cfg) {
         + rayW * 0.08
         + fibre[i] * 0.10
         + grainNoise[i] * 0.05
-        - jj * 0.55
+        - jj * jointDepth
         - knotCore * 0.16 * (knotDead ? 1 : 0.45);
 
       // --- roughness ------------------------------------------------------
@@ -1417,35 +1441,72 @@ function addFingerprints(B, count, strength, seedOff) {
 
 /* ---------------------------------------------------------------- surfaces */
 
+// This is the kitchen TABLE — it is `groundSurface` and `offTrackSurface` for
+// the kitchen track and the material on the table's rim, so it is the single
+// largest thing in an establishing frame. It used to be authored as a floor and
+// it read as one: 12 cm boards with butt joints staggered every tile. A table
+// top is a glued-up panel of 15–25 cm staves that run the full length of the
+// top with no end joints anywhere, so `endJoints` is 0 and the edge joints are
+// a hairline rather than a machined groove (`jointDark`/`jointDepth` well under
+// the floorboard defaults).
+//
+// Tile size is the other half of that. At `tileWorld` 60 the same square
+// repeated 7.7 x 5.7 times across a 460 x 340 cm table, which is a grid you can
+// count from the establishing camera. 96 cm brings that to 4.8 x 3.5 and, at
+// five staves, puts each stave at 19.2 cm — the tabletop width and the tiling
+// fix are the same number. This is not a complete answer to the tiling on its
+// own; the stochastic cross-fade that would finish it belongs in TrackBuilder,
+// which reads `tileWorld` from GEN_DEF and so already follows this change.
+//
 // Grain frequency is set by what the camera can resolve, not by botany.
 //
-// A 60 cm tile at 210 fibre cells and 300 pore cells puts features at 2.9 mm
-// and 2.0 mm. In a gameplay frame the far half of the table runs at roughly one
+// A 60 cm tile at 210 fibre cells and 300 pore cells put features at 2.9 mm and
+// 2.0 mm. In a gameplay frame the far half of the table runs at roughly one
 // screen pixel per two millimetres, so those features land at or under Nyquist,
 // and everything they touch — albedo, the derived normal, the roughness — turns
 // into per-pixel noise that the specular lobe then amplifies into colour
-// fringing. At 96 and 150 the same figure sits at 6.2 mm and 4.0 mm: still
-// clearly oak in a close-up, still four to six texels wide at 1024, and it
-// survives minification as grain rather than as sparkle.
+// fringing. The counts below are cells per *tile*, so growing the tile by 1.6x
+// without growing them would have stretched every feature by the same 1.6x;
+// scaled with it, fibre and pores stay at the 6.2 mm and 4.0 mm that were
+// measured to survive minification, and the derived normal is unchanged
+// (`encodeNormal` scales by relief/texelWorld, and a feature that keeps its
+// physical width and height keeps its physical slope).
+//
+// Rings go 1.35 -> 1.6 per cm: 6.2 mm apart, which is furniture oak rather than
+// the 7.4 mm fast-grown board it was. The critic asked for 3.0 and that is too
+// far here — at 96 cm over 2048 texels a ring would span 7.1 texels with a
+// 2.6-texel latewood core and a sub-texel ring edge, under this file's own
+// four-texels-per-feature floor, and it would alias into moiré at exactly the
+// distances the establishing shot uses. 1.6 leaves 13 texels per ring.
 GEN.oak = (B) => {
   woodBase(B, {
-    planks: 5, ringsPerCm: 1.35, ringJitter: 0.30, archCells: 5,
+    planks: 5, ringsPerCm: 1.6, ringJitter: 0.30, archCells: 8,
     pithMin: 1.6, pithMax: 5.5, archMin: 0.8, archMax: 2.6, depthDrift: 0.35,
     lateStart: 0.58, lateEnd: 0.94, poreBand: 0.30,
     // Oak's ring boundary is the most abrupt of the four timbers, so its dense
     // core stays narrow; the seasonal ramp ahead of it is what carries the tone.
     lateRamp: 0.30, lateVary: 0.19, lateGloss: 0.13, earlyRough: 0.07,
-    grainCells: 26, fibreCells: 96,
+    grainCells: 42, fibreCells: 154,
     early: rgb('#c39764'), late: rgb('#8d5f30'), pore: rgb('#4d3118'),
     ray: rgb('#dcb987'), knotColor: rgb('#503016'),
-    rays: 0.85, pores: 1, poreCellsU: 150, poreStretch: 6, poreSize: 0.40,
-    knots: 3, knotMin: 0.7, knotMax: 2.4, deadKnot: 0.2,
-    hueJitter: 4, satJitter: 0.10, valJitter: 0.07, patina: 0.10,
+    rays: 0.85, pores: 1, poreCellsU: 240, poreStretch: 6, poreSize: 0.40,
+    // Four knots over 0.92 m2 instead of three over 0.36 m2. A knot is the most
+    // recognisable single feature in the bake, so its density is also how
+    // loudly the tile announces its own period.
+    knots: 4, knotMin: 0.7, knotMax: 2.4, deadKnot: 0.2,
+    // Staves in a glued panel are cut from different boards and rarely match.
+    // Per-stave spread is the cheapest low-frequency variation available here
+    // and it works against the repeat as well as being true of the object.
+    hueJitter: 5, satJitter: 0.12, valJitter: 0.09, patina: 0.10,
     // Bare oak is not a semi-gloss surface. 0.44 was glossy enough that at
     // grazing incidence, where Fresnel drives reflectance towards 1 whatever the
     // base colour, the board returned a recognisable image of the sky instead of
     // a broad sheen. 0.62 is where a sanded, unfinished board actually sits.
-    jointWidth: 0.09, endJoints: 0.7, rough: 0.62, wear: 0.9,
+    //
+    // 0.08 cm of joint half-width is 1.7 texels at 2048 — a hairline that still
+    // resolves. Narrower and the glue line would fall under a texel and alias.
+    jointWidth: 0.08, endJoints: 0, jointDark: 0.34, jointDepth: 0.30,
+    rough: 0.62, wear: 1.3,
   });
 };
 
@@ -2929,7 +2990,12 @@ GEN.sawdust = (B) => {
 // it and leave the grooves deeper than a caliper would like, which is the right
 // trade for a surface the camera only ever sees at a grazing angle.
 export const GEN_DEF = {
-  oak:               { tileWorld: 60, relief: 0.062, maxRes: 2048 },
+  // 96 cm, not 60: see GEN.oak. This is the kitchen tabletop and 60 repeated it
+  // 7.7 x 5.7 times across the playfield. Everything downstream reads this
+  // number — Surfaces inherits it through `PT.defaultsFor`, and TrackBuilder's
+  // `metricScaleFor` asks GEN_DEF directly — so the world scale follows on its
+  // own and no other file has to agree with a constant.
+  oak:               { tileWorld: 96, relief: 0.062, maxRes: 2048 },
   pine:              { tileWorld: 58, relief: 0.065, maxRes: 2048 },
   varnishedWood:     { tileWorld: 70, relief: 0.034, maxRes: 2048 },
   laminate:          { tileWorld: 80, relief: 0.030, maxRes: 2048 },

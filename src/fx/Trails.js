@@ -97,6 +97,12 @@ const STEP_MIN2 = 1.15 * 1.15;
 /** Squared distance above which the strip is broken rather than bridged. */
 const BREAK2 = 26 * 26;
 
+// Speed-ribbon cross section. The strip spans the car's LATERAL axis, canted
+// 20 degrees so its outer edge lifts; see _laySpeed() for why the lateral axis
+// is the only one that works under this game's camera.
+const SPEED_CANT_C = 0.93969;   // cos 20
+const SPEED_CANT_S = 0.34202;   // sin 20
+
 /* ==========================================================================
  * Ribbon
  *
@@ -385,8 +391,19 @@ void main() {
   float a = across * vFade * vFade * uOpacity * ripple;
   if (a < 0.004) discard;
   vec3 col = vTint * (0.6 + 0.9 * across);
-  // Additive blending is (SrcAlpha, One), so the alpha channel already scales
-  // the contribution. Pre-multiplying here as well would square it.
+  // Alpha scales the contribution exactly once, so do NOT pre-multiply here —
+  // that would square it.
+  //
+  // Spelled out because this has been read the wrong way twice. r180 picks the
+  // blend func from material.premultipliedAlpha, NOT from the renderer's
+  // context attribute: WebGLState.setMaterial passes material.premultipliedAlpha
+  // into setBlending, and THREE.Material defaults it to false. This material
+  // never sets it, so the branch taken is the non-premultiplied one,
+  // blendFuncSeparate(SRC_ALPHA, ONE, ONE, ONE) — src.rgb is multiplied by
+  // src.a on the way in. Renderer.js does pass premultipliedAlpha: true to the
+  // WebGLRenderer, but that is a canvas context attribute governing how the
+  // drawing buffer composites with the page and how the clear colour is
+  // written; it never reaches this draw's blend func.
   gl_FragColor = vec4(col, a);
   #ifdef USE_FOG
     #ifdef FOG_EXP2
@@ -967,22 +984,47 @@ export class Trails {
     // Boost runs blue and hot; a plain speed trail is a cool white so it never
     // reads as "this car is boosting" when it is not.
     _col.setHex(boost > 0.15 ? 0x5fb8ff : 0xdfe9f5);
-    const width = 0.55 + boost * 0.85;
+    // Half-extent of the strip, now measured ACROSS the car rather than up it.
+    // The old 0.55..1.40 was a vertical half-height that never showed, so its
+    // size was never really chosen; laid flat, that much would put a 5.6 u
+    // sheet of light across a 4.15 u car, so the band is narrower here and the
+    // two ribbons stay visibly separate even at full boost.
+    const width = 0.45 + boost * 0.60;
 
     for (let side = 0; side < 2; side++) {
       const rec = st.speed[side];
-      const sx = side === 0 ? -halfW : halfW;
-      _v0.set(sx, hgt * 0.34, -len * 0.5 - 0.4);
+      const outward = side === 0 ? -1 : 1;
+      // Emitted behind the rear bumper, at boot-lid height. The 1.1 u standoff
+      // (it was 0.4) is clearance, not styling: the emit point sits at radius
+      // len*0.5 + standoff from the car's origin and is stamped in the car's
+      // frame every tick, so under yaw the trail of past emit points sweeps an
+      // arc about the car. At 0.4 that arc grazed the rear fenders and the
+      // ribbon drew across its own bodywork; 1.1 puts the whole arc outside
+      // the body's corner radius.
+      _v0.set(outward * halfW, hgt * 0.34, -len * 0.5 - 1.1);
       if (car.quaternion) _v0.applyQuaternion(car.quaternion);
       if (car.position) _v0.add(car.position);
 
-      // Ribbon plane: perpendicular to the car's forward, tilted so the strip
-      // faces roughly upward — the chase camera looks down at 55 degrees.
-      _v1.set(0, 1, 0);
+      // Cross-section axis — the car's LATERAL axis, canted outward-and-up.
+      //
+      // This must not be the world (or car) up axis, which is what it used to
+      // be. The chase camera sits behind the car and 48-62 degrees above it, so
+      // its horizontal heading is parallel to the car's forward. A strip
+      // spanning the vertical has its normal along the lateral axis, which is
+      // then exactly perpendicular to the view direction: the ribbon presented
+      // its edge and rendered as a hairline filament rather than a ribbon.
+      // Spanning the lateral axis instead points the normal near-vertical, so
+      // roughly sin(55) = 0.82 of the strip's area faces the camera.
+      //
+      // The 20-degree cant lifts the outer edge of each ribbon. It buys back
+      // some presence for the near-level moments (intro orbit, results) that a
+      // dead-flat strip would lose, and mirrored across the two sides it reads
+      // as air rolling up off the rear quarters.
+      _v1.set(outward * SPEED_CANT_C, SPEED_CANT_S, 0);
       if (car.quaternion) _v1.applyQuaternion(car.quaternion);
-      _v2.copy(_v1).multiplyScalar(width);
-      _v3.copy(_v0).sub(_v2);
-      _v2.copy(_v0).add(_v2);
+      _v1.multiplyScalar(width);
+      _v3.copy(_v0).sub(_v1);
+      _v2.copy(_v0).add(_v1);
 
       if (!rec.has) {
         rec.has = true;

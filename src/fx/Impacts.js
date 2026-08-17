@@ -11,7 +11,11 @@
 //      hundred-unit-per-second shunt are the same effect at different volumes.
 //
 //   2. **Speed.** A single full-screen overlay carries the flash, the radial
-//      speed lines above 80% of the car's top speed, and the boost field. It is
+//      speed lines in the last 10% of the car's top speed, and the boost field.
+//      The speed lines are an event, not an ambience: they are gated on the
+//      CAMERA's own travel as well as the subject's speed, they live at the
+//      left and right edges of the frame, and at a normal racing pace they are
+//      not there at all. See the tuning block and OVERLAY_FRAG's band. It is
 //      one extra draw call, drawn in clip space with no matrices at all, and it
 //      goes through the composer — so the flash blooms and the speed lines pick
 //      up the tilt-shift like everything else in frame.
@@ -102,17 +106,28 @@ varying vec2 vUv;
  * frequencies share no common factor the pattern never repeats around the
  * circle, which is what stops it reading as a pinwheel — and it costs three
  * sines rather than a texture fetch and a matrix of UV gymnastics.
+ *
+ * The threshold is what decides whether this reads as LINES or as a WASH, and
+ * it is the whole difference between the two. The sum of the three sines spans
+ * +-2.43; a low threshold lights half the circle at some partial level, which
+ * is a cream veil with a bit of structure in it rather than a set of streaks.
+ * Measured on the sum: cutting in at 1.90 rather than 1.15 takes the lit
+ * fraction of the circle from 48% to 24%, so the gaps between rays are as wide
+ * as the rays and each one has somewhere dark to be seen against.
  */
 float rays(float ang, float phase) {
   float r = sin(ang * 37.0 + phase * 0.7);
   r += sin(ang * 61.0 - phase * 1.1) * 0.82;
   r += sin(ang * 97.0 + 2.1) * 0.61;
-  return smoothstep(1.15, 2.30, r + 1.2);
+  return smoothstep(1.90, 2.62, r + 1.2);
 }
 
 void main() {
   vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
-  float r = length(p) * 1.42;          // ~1.0 at the corners
+  // NOT normalised to 1.0 at the corners — it only would be at 1:1. At 16:9 r
+  // is 0.71 at the top/bottom edges, 1.26 at the left/right ones and 1.45 in
+  // the corners, which is the thing to hold on to when placing a band below.
+  float r = length(p) * 1.42;
   float ang = atan(p.y, p.x);
 
   vec3 col = vec3(0.0);
@@ -120,11 +135,23 @@ void main() {
 
   float intensity = uSpeed + uBoost * 1.35;
   if (intensity > 0.001) {
-    // Streaks live in the outer half of the frame and stream outwards, so the
-    // centre of the action — where the car is — stays completely readable.
-    float band = smoothstep(0.30, 0.74, r) * (1.0 - smoothstep(0.98, 1.35, r));
+    // Streaks hug the edge of the frame and stream outwards, so the centre of
+    // the action — where the car is — stays completely readable.
+    //
+    // The old window (0.30 -> 0.74, fading out by 1.35) claimed to be "the
+    // outer half" but was not: r reaches only 0.71 at the top and bottom edges
+    // and 1.26 at the left and right ones, so a band that peaked at 0.74 and
+    // was already dying at 1.0 was strongest across the MIDDLE of a 16:9 frame
+    // and contributed almost nothing at the left and right edges. Measured
+    // band strength, old vs new: top/bottom edge 0.99 -> 0.29, left/right edge
+    // 0.14 -> 1.00, corner 0.00 -> 0.59. Forward motion throws the world past
+    // you at the sides, which is now where the streaks actually are.
+    float band = smoothstep(0.52, 1.05, r) * (1.0 - smoothstep(1.28, 1.66, r));
     float flow = fract(r * 1.9 - uTime * (1.5 + uBoost * 2.4) + ang * 0.37);
-    float head = smoothstep(0.0, 0.30, flow) * (1.0 - smoothstep(0.30, 0.95, flow));
+    // A short bright head with a short tail, not a ramp that stays lit across
+    // 95% of the cycle — that left no radial gap between one streak and the
+    // next, which is the other half of why this read as a sheet.
+    float head = smoothstep(0.0, 0.16, flow) * (1.0 - smoothstep(0.16, 0.58, flow));
     float s = rays(ang, uTime) * band * head * intensity;
     // Boost runs cold and electric; raw speed is a near-neutral white so it
     // never pretends to be a power-up.
@@ -200,8 +227,12 @@ export class Impacts {
       flashThreshold: 0.34,     // severity below which the screen does not flash
       flashGain: 0.55,
       shakeGain: 0.85,
-      speedThreshold: 0.80,     // fraction of top speed the lines start at
-      speedGain: 0.9,
+      // Speed lines are an EVENT at the top of the rev range, not a state you
+      // drive around in. At 0.80/0.9 a car at its usual racing pace sat at 0.59
+      // intensity permanently, which is a veil; the last 10% of top speed is
+      // somewhere you arrive on a straight and then leave.
+      speedThreshold: 0.90,     // fraction of top speed the lines start at
+      speedGain: 0.32,          // intensity at dead-on top speed
       scrapeSparkRate: 34,      // sparks/s while grinding along a barrier
       rivalRadius: 150,         // u — beyond this a rival's crash is off camera
     };
@@ -656,11 +687,16 @@ export class Impacts {
     // how far the camera itself moved this frame.
     wantSpeed *= this._cameraMotionGate(dt);
 
-    // Critically damped, like everything else the camera does: lines that snap
-    // on at exactly 80% would strobe every time the car hovers on the boundary.
-    const k = 1 - Math.exp(-dt * 7);
-    this.speedLines += (wantSpeed - this.speedLines) * k;
-    this.boost += (wantBoost - this.boost) * k;
+    // Damped, like everything else the camera does: lines that snapped on at
+    // exactly the threshold would strobe every time the car sat on the boundary.
+    //
+    // Asymmetric, though, because this is meant to land as a punch. Hitting the
+    // top of the rev range should arrive quickly (~60 ms) while coming off it
+    // decays over ~250 ms, so the effect trails the surge instead of blinking
+    // out the instant a corner scrubs a unit of speed off.
+    const rising = wantSpeed > this.speedLines;
+    this.speedLines += (wantSpeed - this.speedLines) * (1 - Math.exp(-dt * (rising ? 16 : 6)));
+    this.boost += (wantBoost - this.boost) * (1 - Math.exp(-dt * 7));
 
     const u = mat.uniforms;
     u.uTime.value = this.clock;
