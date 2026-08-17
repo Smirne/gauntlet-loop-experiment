@@ -231,8 +231,13 @@ export const VEHICLE_TUNING = {
   // fires. These two gate on ADVANCE ALONG THE TRACK instead. 0.04 u per tick at
   // 120 Hz is 4.8 u/s of genuine progress — an order of magnitude below anything
   // a driving car does, so it only catches a car that is truly going nowhere.
-  stuckProgressPerTick: 0.04,
-  stuckProgressDelay: 2.2,   // s of no progress before the car is put back
+  // World units of NET forward progress that count as "still racing". Measured
+  // over the window below, so a car judder-scraping along a wall cannot clear it
+  // one tick at a time. 14 u is a car and a half in 2.2 s — about 6 u/s average,
+  // which is far under anything a driving car does and far over anything a
+  // pinned one manages.
+  stuckNetAdvance: 14,
+  stuckProgressDelay: 2.2,   // s without that much progress before a reset
   // Ground shallow enough to pull away from. A ramp is exactly where cars come
   // off, so without this the remembered "last good place" is very often ON the
   // ramp and the recovery drops the player back onto the slope they just fell
@@ -2134,23 +2139,45 @@ export class Vehicle {
     if (this.frozen || this._respawnCooldown > 0) { this._noProgress = 0; return; }
     if (!Number.isFinite(this.trackT)) { this._noProgress = 0; return; }
 
-    const prev = this._progressT;
-    this._progressT = this.trackT;
-    if (!Number.isFinite(prev)) { this._noProgress = 0; return; }
+    // NET progress over a window, not per-tick progress.
+    //
+    // The first version of this compared consecutive ticks and reset the timer
+    // whenever one tick cleared the bar. Playtest after that fix: "still got the
+    // stuck problem once, but less often" — which is exactly the signature of a
+    // detector that mostly works and is defeated by jitter. A car grinding on a
+    // wall does not sit still; it judders, and any single tick above the
+    // threshold zeroed the whole timer, so the case that survived was the one
+    // where the car was scraping rather than resting.
+    //
+    // It also took Math.abs of the delta, so sliding BACKWARDS along the track
+    // counted as progress. It is not progress.
+    //
+    // Anchor the position, then ask a different question: has this car got
+    // meaningfully FURTHER AROUND THE LAP than it was a couple of seconds ago?
+    // Jitter cancels, reversing counts against you, and a genuinely slow but
+    // moving car still clears it easily.
+    if (!Number.isFinite(this._progressT)) {
+      this._progressT = this.trackT;
+      this._noProgress = 0;
+      return;
+    }
 
-    // Shortest signed distance around the loop, so the seam is not a jump.
-    let d = this.trackT - prev;
+    let d = this.trackT - this._progressT;   // signed, wrap removed
     if (d > 0.5) d -= 1;
     else if (d < -0.5) d += 1;
-    const advanced = Math.abs(d) * (this.ctx?.track?.length || 1800);
+    const netAdvance = d * (this.ctx?.track?.length || 1800);
 
-    // A car doing anything useful covers far more than this per tick; the
-    // threshold only has to exclude numerical jitter while it is pinned.
-    if (advanced > t.stuckProgressPerTick) { this._noProgress = 0; return; }
+    // Re-anchor as soon as real ground has been covered. Only forward counts.
+    if (netAdvance > t.stuckNetAdvance) {
+      this._progressT = this.trackT;
+      this._noProgress = 0;
+      return;
+    }
 
     this._noProgress += fdt;
     if (this._noProgress > t.stuckProgressDelay) {
       this._noProgress = 0;
+      this._progressT = NaN;
       this.respawn(this._lastGoodT);
     }
   }
