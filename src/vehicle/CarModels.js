@@ -2220,6 +2220,49 @@ function makeLampBezel(w, h, d, r = 0.08, width = 0.06) {
   return extrudePlate(shape, depth, bev, 6);
 }
 
+/**
+ * Rear valance: a recessed matt-black panel with vertical strakes across it.
+ *
+ * The band of bodywork under the plate is the largest single area of the tail
+ * and on two of the three roster cars it was bare paint — which is precisely
+ * the "blank painted slab" read, because paint is the one substance on a car
+ * that has no edges of its own. A valance fixes it with two substances at once:
+ * an unlit black panel that reads as a hole in the bodywork, and strakes across
+ * it in plated metal that return the environment. Neither depends on the sun
+ * being on that face — the panel is dark whatever happens to it, and the
+ * strakes are bright whatever happens to them, so the contrast between them
+ * survives being in full shadow.
+ *
+ * Returns the two roles separately because they are different materials; the
+ * caller places both with the same matrix.
+ *
+ * @param {object} o { w, h, d, r, strakes, finW, finD, margin }
+ */
+const VALANCE_BEV = 0.03;
+
+function makeValance(o) {
+  const w = o.w;
+  const h = o.h;
+  const d = o.d ?? 0.16;
+  const panel = extrudePlate(roundRectShape(w, h, o.r ?? Math.min(0.08, h * 0.3)), d, VALANCE_BEV, 8);
+  const n = Math.max(2, Math.round(o.strakes ?? 5));
+  const finW = o.finW ?? 0.085;
+  const finD = o.finD ?? 0.11;
+  const margin = o.margin ?? 0.16;
+  const fin = bevelBox(finW, h * 0.84, finD, finW * 0.34, 2);
+  const fins = [];
+  const span = w * (1 - margin * 2);
+  for (let i = 0; i < n; i++) {
+    const x = -span * 0.5 + span * (i / (n - 1));
+    // The strakes stand proud of the panel's own back face (-Z is outward on
+    // the tail), not of its front: an inset strake is a shadow line, and a
+    // shadow line is exactly the read that vanishes when the panel is already
+    // in shadow.
+    fins.push({ geometry: fin, matrix: xform(x, 0, -(d * 0.5 + VALANCE_BEV) - finD * 0.28) });
+  }
+  return { panel, fins: mergeGeoms(fins) };
+}
+
 /** Exhaust: a swept pipe with a flared, polished tip. */
 function makeExhaust(path, r, o = {}) {
   const prof = circleProfile(r, o.segments ?? 10);
@@ -2638,6 +2681,46 @@ function dressChassis(env, d) {
     }
   }
 
+  // Rear valance. Seated against the shell exactly as the plate is, and for the
+  // same reason: it is authored by height and width alone, so a hand-guessed z
+  // is what would float it or bury it.
+  for (const v of (d.valance ? (Array.isArray(d.valance) ? d.valance : [d.valance]) : [])) {
+    const vw = v.w ?? 2.4;
+    const vh = v.h ?? 0.48;
+    const vd = v.d ?? 0.16;
+    let reach = null;
+    const hw = vw * 0.5 * 0.86;
+    const hh = vh * 0.5 * 0.86;
+    for (const px of [(v.x ?? 0) - hw, v.x ?? 0, (v.x ?? 0) + hw]) {
+      for (const py of [v.y - hh, v.y, v.y + hh]) {
+        const z = endSurfaceZ(shell, px, py, -1);
+        if (z === null) continue;
+        reach = reach === null ? z : Math.min(reach, z);
+      }
+    }
+    // The panel's outward face is its -Z cap, and standing it a hair proud is
+    // the only option available: a genuinely recessed valance needs a hole in
+    // the paint, and the shell is one closed loft with no opening down there.
+    // If the sample march found no body at all (the band is below the floor
+    // line) fall back to just behind the tailmost point of the whole shell.
+    // VALANCE_BEV is makeValance's own bevel, and it is part of the reach: the
+    // extruder grows the solid by the bevel at both caps, so the face is half a
+    // depth *plus* a bevel out from the centre.
+    const vhalf = vd * 0.5 + VALANCE_BEV;
+    const vz = v.z !== undefined ? v.z
+      : (reach === null ? shell.zMin - 0.02 + vhalf
+        : reach - (v.proud ?? 0.03) + vhalf);
+    const parts = makeValance({ ...v, w: vw, h: vh, d: vd });
+    const m = xform(v.x ?? 0, v.y, vz);
+    if (v.x) {
+      out.pair(v.role || 'grille', parts.panel, m);
+      out.pair(v.finRole || 'chrome', parts.fins, m);
+    } else {
+      out.add(v.role || 'grille', parts.panel, m);
+      out.add(v.finRole || 'chrome', parts.fins, m);
+    }
+  }
+
   // The number plate. Not `d.plate` — that one is the die-cast base pan under
   // the car, which unfortunately got the name first.
   //
@@ -2810,6 +2893,9 @@ export const CAR_MODELS = {
         // carries it. The z is authored rather than seated because it hangs off
         // the bumper, not off the bodywork the seating march can see.
         rearPlate: { y: 1.07, z: -4.875, w: 1.10, h: 0.22 },
+        // Between the quad tips, under the bumper blade. Narrow enough to clear
+        // the inboard pipes at x 1.02.
+        valance: { y: 0.60, w: 1.72, h: 0.34, d: 0.14, strakes: 5, finW: 0.075, finD: 0.10 },
         plate: { z0: -4.30, z1: 4.30, inset: 0.13 },
       });
       // Bonnet scoop and a raised power bulge — the whole point of the car.
@@ -2828,13 +2914,10 @@ export const CAR_MODELS = {
       out.pair('grille', pipeBore(sidePipe, 0.19, { flare: 0.10 }));
       // Boot lip.
       out.add('paint', bevelBox(3.20, 0.16, 0.55, 0.10, 2), xform(0, 2.50, -4.02, 4 * DEG, 0, 0));
-      // Rear panel furniture, stacked down the face the macro camera holds
-      // longest: lamps at y 1.39-1.89, the bumper blade under them, the plate
-      // standing off the bumper's own face where a 60s coupe carries it, and a
-      // black lower valance under all of it for the tips to exit beside. Each
-      // one is placed against the rear panel's real surface at z -4.75, which
-      // is what the whole band lacked before.
-      out.add('grille', bevelBox(1.50, 0.30, 0.12, 0.05, 2), xform(0, 0.56, -4.78));
+      // The rest of the rear panel furniture is declared above, in the
+      // dressChassis block: lamps, the bumper blade, the plate standing off the
+      // bumper's own face where a 60s coupe carries it, and the strake valance
+      // under all of it for the quad tips to exit beside.
       return lights;
     },
   },
@@ -2894,6 +2977,12 @@ export const CAR_MODELS = {
         glass: { z: [-1.62, 1.06], lift: 0.05, low: 7, steps: 14 },
         interior: { z0: -1.55, z1: 1.0, inset: 0.26, seatY: 1.30, seatZ: -0.55, seatX: [-0.62, 0.62] },
         rearPlate: { y: 1.18, w: 1.06, h: 0.22 },
+        // Twin engine-bay extracts flanking the plate, in the one band of the
+        // tail that nothing else claims: above the plate's top edge at 1.29,
+        // below the lamp bezels at 1.65, and outboard of the plate in x so the
+        // two never meet. The outer edge stops at 1.65, inside the 1.73 the
+        // tail lamps already prove the bodywork reaches.
+        valance: { x: 1.15, y: 1.38, w: 1.00, h: 0.44, d: 0.14, strakes: 4, finW: 0.075, finD: 0.10 },
         plate: { z0: -4.20, z1: 4.15, inset: 0.14 },
       });
       // Full-width rear wing on two pylons — the silhouette everyone remembers.
@@ -2971,6 +3060,9 @@ export const CAR_MODELS = {
         glass: { z: [-2.95, 1.24], lift: 0.055, low: 6, steps: 16 },
         interior: { z0: -2.85, z1: 1.15, inset: 0.28, seatY: 1.80, seatZ: -0.55, seatX: [-0.70, 0.70] },
         rearPlate: { y: 1.24, w: 1.02, h: 0.22 },
+        // Lower valance, between the plate's bottom edge at 1.13 and the floor
+        // line at 0.66, and narrow enough to stop inboard of the tips at 0.93.
+        valance: { y: 0.88, w: 1.66, h: 0.38, d: 0.14, strakes: 5, finW: 0.08, finD: 0.10 },
         plate: { z0: -3.95, z1: 3.90, inset: 0.14 },
       });
       // Roof spoiler with a gurney, bonnet vents, a rally light pod, mud flaps.
