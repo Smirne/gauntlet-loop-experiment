@@ -1253,28 +1253,57 @@ export function tyreTexture(style = 'road', treadV = [0.35, 0.65], size = 1024) 
     }
     drawBlock(0, treadTop, W, treadH * 0.02, 1.0);
   } else {
-    // Directional road tread: four longitudinal grooves and angled sipes.
+    // Directional road tread: three longitudinal grooves and angled sipes.
+    //
+    // The pattern is authored at 1:1 and then looked at from three metres away
+    // on a 2.3 u wheel, and that is the whole problem. At the game camera the
+    // tread band is a handful of pixels tall, so a groove drawn 5.5% of it deep
+    // at 55% black does not resolve as a groove — it averages into the band as
+    // a flat, very dark strip, and the same happens to the sipes across the
+    // whole width. The tyre then has no internal structure at all, only one
+    // near-black value, and the rim face inside it loses the contrast it needs
+    // to read as a separate, brighter object. Rubber staying the darkest thing
+    // on the car is correct; the tyre out-contrasting the rim is not.
+    //
+    // Cut to a little under half in both depth and fill, so the grooves are
+    // still there under the macro lens and average close to the tread's own
+    // value at race distance.
     const grooves = [0.22, 0.44, 0.66];
+    const grooveH = 0.030;
     for (const gy of grooves) {
       const y = treadTop + treadH * gy;
-      g.fillStyle = 'rgba(0,0,0,0.55)';
-      g.fillRect(0, y, W, Math.max(2, treadH * 0.055));
+      g.fillStyle = 'rgba(0,0,0,0.30)';
+      g.fillRect(0, y, W, Math.max(2, treadH * grooveH));
       gh.fillStyle = '#4a4a4a';
-      gh.fillRect(0, y * 0.5, hc.w, Math.max(1, treadH * 0.03));
+      gh.fillRect(0, y * 0.5, hc.w, Math.max(1, treadH * grooveH * 0.5));
     }
+    // Sipes on the outer ribs only. A real tyre sipes the shoulders hardest
+    // anyway, and confining them there leaves the two centre ribs as clean
+    // rubber — which is what carries the crown highlight along the top of the
+    // wheel and stops the whole band collapsing to one value.
+    const ribs = [[0, grooves[0]], [grooves[grooves.length - 1] + grooveH, 1]];
     const cols = style === 'rally' ? 20 : 28;
     for (let i = 0; i < cols; i++) {
       const x = (i / cols) * W;
+      const skew = style === 'rally' ? 0.34 : 0.18;
+      // The frame stays anchored at the top of the tread band and the rib is
+      // selected by the rect's own y, so the skew carries the same slant across
+      // both shoulders instead of restarting at each one.
       g.save();
       gh.save();
       g.translate(x, treadTop);
       gh.translate(x * 0.5, treadTop * 0.5);
-      g.transform(1, 0, style === 'rally' ? 0.34 : 0.18, 1, 0, 0);
-      gh.transform(1, 0, style === 'rally' ? 0.34 : 0.18, 1, 0, 0);
+      g.transform(1, 0, skew, 1, 0, 0);
+      gh.transform(1, 0, skew, 1, 0, 0);
       g.fillStyle = 'rgba(0,0,0,0.42)';
-      g.fillRect(0, 0, Math.max(2, W / cols * 0.20), treadH);
       gh.fillStyle = '#5e5e5e';
-      gh.fillRect(0, 0, Math.max(1, W / cols * 0.10), treadH * 0.5);
+      for (const [v0, v1] of ribs) {
+        const ry = treadH * v0;
+        const rh = treadH * (v1 - v0);
+        if (rh <= 0) continue;
+        g.fillRect(0, ry, Math.max(2, W / cols * 0.20), rh);
+        gh.fillRect(0, ry * 0.5, Math.max(1, W / cols * 0.10), rh * 0.5);
+      }
       g.restore();
       gh.restore();
     }
