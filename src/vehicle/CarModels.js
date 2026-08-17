@@ -2927,9 +2927,20 @@ export const CAR_MODELS = {
         valance: { y: 0.60, w: 1.72, h: 0.34, d: 0.14, strakes: 5, finW: 0.075, finD: 0.10 },
         plate: { z0: -4.30, z1: 4.30, inset: 0.13 },
       });
-      // Bonnet scoop and a raised power bulge — the whole point of the car.
-      out.add('accent', bevelBox(1.42, 0.30, 1.55, 0.13, 3), xform(0, 2.30, 2.30, -3 * DEG, 0, 0));
-      out.add('grille', bevelBox(1.05, 0.12, 0.55, 0.05, 2), xform(0, 2.44, 2.92));
+      // Shaker scoop and a raised power bulge — the whole point of the car, and
+      // the muscle's share of the roster's silhouette separation.
+      //
+      // The three chassis differ in side elevation and read as the same lozenge
+      // from the director camera, which sits at 48-62 degrees of pitch and so
+      // sees mostly plan. A bonnet feature only tells one car from another up
+      // there if it breaks the bonnet line, and the scoop was 0.30 u tall
+      // sitting on a bonnet at 2.22 — 0.23 u proud on a 9.5 u car, which is a
+      // ripple. At 0.56 tall it stands half a unit proud, its mouth is an
+      // actual hole with a lip over it, and the muscle becomes the one with a
+      // lump on its nose from any angle.
+      out.add('accent', bevelBox(1.46, 0.56, 1.32, 0.16, 3), xform(0, 2.44, 2.42, -3 * DEG, 0, 0));
+      out.add('grille', bevelBox(1.14, 0.26, 0.20, 0.06, 2), xform(0, 2.46, 3.06, -3 * DEG, 0, 0));
+      out.add('chrome', bevelBox(1.26, 0.07, 0.10, 0.03, 2), xform(0, 2.63, 3.10, -3 * DEG, 0, 0));
       out.add('paint', bevelBox(2.55, 0.16, 2.90, 0.28, 3), xform(0, 2.20, 1.95));
       // Rocker side pipes. They have to stop at the arch openings: the wheel
       // arches are cut into the loft as a rising floor line, so between
@@ -3014,9 +3025,16 @@ export const CAR_MODELS = {
         valance: { x: 1.15, y: 1.38, w: 1.00, h: 0.44, d: 0.14, strakes: 4, finW: 0.075, finD: 0.10 },
         plate: { z0: -4.20, z1: 4.15, inset: 0.14 },
       });
-      // Full-width rear wing on two pylons — the silhouette everyone remembers.
+      // Rear wing on two pylons — the silhouette everyone remembers, and the
+      // wedge's share of the roster's plan-view separation. At 3.90 of span it
+      // was 1.95 out to each end plate against a body half-width of 2.175, so
+      // from above it was hidden inside the car's own outline and the wedge was
+      // the same lozenge as the other two. At 4.55 the end plates stand 0.10
+      // proud of the widest point of the bodywork: the widest thing on this car
+      // is now its wing, which is what an 80s homologation wedge looks like
+      // from directly overhead.
       out.add('accent', makeWing({
-        span: 3.90, chord: 0.95, thick: 0.16, y: 2.92, z: -4.05,
+        span: 4.55, chord: 0.95, thick: 0.16, y: 2.92, z: -4.05,
         pylons: [-1.35, 1.35], pylonH: 0.72, aoa: -9 * DEG, plateH: 0.72,
       }));
       // Side intake scoops feeding the mid engine.
@@ -3095,9 +3113,16 @@ export const CAR_MODELS = {
         plate: { z0: -3.95, z1: 3.90, inset: 0.14 },
       });
       // Roof spoiler with a gurney, bonnet vents, a rally light pod, mud flaps.
+      //
+      // The rally's share of the roster's plan-view separation is its roof, and
+      // the spoiler is what states it: 3.34 of span on stilts clear of a body
+      // whose top is at 3.00, with end plates 0.64 deep standing vertically at
+      // each rear corner of the roof. Seen from the director camera that is a
+      // bar and two fins floating above the outline — nothing the muscle or the
+      // wedge has anywhere near the roofline.
       out.add('accent', makeWing({
-        span: 2.90, chord: 0.72, thick: 0.11, y: 3.34, z: -3.62,
-        pylons: [-1.05, 1.05], pylonH: 0.34, aoa: -12 * DEG, plateH: 0.44,
+        span: 3.34, chord: 0.72, thick: 0.11, y: 3.40, z: -3.62,
+        pylons: [-1.05, 1.05], pylonH: 0.40, aoa: -12 * DEG, plateH: 0.64,
       }));
       out.pair('grille', bevelBox(0.62, 0.09, 0.72, 0.05, 2), xform(0.85, 2.42, 2.85, -5 * DEG, 0, 0));
       const podBar = bevelBox(2.60, 0.16, 0.20, 0.07, 2);
