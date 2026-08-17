@@ -244,6 +244,27 @@ const SpecularHighPassShader = {
  * floor in WORLD units, taken from the car (DOF_SUBJECT_HALF, CAR_LENGTH and
  * CAR_HEIGHT below); by construction each floor is already met on the chase and
  * establishing cameras and binds only when the shot is genuinely close.
+ *
+ * WHAT A WIDE CAMERA BREAKS, and it is the band, not the depth term. Every
+ * quantity above is a fraction of the FRAME, and the band is the one that never
+ * consults the world at all: it is a pure function of uv, so it rules on a
+ * pixel by where that pixel sits in the picture. That is a serviceable proxy
+ * for "far from the plane of focus" while the shot is table-level and the frame
+ * is nothing but playfield. It stops being one the moment the frame contains
+ * something other than playfield — and the establishing shot now does, by
+ * design: a near table corner, the moulded rim, a leg, the room floor and the
+ * far wall. The corner and the leg sit at the bottom of frame and the room sits
+ * at the top, which is to say at both ends of a band centred on the car, so all
+ * of it was defocused for its screen position rather than its distance. Making
+ * the band wider (BAND_MAX_WIDE) softened that and could not fix it.
+ *
+ * So the band is also WEIGHTED by shot type, down to BAND_WIDE_AMOUNT at full
+ * wide, on the same BAND_WIDE_NEAR/FAR ramp as everything else here. On an
+ * establishing shot the depth term governs alone: the circuit and the near
+ * corner share the table's plane and stay sharp, the room is a couple of frame
+ * depths further back and softens, and screen position stops mattering.
+ * Because the CoC is max( band, depth ), this is monotone — it can only take
+ * blur away — so it cannot repeat the regression that 0a82dd5 had to undo.
  */
 
 /**
@@ -260,6 +281,7 @@ uniform sampler2D tDepth;
 uniform vec2  uBandDir;      // ( sin, cos ) of the band angle
 uniform float uFocusCenter;
 uniform float uBandWidth;    // half-height of the sharp band, in uv.y
+uniform float uBandAmount;   // weight of the screen band, 1 close .. 0 wide
 uniform float uRamp;         // uv.y distance over which coc climbs 0 -> 1
 uniform float uPower;        // ramp exponent; 2 = quadratic
 uniform float uAspect;
@@ -317,7 +339,11 @@ float mgViewDepth( vec2 uv ) {
 }
 
 void main() {
-  float band = mgBandCoc( vUv );
+  // Weighted, not just widened. A screen band is a statement about where a
+  // thing sits in FRAME, which is the right proxy for "far from the plane of
+  // focus" only while the shot is a table-level one. Open the shot out and the
+  // proxy breaks: see uBandAmount and BAND_WIDE_AMOUNT.
+  float band = mgBandCoc( vUv ) * uBandAmount;
 
   float rel = mgViewDepth( vUv ) - uFocusDepth;
   float span = ( rel > 0.0 ) ? uFarSpan : uNearSpan;
@@ -434,6 +460,29 @@ const BAND_WIDE_NEAR = 120;
 const BAND_WIDE_FAR = 320;
 const BAND_MAX_WIDE = 0.30;
 
+/**
+ * Weight of the screen-space band term at full wide, against 1.0 up close.
+ *
+ * Widening the band was half a fix. The band is a pure function of uv, so on
+ * the establishing shot it still decides what is sharp by SCREEN POSITION, and
+ * the establishing frame no longer contains only table: the round-5 re-pose
+ * put a near table corner, the moulded rim, a leg and the room floor in shot
+ * deliberately, and those live at the very bottom of frame — exactly where a
+ * band centred on the car blurs hardest. The room behind the table got the
+ * same treatment at the top. Both were being defocused for where they landed
+ * in the picture rather than for where they are in the world.
+ *
+ * At full wide the band is therefore switched off and the depth term is left
+ * to govern alone, which is the term that actually knows the room is 2 d
+ * behind the circuit while the near corner is on the same plane as it.
+ *
+ * This can only ever REDUCE blur: the shader takes max( band, depth ), so
+ * scaling band down is monotone in the coc. The wide cannot get less legible
+ * than it already was, whatever else is wrong with it — which is the property
+ * the last regression here lacked.
+ */
+const BAND_WIDE_AMOUNT = 0.0;
+
 /** Depth held fully sharp on a wide shot, against DOF_DEPTH_BAND up close. */
 const DOF_DEPTH_BAND_WIDE = 1.05;
 /** Peak blur radius on a wide shot, as a fraction of the close-up radius. */
@@ -512,6 +561,10 @@ class TiltShiftPass extends Pass {
       uBandDir: { value: new THREE.Vector2(0, 1) },
       uFocusCenter: { value: 0.52 },
       uBandWidth: { value: 0.100 },
+      // Driven every frame from the shot type in _updateUniforms; 1.0 is the
+      // close-shot value, so a frame drawn before the first update still gets
+      // the miniature band rather than a bandless one.
+      uBandAmount: { value: 1.0 },
       uRamp: { value: DOF_RAMP },
       uPower: { value: 2.0 },
       uMaxRadius: { value: 16 },
@@ -2521,6 +2574,14 @@ export class PostFX {
       // this had before, including dropping the squeeze that pulls a requested
       // width back toward BAND_MIN. Recomputed every frame from the stored
       // request, so it still holds while nothing is calling setFocusBand().
+      //
+      // ...and, past widening it, hand the decision over to depth entirely.
+      // Widening alone leaves the band still deciding by screen position, which
+      // is what blurred the room, the near corner and the table leg out of the
+      // establishing frame regardless of where any of them are in the world.
+      // See BAND_WIDE_AMOUNT; this only ever lowers the coc, never raises it.
+      u.uBandAmount.value = 1 - (1 - BAND_WIDE_AMOUNT) * wide;
+
       const squeeze = BAND_SQUEEZE + (1 - BAND_SQUEEZE) * wide;
       const maxW = BAND_MAX + (BAND_MAX_WIDE - BAND_MAX) * wide;
       const req = this._bandRequested;

@@ -1604,3 +1604,42 @@ To re-run with edited post-processing: Workflow({scriptPath: '/Users/michele.gia
 </task-notification>
 
 **You:** [Request interrupted by user]
+
+**You:** Continue from where you left off.
+
+**Claude:** No response requested.
+
+**You:** resume
+
+**Claude:** Wave 8: 3 of 4 landed, the oak agent stalled. Verifying and chaining straight on.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git diff --stat -- src for f in src`
+  - `mcp__Claude_Browser__preview_start: http://localhost:8791/?track=kitchen&skipmenu=1&t=30&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `mcp__Claude_Browser__read_console_messages: seed`
+
+**Claude:** Clean boot and clear console — which matters most for the paint agent, whose `RE_Direct` macro substitution was the riskiest change in the wave and had never been compiled.
+  - `Read: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/shots/crit-3-macro-r17.png`
+
+**Claude:** Paint is fixed — smooth clearcoat sheen on the panels, no bead-blasted stipple, and the wheels now show rim faces. Committing and chaining straight into the next wave.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git add -A && git commit -q -F - <<`
+  - `Workflow: export const meta = { name: 'micro-gauntlet-wave-9', description: 'Table wood, broadphase sleeping-pair bug, rear hardware, tilt-shift on wides', phases: [{ tit`
+
+**Claude:** Loop is running — wave 9 launched immediately after wave 8 committed, no pause.
+
+**Wave 8 landed** (`2b5a83f`), and the paint finding turned out bigger than the critic diagnosed. The critic said a coarse flake octave was leaking into the diffuse path. Right in kind, understated in extent — it was leaking into **four** paths, and none of them was `diffuseColor` (that leak really was fixed earlier and wasn't undone).
+
+`FRAG_FLAKE` was writing straight to two variables three.js owns. `normal` is *the* shading normal, and r180's `lights_fragment_begin` hands that one vector to `RE_Direct_Physical` for both the Lambert term and `BRDF_GGX` — so a per-pixel random tilt on it is a per-pixel random multiplier on the **diffuse** term, no `diffuseColor` write needed. The same normal feeds both IBL lobes, `roughnessFactor` picks the env mip in the indirect lobe, and `FRAG_FLAKE_SPEC` was mixing a per-pixel term into `material.specularColor`.
+
+That explains all three symptoms a diffuse-only leak couldn't: equally dense in the deep-shadow valance (it was riding the IBL lobes, which have no direct light), equally dense on white and navy livery bands (the field is object-space, independent of the albedo map), and never concentrated in the specular sweep (nothing was gated on the half-vector — an unconditional random offset is a texture, not flake).
+
+Neither octave's size or amplitude changed. Same field, now landing only where it belongs. Verified: the macro frame shows smooth clearcoat sheen, and the wheels read rim faces.
+
+Also in: the speed veil is now a last-10%-of-top-speed event rather than a permanent overlay, and the trail ribbons no longer draw as hairline wires through the car body.
+
+**Wave 9** is running on:
+- The table wood — still authored as 12 cm floorboards with butt joints every 60 cm, repeating 8×6 per frame. A table has 20 cm staves running full length with no end joints.
+- The broadphase sleeping-pair bug the D18 agent found by reading: a sleeping dynamic body with a lower proxy index is never paired at all, so cars drive through sleeping props.
+- The car's rear hardware — the tail is still a blank painted slab from the one camera that exists to judge it.
+- Tilt-shift on wides — the room is real geometry now and is being blurred out on screen position rather than world depth.
+
+I'll boot, verify, commit and launch wave 10 without stopping.

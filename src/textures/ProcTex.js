@@ -1034,7 +1034,50 @@ function woodBase(B, cfg) {
   const { size, n } = B;
   const rng = makeRng(B.seed ^ 0x00a1c3);
   const planks = cfg.planks;
-  const plankW = B.world / planks;              // cm
+  const plankW = B.world / planks;              // cm, the mean stave width
+
+  // Stave layout.
+  //
+  // Machined flooring is one width all the way across, and that is what an equal
+  // split gives. A glued-up tabletop panel is not: it is edge-jointed from
+  // whatever came off the saw, so the staves differ by a few centimetres and no
+  // two joints share a pitch. `plankJitter` is the fractional spread and stays 0
+  // for the timbers that really are floor, so their layout is untouched.
+  //
+  // The phase matters more than it looks. With equal widths and no phase, stave
+  // boundary zero sits exactly on u = 0, so the strongest edge in the whole
+  // texture is aligned with the tile's own wrap column on every repeat: the
+  // joint pitch is phase-locked to the tile pitch, and the eye reads the two as
+  // one grid. Offsetting the layout puts the wrap in the middle of a stave where
+  // the field is smooth, and leaves the joints at their own irregular spacing.
+  //
+  // Drawn from a private stream so adding it does not shift the knots, the ring
+  // phases or the wear on any timber that does not use it.
+  const plankFrac = new Float64Array(planks).fill(1 / planks);
+  let plankPhase = 0;
+  const plankJitter = cfg.plankJitter ?? 0;
+  if (plankJitter > 0) {
+    const prng = makeRng(B.seed ^ 0x3ca17e);
+    let sum = 0;
+    for (let i = 0; i < planks; i++) { plankFrac[i] = 1 + (prng.next() - 0.5) * 2 * plankJitter; sum += plankFrac[i]; }
+    for (let i = 0; i < planks; i++) plankFrac[i] /= sum;
+    plankPhase = prng.next();
+  }
+  const plankStart = new Float64Array(planks + 1);
+  for (let i = 0; i < planks; i++) plankStart[i + 1] = plankStart[i] + plankFrac[i];
+  plankStart[planks] = 1;
+
+  // Which stave a column falls in, and where across it, depend only on x — so
+  // they are resolved once per column instead of once per texel.
+  const colPlank = new Int32Array(size);
+  const colPu = new Float64Array(size);
+  for (let x = 0; x < size; x++) {
+    const u = fract(x / size + plankPhase);
+    let i = planks - 1;
+    while (i > 0 && u < plankStart[i]) i--;
+    colPlank[x] = i;
+    colPu[x] = clamp((u - plankStart[i]) / plankFrac[i], 0, 1);
+  }
 
   // Per-plank character.
   const P = [];
@@ -1093,6 +1136,42 @@ function woodBase(B, cfg) {
   const jointDark = cfg.jointDark ?? 0.62;
   const jointDepth = cfg.jointDepth ?? 0.55;
 
+  // The glue line has to survive the texel grid, and on a tabletop it does not.
+  // `jointWidth` is a half-width in centimetres: 0.08 cm across a 19.2 cm stave
+  // is 0.85 of a texel at a 1024 bake. Point-sampling a feature that narrow puts
+  // the entire groove into one texel when the stave boundary happens to land on
+  // a texel centre and loses it altogether when it lands between two — the same
+  // panel then shows some joints as a hard black line and others as nothing.
+  //
+  // The tile's own left edge is boundary zero, and it always lands exactly on
+  // texel centre 0, so it always drew the full-strength line while the matching
+  // outer half of the same groove at x = size-1 fell just outside the falloff
+  // and drew none of it. That is a hard dark line printed down the table at
+  // every wrap of the texture. Measured on the oak albedo at 1024: column 0 mean
+  // luma 86 against 130 in the columns either side, and a u-wrap gradient ratio
+  // of 3.3 where an exactly periodic field gives 1.
+  //
+  // Flooring the falloff at 1.5 texels and scaling the amplitude by the same
+  // factor keeps the *integrated* darkening exactly what the recipe authored, so
+  // the joint reads identically at any distance that can resolve it and simply
+  // stops aliasing at the ones that cannot. At 2048, where the groove is already
+  // 1.7 texels of half-width on every stave the layout above can produce, the
+  // floor is inactive and the joint is exactly the one the recipe asked for.
+  //
+  // Both are per stave, because the staves are not all the same width.
+  const jointSpan = new Float64Array(planks);
+  const jointAmp = new Float64Array(planks);
+  for (let i = 0; i < planks; i++) {
+    const half = cfg.jointWidth / (plankFrac[i] * B.world);   // half-width in stave-local u
+    const span = Math.max(half, 1.5 / (plankFrac[i] * size)); // never under 1.5 texels
+    jointSpan[i] = span;
+    jointAmp[i] = half / span;
+  }
+  // End joints are measured across v, where one texel is 1/size of the tile.
+  const endHalf = (cfg.jointWidth / plankW) * 0.55;
+  const endSpan = Math.max(endHalf, 1.5 / size);
+  const endAmp = cfg.endJoints > 0 ? (endHalf / endSpan) * cfg.endJoints : 0;
+
   // `depthDrift` wanders the distance from the cut face to the pith *along* the
   // board, and it has to complete a whole number of cycles across the tile or
   // the ring pattern steps at the v seam. The authored 0.09 rad/cm completed
@@ -1134,15 +1213,12 @@ function woodBase(B, cfg) {
   for (let y = 0, i = 0; y < size; y++) {
     const v = y * invSize;
     for (let x = 0; x < size; x++, i++) {
-      const u = x * invSize;
-      const pf = u * planks;
-      let pi = Math.floor(pf);
-      if (pi >= planks) pi = planks - 1;
-      const pu = pf - pi;
+      const pi = colPlank[x];
+      const pu = colPu[x];
       const pk = P[pi];
 
       // Distance across the board from its virtual pith, in centimetres.
-      let across = (pu - pk.centre) * plankW * pk.flip;
+      let across = (pu - pk.centre) * (plankFrac[pi] * B.world) * pk.flip;
       let along = v * B.world;
 
       // Knot warp: push the grain coordinates radially outward and stretch
@@ -1257,14 +1333,13 @@ function woodBase(B, cfg) {
 
       // Plank joints: a recessed chamfer plus a dark shadow gap.
       const edge = Math.min(pu, 1 - pu);
-      const jointW = cfg.jointWidth / plankW;
-      const joint = 1 - smoothstep(0, jointW, edge);
+      const joint = (1 - smoothstep(0, jointSpan[pi], edge)) * jointAmp[pi];
       // Staggered end joints so planks do not read as full-length strips. A
       // tabletop sets `endJoints: 0` — its staves run the whole length of the
       // top and have no butt joints at all, which is one of the things that
       // separates a table from a floor at a glance.
       const endPhase = fract(v + pk.joint);
-      const endJoint = (1 - smoothstep(0, jointW * 0.55, Math.min(endPhase, 1 - endPhase))) * cfg.endJoints;
+      const endJoint = (1 - smoothstep(0, endSpan, Math.min(endPhase, 1 - endPhase))) * endAmp;
 
       const jj = Math.max(joint, endJoint);
       const jTone = 1 - jj * jointDark;
@@ -1453,8 +1528,11 @@ function addFingerprints(B, count, strength, seedOff) {
 // Tile size is the other half of that. At `tileWorld` 60 the same square
 // repeated 7.7 x 5.7 times across a 460 x 340 cm table, which is a grid you can
 // count from the establishing camera. 96 cm brings that to 4.8 x 3.5 and, at
-// five staves, puts each stave at 19.2 cm — the tabletop width and the tiling
-// fix are the same number. This is not a complete answer to the tiling on its
+// five staves, puts the mean stave at 19.2 cm — the tabletop width and the
+// tiling fix are the same number. `plankJitter` then spreads the five over
+// 14 to 24 cm, which is the range a real edge-jointed panel comes in and,
+// with the phase it also introduces, stops the joints marching at a pitch that
+// divides the tile exactly. This is not a complete answer to the tiling on its
 // own; the stochastic cross-fade that would finish it belongs in TrackBuilder,
 // which reads `tileWorld` from GEN_DEF and so already follows this change.
 //
@@ -1480,7 +1558,7 @@ function addFingerprints(B, count, strength, seedOff) {
 // distances the establishing shot uses. 1.6 leaves 13 texels per ring.
 GEN.oak = (B) => {
   woodBase(B, {
-    planks: 5, ringsPerCm: 1.6, ringJitter: 0.30, archCells: 8,
+    planks: 5, plankJitter: 0.26, ringsPerCm: 1.6, ringJitter: 0.30, archCells: 8,
     pithMin: 1.6, pithMax: 5.5, archMin: 0.8, archMax: 2.6, depthDrift: 0.35,
     lateStart: 0.58, lateEnd: 0.94, poreBand: 0.30,
     // Oak's ring boundary is the most abrupt of the four timbers, so its dense
