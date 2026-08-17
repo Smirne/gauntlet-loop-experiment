@@ -1159,11 +1159,20 @@ export class PhysicsWorld {
         while (s !== -1) {
           const bi = item[s];
           s = next[s];
-          // Dynamic-dynamic pairs are only emitted once, by the lower index.
-          if (dynamic && bi <= ai) continue;
+          if (bi === ai) continue;
           const b = this.proxies[bi];
           if (!b || b.stamp === this._stamp) continue;
           b.stamp = this._stamp;
+          // Two awake dynamic bodies both query the grid and would each find
+          // the other, so the pair is emitted once, by the lower index. A
+          // SLEEPING body never queries at all — the loop above skips it — so
+          // there is no second chance to dedupe against and the awake side
+          // must claim it whatever the indices are. Without this a sleeping
+          // prop with a lower index than the car (which is every knockable
+          // prop, since Props is built before the vehicles) was paired by
+          // nobody: it could not be found, so it never woke, so it never
+          // became findable.
+          if (dynamic && bi < ai && !b.sleeping) continue;
           if (!aabbOverlap(a, b)) continue;
           this._addPair(ai, bi);
         }
