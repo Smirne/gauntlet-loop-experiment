@@ -112,7 +112,6 @@ const _rayOrigin = new THREE.Vector3();
 const _q0 = new THREE.Quaternion();
 const _m0 = new THREE.Matrix4();
 const _scaleOne = new THREE.Vector3(1, 1, 1);
-const _zeroVec = new THREE.Vector3();
 
 // Corner offsets of a unit box, used for height-field sampling.
 const CORNER = [
@@ -303,6 +302,13 @@ export class PhysicsWorld {
     this._wallsBuilt = false;
     this._wallCheckTimer = 0;
     this._handedOverWalls = [];
+
+    // Running sum of the ground normals sampled under one body, so a terrain
+    // manifold gets a normal that follows the banking instead of pointing
+    // straight up. Must exist before the first _terrainPoint().
+    this._terrainNormalSum = new THREE.Vector3();
+    /** Triangle visit stamps for mesh colliders, shared by contacts and rays. */
+    this._meshSeen = new Map();
 
     this._propModels = null;
     this._loadPropModels();
@@ -632,9 +638,10 @@ export class PhysicsWorld {
     const track = this.ctx?.track || null;
     if (track !== this.track) {
       this._releaseWalls();
+      this._unregisterTerrain();
       this.track = track;
       this._wallsBuilt = false;
-      this._terrain = track ? this._makeTerrain() : null;
+      this._terrain = track ? this._registerTerrain() : null;
     }
     if (!track || this._wallsBuilt) return;
     // TrackBuilder fills track.walls during its async build; poll cheaply until
@@ -666,10 +673,13 @@ export class PhysicsWorld {
       mass: 0,
       invMass: 0,
       invI: new THREE.Vector3(),
-      velocity: _zeroVec,
-      angularVelocity: _zeroVec,
-      pseudoV: _zeroVec,
-      pseudoW: _zeroVec,
+      // Its own vectors, not the shared zero scratch: the terrain is a real
+      // solver participant now, and every writer guards on invMass, but an
+      // aliased accumulator is not a thing to leave lying in a solver.
+      velocity: new THREE.Vector3(),
+      angularVelocity: new THREE.Vector3(),
+      pseudoV: new THREE.Vector3(),
+      pseudoW: new THREE.Vector3(),
       prevPos: new THREE.Vector3(),
       restitution: 0.1,
       friction: 0.9,
@@ -685,6 +695,43 @@ export class PhysicsWorld {
       visual: null,
       mesh: null,
     };
+  }
+
+  /**
+   * Give the height field a slot in `proxies` and a place in `_oversized`.
+   *
+   * Without this it was a proxy nobody could reach: `_oversized` is the only
+   * route into the broadphase for a body with no finite footprint, and it is
+   * filled by addBody(), which the terrain never goes through. The result was
+   * that `_terrainContacts` — the code that rests a flipped car on the road and
+   * stops a knocked prop falling through the table — never ran once.
+   */
+  _registerTerrain() {
+    const p = this._makeTerrain();
+    const slot = this._free.length ? this._free.pop() : this.proxies.length;
+    p.index = slot;
+    this.proxies[slot] = p;
+    this._oversized.push(slot);
+    this._countBodies();
+    return p;
+  }
+
+  /** Drop the height field proxy and every manifold that referenced it. */
+  _unregisterTerrain() {
+    const p = this._terrain;
+    this._terrain = null;
+    if (!p || p.index < 0) return;
+    if (this.proxies[p.index] === p) {
+      this.proxies[p.index] = null;
+      this._free.push(p.index);
+    }
+    const o = this._oversized.indexOf(p.index);
+    if (o >= 0) this._oversized.splice(o, 1);
+    for (const [key, mf] of this._manifolds) {
+      if (mf.a === p || mf.b === p) this._manifolds.delete(key);
+    }
+    p.index = -1;
+    this._countBodies();
   }
 
   /**
@@ -1912,14 +1959,6 @@ export class PhysicsWorld {
     this._terrain = null;
   }
 }
-
-// Instance fields that must exist before the first _step(); declaring them here
-// keeps the constructor readable and guarantees they are never undefined.
-PhysicsWorld.prototype._terrainNormalSum = null;
-PhysicsWorld.prototype._meshSeen = null;
-
-const _origCtor = PhysicsWorld.prototype.constructor;
-void _origCtor;
 
 /* ==========================================================================
  * Free functions
