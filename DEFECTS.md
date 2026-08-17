@@ -52,8 +52,21 @@ the clipping in `prepareManifold`, and `MAX_CONTACTS`.
   (This was my first hypothesis and it was wrong.)
 - Not a missing response. It pushes apart monotonically; it just stops early.
 
-**Still unexplained:** `physics._pairCount` peaked at **1** across 600 steps with 285 proxies and
-8 cars racing. Possibly the same story seen from the broadphase end. Worth settling first.
+**The `_pairCount` mystery is closed, and it was a bigger bug than D18.** `_makeTerrain` built a
+heightfield proxy and `_syncTrack` stored it on `this._terrain`, but it was never given a slot in
+`proxies` and never pushed to `_oversized` — the only route into the broadphase for a body with
+no finite footprint, and a list filled exclusively by `addBody()`, which the terrain never calls.
+So `_oversized` was empty for the entire run and `_terrainContacts` never executed once. A car on
+its roof had nothing to rest on, and a prop knocked loose fell through the table for ever
+(measured: y = −233 after two seconds). With no terrain in the broadphase the only pairs left
+were the rare wall or car-car touch — hence a peak of 1.
+
+Two fields it depends on were declared as `PhysicsWorld.prototype.x = null` under a comment
+claiming they were guaranteed defined; `_terrainNormalSum.set()` on null throws, so the first
+terrain contact would have taken the tick with it. Both are real instances now.
+
+Verified in the running game: `_pairCount` peak 1 → **13**, `_oversized` length **1**, and a car
+dropped from y = 40 rests at **y = 2.45** instead of falling through.
 
 Do not "fix" this by inflating the half extents — they are correct, and a car whose collision box
 is bigger than its geometry will bounce off things it visibly did not touch.
