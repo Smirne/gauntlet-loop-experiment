@@ -895,6 +895,269 @@ function finaliseGeometry(geo, { tangents = true } = {}) {
   return geo;
 }
 
+/* ------------------------------------------------------ stochastic tiling */
+//
+// The ground slab is one texture repeated across 460 x 340 cm of table. Even a
+// bake that passes its own tiling proof — no seam, no bright joint, no
+// directional bias — still repeats: the same knot, the same stave sequence,
+// the same felt scuff, laid out on a grid whose pitch the eye finds in about a
+// second. Two things hide that, and the file already had one of them.
+// groundTint() bakes fbm blotches into vertex colour at a scale far larger than
+// the tile, which kills the *tonal* grid. What it cannot touch is the detail:
+// the arch of grain, the pore field, the pile direction. That is what this is.
+//
+// The mechanism is the standard one. Sample every map a second time through a
+// rotated, rescaled, shifted copy of the same UVs, and cross-fade the two by a
+// mask whose blobs are a couple of tiles across. Where the mask is 0 you see the
+// bake as authored; where it is 1 you see a different part of it, arriving at a
+// different angle; in between, one soft band a good fraction of a tile wide. The
+// grid pitch survives nowhere, because no two neighbouring blobs are showing the
+// same piece of texture.
+//
+// Two details are not optional:
+//
+//  * The normal map cannot be cross-faded the way albedo is. A tangent-space
+//    normal is (minus) the height gradient in the *texture's* own u,v frame,
+//    and the fragment's TBN is built from the base UVs. Sampling through
+//    uv2 = R(t) * uv means the second sample's gradient has to come back
+//    through R(t) transposed — a rotation by -t on its xy — before it can be
+//    mixed with the first. Skip that and the bump lights from an angle the
+//    albedo does not agree with, which reads as the surface being wet in
+//    patches. The scale factor is deliberately *not* applied to that xy: a
+//    surface photographed closer has features that are smaller in world units
+//    but keeps the same slopes, which is the plausible reading of "the same
+//    wood, a bit nearer".
+//  * Roughness and AO are scalar fields, so they mix linearly and are done.
+//
+// Anisotropy is the reason there are two profiles. A rotation is exactly the
+// right move on grass, felt, carpet, sawdust — fields with no direction in them.
+// It is exactly the wrong move on a timber top, where it would run a second set
+// of staves diagonally across the table. GEN.oak lays its staves out from the
+// texel column alone, so a joint is a line of constant u and nothing else: an
+// offset along v slides the grain a long way down the board while leaving every
+// joint, and every stave's width and colour, exactly where it was. That is the
+// whole grain profile — no rotation, no rescale, and consequently no normal
+// correction to get wrong either.
+
+const STOCH_PROFILE = {
+  // Isotropic fields: rotate hard, and rescale enough that the two layers do
+  // not beat against each other at any distance.
+  field: { angle: 0.82, scale: 1.31, off: [0.37, 0.71], fade: 0.18 },
+  // Grained boards: slide along the stave only. 0.5 of a repeat is the furthest
+  // the shift can be from itself, and the u axis is untouched by construction.
+  grain: { angle: 0, scale: 1, off: [0, 0.5], fade: 0.24 },
+};
+
+// Anything not named here is treated as a field. Named as null are the surfaces
+// whose repetition is the point — a tiled floor is supposed to be a grid, and
+// smashing it would be the defect, not the fix.
+const STOCH_KIND = {
+  oak: 'grain',
+  pine: 'grain',
+  varnishedWood: 'grain',
+  laminate: 'grain',
+  ceramicTile: null,
+  chromePlate: null,
+  plasticGloss: null,
+  plasticMatte: null,
+  gaffaTape: null,
+};
+
+// One blob spans this many texture repeats, but never less than this many
+// centimetres: on a 24 cm felt the tile is the small number and the mask has to
+// stay well above it, on a 96 cm oak the tile is the large one.
+const STOCH_MASK_TILES = 1.8;
+const STOCH_MASK_MIN_CM = 110;
+
+function stochProfileFor(kind) {
+  const named = Object.prototype.hasOwnProperty.call(STOCH_KIND, kind) ? STOCH_KIND[kind] : 'field';
+  if (!named) return null;
+  const p = STOCH_PROFILE[named];
+  return p ? { name: named, ...p } : null;
+}
+
+/**
+ * True when every map in the set is sampled through the same UV transform as
+ * the albedo. The second layer is one rotation applied to all of them, so if
+ * one map carried a different repeat its layer would land somewhere else and
+ * the normal would light a grain that the colour does not show.
+ */
+function stochMapsAgree(mat) {
+  const m = mat.map;
+  if (!m) return false;
+  const same = (t) => !t
+    || (t.repeat.x === m.repeat.x && t.repeat.y === m.repeat.y
+      && t.offset.x === m.offset.x && t.offset.y === m.offset.y
+      && (t.rotation || 0) === (m.rotation || 0)
+      && (t.channel || 0) === (m.channel || 0));
+  return same(mat.normalMap) && same(mat.roughnessMap) && same(mat.aoMap);
+}
+
+const STOCH_GLSL_DECL = /* glsl */`
+uniform vec4 uMgStoch;      // cos, sin, scale, mask frequency in UV units
+uniform vec3 uMgStochOff;   // offset u, offset v, half-width of the cross-fade
+
+float mgStHash( vec2 p ) {
+  return fract( sin( dot( p, vec2( 269.5, 183.3 ) ) ) * 43758.5453123 );
+}
+float mgStValue( vec2 p ) {
+  vec2 i = floor( p );
+  vec2 f = fract( p );
+  f = f * f * ( 3.0 - 2.0 * f );
+  return mix( mix( mgStHash( i ), mgStHash( i + vec2( 1.0, 0.0 ) ), f.x ),
+              mix( mgStHash( i + vec2( 0.0, 1.0 ) ), mgStHash( i + vec2( 1.0, 1.0 ) ), f.x ), f.y );
+}
+// Which of the two layers this fragment is showing. Two octaves: the coarse one
+// sizes the blobs, the fine one stops their outlines reading as one wavelength.
+float mgStMask( vec2 uvBase ) {
+  vec2 p = uvBase * uMgStoch.w;
+  float n = mgStValue( p ) * 0.66 + mgStValue( p * 2.17 + 11.7 ) * 0.34;
+  return smoothstep( 0.5 - uMgStochOff.z, 0.5 + uMgStochOff.z, n );
+}
+// The second layer's UVs. Rotation and scale are about the UV origin, which
+// commutes with a texture repeat, so every map in the set is displaced by the
+// same amount in world units and the layers stay registered with each other.
+vec2 mgStUv( vec2 uvBase ) {
+  vec2 r = vec2( uvBase.x * uMgStoch.x - uvBase.y * uMgStoch.y,
+                 uvBase.x * uMgStoch.y + uvBase.y * uMgStoch.x );
+  return r * uMgStoch.z + uMgStochOff.xy;
+}
+`;
+
+const STOCH_GLSL_MAP = /* glsl */`
+#ifdef USE_MAP
+	float mgStM = mgStMask( vMapUv );
+	vec4 sampledDiffuseColor = mix( texture2D( map, vMapUv ), texture2D( map, mgStUv( vMapUv ) ), mgStM );
+	#ifdef DECODE_VIDEO_TEXTURE
+		sampledDiffuseColor = sRGBTransferEOTF( sampledDiffuseColor );
+	#endif
+	diffuseColor *= sampledDiffuseColor;
+#else
+	float mgStM = 0.0;
+#endif
+`;
+
+const STOCH_GLSL_ROUGH = /* glsl */`
+float roughnessFactor = roughness;
+#ifdef USE_ROUGHNESSMAP
+	vec4 texelRoughness = mix( texture2D( roughnessMap, vRoughnessMapUv ),
+	                           texture2D( roughnessMap, mgStUv( vRoughnessMapUv ) ), mgStM );
+	roughnessFactor *= texelRoughness.g;
+#endif
+`;
+
+const STOCH_GLSL_NORMAL = /* glsl */`
+#ifdef USE_NORMALMAP_TANGENTSPACE
+	vec3 mgStNa = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
+	vec3 mgStNb = texture2D( normalMap, mgStUv( vNormalMapUv ) ).xyz * 2.0 - 1.0;
+	// Back through the transpose of the UV rotation, so both layers state their
+	// slope in the frame the TBN was built in. See the note above.
+	mgStNb.xy = vec2( mgStNb.x * uMgStoch.x + mgStNb.y * uMgStoch.y,
+	                  mgStNb.y * uMgStoch.x - mgStNb.x * uMgStoch.y );
+	vec3 mapN = normalize( mix( mgStNa, mgStNb, mgStM ) );
+	mapN.xy *= normalScale;
+	normal = normalize( tbn * mapN );
+#else
+	#include <normal_fragment_maps>
+#endif
+`;
+
+const STOCH_GLSL_AO = /* glsl */`
+#ifdef USE_AOMAP
+	float ambientOcclusion = ( mix( texture2D( aoMap, vAoMapUv ).r,
+	                                texture2D( aoMap, mgStUv( vAoMapUv ) ).r, mgStM ) - 1.0 ) * aoMapIntensity + 1.0;
+	reflectedLight.indirectDiffuse *= ambientOcclusion;
+	#if defined( USE_CLEARCOAT )
+		clearcoatSpecularIndirect *= ambientOcclusion;
+	#endif
+	#if defined( USE_SHEEN )
+		sheenSpecularIndirect *= ambientOcclusion;
+	#endif
+	#if defined( USE_ENVMAP ) && defined( STANDARD )
+		float dotNV = saturate( dot( geometryNormal, geometryViewDir ) );
+		reflectedLight.indirectSpecular *= computeSpecularOcclusion( dotNV, ambientOcclusion, material.roughness );
+	#endif
+#endif
+`;
+
+/**
+ * Give a world-projected surface material a second, differently-oriented
+ * sampling of its own maps, cross-faded by a low-frequency mask.
+ *
+ * The patch chains: render/Materials.js already owns onBeforeCompile on
+ * anything from the factory (macro variation, specular antialiasing, the
+ * clearcoat lobe), so its handler runs first and this one edits the strings it
+ * produced. The cache key is extended for the same reason — three would
+ * otherwise hand a patched material the program it compiled for an unpatched
+ * one with the same parameter hash.
+ *
+ * @param {THREE.Material} mat  a material whose UVs are a world XZ projection
+ * @param {string} kind         the named surface, which picks the profile
+ * @returns {boolean} whether the material was patched
+ */
+function applyStochasticTiling(mat, kind) {
+  if (!mat || !mat.isMaterial || mat.userData?.mgStoch) return false;
+  const profile = stochProfileFor(kind);
+  if (!profile) return false;
+  // Triplanar computes its own UVs from world position and has already replaced
+  // the blocks below; the two projections cannot be stacked.
+  if (mat.userData?.mgFeatures?.triplanar) return false;
+  if (!stochMapsAgree(mat)) return false;
+
+  const texScale = mat.userData?.texScale;
+  if (!Number.isFinite(texScale) || texScale <= 0) return false;
+  // World centimetres per unit of the *varying*: three multiplies the mesh UV
+  // by the texture repeat before it reaches the fragment stage, and texScale is
+  // the metric size with that repeat already folded in.
+  const rx = mat.map?.repeat?.x;
+  const tileCm = texScale / (Number.isFinite(rx) && rx > 0 ? rx : 1);
+  const maskCm = Math.max(STOCH_MASK_MIN_CM, STOCH_MASK_TILES * tileCm);
+
+  const uniforms = {
+    uMgStoch: {
+      value: new THREE.Vector4(
+        Math.cos(profile.angle), Math.sin(profile.angle), profile.scale, tileCm / maskCm
+      ),
+    },
+    uMgStochOff: {
+      value: new THREE.Vector3(profile.off[0], profile.off[1], profile.fade),
+    },
+  };
+
+  const base = mat.onBeforeCompile;
+  const baseKey = typeof mat.customProgramCacheKey === 'function' ? mat.customProgramCacheKey() : '';
+
+  mat.onBeforeCompile = (shader, renderer) => {
+    if (typeof base === 'function') base.call(mat, shader, renderer);
+    for (const k in uniforms) shader.uniforms[k] = uniforms[k];
+
+    let fs = shader.fragmentShader;
+    // Every edit is conditional on its anchor still being there. If another
+    // patch has already consumed one of these includes, that map keeps its
+    // single sampling rather than the program failing to link.
+    if (!fs.includes('#include <map_fragment>')) return;
+    fs = fs.replace('#include <common>', `#include <common>\n${STOCH_GLSL_DECL}`);
+    fs = fs.replace('#include <map_fragment>', STOCH_GLSL_MAP);
+    if (fs.includes('#include <roughnessmap_fragment>')) {
+      fs = fs.replace('#include <roughnessmap_fragment>', STOCH_GLSL_ROUGH);
+    }
+    if (fs.includes('#include <normal_fragment_maps>')) {
+      fs = fs.replace('#include <normal_fragment_maps>', STOCH_GLSL_NORMAL);
+    }
+    if (fs.includes('#include <aomap_fragment>')) {
+      fs = fs.replace('#include <aomap_fragment>', STOCH_GLSL_AO);
+    }
+    shader.fragmentShader = fs;
+  };
+  mat.customProgramCacheKey = () => `${baseKey}|mgstoch:${profile.name}`;
+  mat.needsUpdate = true;
+
+  mat.userData.mgStoch = {
+    kind, profile: profile.name, tileCm: +tileCm.toFixed(2), maskCm: +maskCm.toFixed(2),
+  };
+  return true;
+}
+
 /* ========================================================================== */
 /* TrackBuilder                                                               */
 /* ========================================================================== */
@@ -1109,6 +1372,23 @@ export class TrackBuilder {
       texScale: WALL_TEX_SCALE,
     });
 
+    // The two big world-projected slabs get the second sampling. They are
+    // frequently the same object — surfaceMaterial() caches on kind and metric
+    // scale, and groundSurface defaults to offTrackSurface — in which case this
+    // patches it once and the shoulder and the ground beyond it stay literally
+    // one material, which is the whole point of building them that way.
+    this.stochasticTiled = [];
+    for (const [mat, kind] of [
+      [this.groundMaterial, groundKind],
+      [this.offMaterial, track.offTrackSurface],
+    ]) {
+      try {
+        if (this.stochasticTiling(mat, kind)) this.stochasticTiled.push(mat.name);
+      } catch (err) {
+        console.warn('[TrackBuilder] stochastic tiling skipped:', err);
+      }
+    }
+
     const kerbTex = generateKerbTextures(this.texSize, track.seed);
     this.kerbMaterial = new THREE.MeshStandardMaterial({
       map: kerbTex.map,
@@ -1253,6 +1533,20 @@ export class TrackBuilder {
   metricScaleFor(kind, fallback) {
     const w = GEN_DEF?.[kind]?.tileWorld;
     return Number.isFinite(w) && w > 0 ? w : fallback;
+  }
+
+  /**
+   * Cross-fade a second, differently-oriented sampling of a surface into
+   * itself. See applyStochasticTiling() for the mechanism.
+   *
+   * It doubles the texture fetches on the largest thing in frame — albedo,
+   * normal, roughness and AO are each read twice — so the low tier does not pay
+   * for it. That tier is already running a 256 bake, where the tile is small
+   * enough on screen that the grid is the second thing wrong with it.
+   */
+  stochasticTiling(mat, kind) {
+    if ((this.ctx?.settings?.quality || 'high') === 'low') return false;
+    return applyStochasticTiling(mat, kind);
   }
 
   /* ------------------------------------------------------------- table edge */

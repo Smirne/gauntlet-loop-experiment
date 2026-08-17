@@ -175,13 +175,20 @@ class Entry {
     this.score = 0;               // monotone progress metric, world units
     this.t = 0;                   // spline parameter, cached from the vehicle
 
-    // Unwrapped road distance from the start line, world units. Purely
-    // spatial: the spline parameter with the lap wrap taken out, so it is
-    // continuous across the line, never jumps when the lap counter increments,
-    // and carries no cut penalty. Anchored at the grid, which sits behind the
-    // line, so a car that has not crossed yet reads negative and therefore
-    // ranks behind a car that has. Elimination is judged on this;
-    // classification is not (see `_accrueRoadDistance`, `_checkElimination`).
+    // Unwrapped road distance along the circuit, world units. Purely spatial:
+    // the spline parameter with the lap wrap taken out, so it is continuous
+    // across the start line, never jumps when the lap counter increments, and
+    // carries no cut penalty. Elimination is judged on this; classification is
+    // not (see `_accrueRoadDistance`, `_checkElimination`).
+    //
+    // Zero is the SPLINE ORIGIN (raw t = 0), not the start line: `trackT` is
+    // Track.projectXZ's raw parameter, and the line sits at `track.startT`,
+    // which is 0.055–0.075 of a lap further on (100–140 u) on all five shipped
+    // circuits. Every car carries that same constant offset, so every
+    // difference between two cars is a true road-distance gap, which is the
+    // only thing read off this. Measured grid values (kitchen, 1853.9 u lap,
+    // startT 0.075): slots run t = 0.034…0.071, i.e. +64…+131 u, correctly
+    // ordered pole first and all of them short of the line at +139 u.
     this.roadDistance = 0;
     this._distT = 0;              // previous t sample
     this._distWraps = 0;          // whole laps of t already unwrapped
@@ -743,9 +750,14 @@ export class Race {
    * could be eliminated for it.
    *
    * Why not the obvious signals:
-   *   - `lap + t` inverts the field on the opening lap. Cars grid BEHIND the
-   *     line, so before their first crossing t is ~0.98 with lap still 0 and
-   *     they read as nearly a lap AHEAD of anyone who has crossed. Measured.
+   *   - `lap + t` inverts the field once a lap. `trackT` is the RAW spline
+   *     parameter and wraps at t = 0, but `lap` increments at the start line,
+   *     which is `track.startT` — 0.055–0.075 of a lap further on. Inside
+   *     that window the wrap has happened and the increment has not, so a car
+   *     at t ~= 0.01 scores lap+t = L+0.01 against L+0.99 for the car it has
+   *     just passed, still at t ~= 0.99: a full lap of phantom lead handed to
+   *     the car that is behind. On kitchen the window is 139 u of road, and
+   *     every car crosses it every lap, the grid included.
    *   - `vehicle.lapDistance` is `t * track.length` (Track.projectXZ) — the
    *     same wrapped parameter, only scaled. It resets to zero at the line
    *     every lap and carries no lap count. Race already reads it, but only on
@@ -776,8 +788,19 @@ export class Race {
 
     if (!e._distSeeded) {
       e._distSeeded = true;
-      // Anchor to the start line, signed: the grid sits just behind it, so
-      // t ~0.98 must read as ~-0.02 of a lap, not +0.98.
+      // Anchor signed about the spline origin. Measured, the shipped grids all
+      // sit just AHEAD of it (t = 0.014…0.071 across the five circuits, since
+      // startT is 0.055–0.075 and the grid reaches only ~75 u back from the
+      // line), so this branch always takes the 0. It is kept because a track
+      // whose start line sat closer to the origin than the grid is long would
+      // put the back rows at t ~0.99, and reading those as +0.99 of a lap
+      // would hand the last row a phantom lap and make it uneliminable.
+      //
+      // The anchor is only right if `t` is a fresh projection of the grid
+      // position. Two things guarantee that and neither is free: main.js
+      // registers every vehicle BEFORE race, so `_updateTrackState` has
+      // already run this tick, and `_simulate` runs only in RACING/FINISHED,
+      // which is at least one GRID tick after `start()` teleported the field.
       e._distWraps = t > 0.5 ? -1 : 0;
     } else {
       const dT = t - e._distT;
@@ -1516,12 +1539,23 @@ export class Race {
     // gate credit for the jump either way, so nothing is gained by taking one.
     if (delta > 1 && delta < n - 2) e.lapInvalid = true;
     e.cp = idx;
-    // `roadDistance` needs nothing here on purpose. It is a position read off
-    // the current t, not an integral, so it simply reports the car where the
-    // respawn has put it back down — which is where it actually is. Clearing
-    // its reference here would be worse than useless: the next tick would then
-    // have no previous sample to compare against and could mistake the
-    // teleport for a lap wrap.
+    // `roadDistance` needs nothing here on purpose — but not because it is
+    // stateless. `_distWraps` is carried state, so the reason has to be that
+    // the teleport cannot corrupt it. It cannot: the seam test in
+    // `_accrueRoadDistance` maps the post-teleport t to whichever unwrapped
+    // position is NEAREST the pre-teleport one, and `Vehicle.respawn` goes to
+    // `_lastGoodT`, the last t the car was cleanly on the road, so the move is
+    // short in road terms however far the car had flown. Crossing the line
+    // either way is handled by the same test: 0.01 -> 0.99 decrements the
+    // count, 0.99 -> 0.01 increments it, and the distance stays continuous.
+    // Clearing the reference here would be worse than useless: the next tick
+    // would have no previous sample and could mistake the teleport for a wrap.
+    //
+    // Residual, unfixable from here: an excursion that drives more than half a
+    // lap OFF the road can move the projection further than the seam test can
+    // interpret. It self-cancels for a respawn (the jump out and the jump back
+    // are inverses), so it needs a long off-road run that rejoins the road on
+    // its own to leave a standing one-lap error.
   }
 
   dispose() {

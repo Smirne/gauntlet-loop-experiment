@@ -182,11 +182,22 @@ export default {
   props: [
     /* ---- the composition: what the camera sees behind the action ---------- */
 
-    // Two cereal boxes make the wall of the Toaster hairpin. They are 30 u tall
-    // against a 2.8 u car, which is most of what sells the scale.
-    { model: 'cerealBox', position: [-238, 0, 92], yaw: 0.34, scale: 1.18 },
-    { model: 'cerealBox', position: [-252, 0, 46], yaw: -0.42, scale: 1.05, color: 0x2f6c4f },
-    { model: 'cerealBox', position: [-226, 0, 132], yaw: 1.15, scale: 0.95, color: 0xe8a02c },
+    // Three cereal boxes make the wall of the Toaster hairpin. They are 30 u
+    // tall against a 2.8 u car, which is most of what sells the scale.
+    //
+    // They used to stand at 92 / 46 / 132 on three different radii with three
+    // unrelated yaws, and at that spacing they read as three boxes that happen
+    // to be over there. Set on one radius, 27 u apart with their printed faces
+    // all turned the same way, they read as somebody having STOOD THEM UP to
+    // stop cars leaving the hairpin — which is the story, and it is also what
+    // the `walls` entry across 0.492-0.588 has always been describing.
+    // Distance from the hairpin centreline is 44.4-45.4 u against a 12 u half
+    // width, so all three clear the road by 32.4-33.7 u where the old three
+    // cleared it by 32, 34 and 47. The closest box to the ribbon is now further
+    // from it than the closest box was before: arranging them cost no margin.
+    { model: 'cerealBox', position: [-239, 0, 56], yaw: 1.60, scale: 1.05, color: 0x2f6c4f },
+    { model: 'cerealBox', position: [-241, 0, 83], yaw: 1.54, scale: 1.18 },
+    { model: 'cerealBox', position: [-238, 0, 110], yaw: 1.63, scale: 0.95, color: 0xe8a02c },
 
     // The carton that caused the whole problem, lying on its side above the
     // spill with its gable pointing back down the corner.
@@ -204,6 +215,27 @@ export default {
     { model: 'mug', position: [-300, 0, 132], yaw: 0.3, scale: 1.1 },
     { model: 'cerealBox', position: [304, 0, 168], yaw: -0.35, scale: 1.2, color: 0x3d63a8 },
     { model: 'cerealBox', position: [-330, 0, -40], yaw: 0.9, scale: 1.1 },
+
+    // THE CASE. Eight moulded pockets, all of them empty, lid thrown back — the
+    // object that answers why there is a racetrack on a breakfast table, and the
+    // only prop on it whose emptiness is the point.
+    //
+    // It stands in the long infield pocket between the main straight and the
+    // return leg, so the circuit reads as having been laid AROUND it rather than
+    // through empty table, and so it is behind the action on the longest straight
+    // on the lap instead of off in a corner where nothing is looked at.
+    //
+    // Placement arithmetic, because it is the tallest thing anywhere near the
+    // ribbon. The pocket runs from the main straight's edge at z = -140 to the
+    // return leg's at z = -69; its centre line is z = -104, which is where this
+    // sits. Yawed to 1.60 the case presents its 30 u width across the pocket and
+    // its 43 u depth along it, so it spans z -119.5 to -88.2 and its nearest
+    // geometry is 19.5 u clear of a road edge, with the centre 35 u clear — in
+    // line with the hand-placed mug at [30, -12] and the milk carton at
+    // [246, 62]. It cannot occlude: both boundaries of this pocket are straights
+    // running past it, so the case is never between a chase camera and the road
+    // that camera's car is about to drive on.
+    { model: 'carCase', position: [-32, 0, -104], yaw: 1.60 },
 
     // The toast that makes the ramp: two slices propped either side of the lip
     // so the jump reads as improvised rather than as a moulded kicker.

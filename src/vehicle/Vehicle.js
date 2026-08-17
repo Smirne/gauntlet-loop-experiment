@@ -127,9 +127,32 @@ export const VEHICLE_TUNING = {
   // available lock is the angle that would just saturate the front tyres at
   // the current speed, times steerAuthority. Above 1 you can deliberately
   // overdrive the front and provoke a slide; the value below is generous.
-  steerMaxLow: 34 * DEG,     // full lock, standing still
-  steerMinHigh: 5.2 * DEG,   // floor at top speed — never zero
-  steerAuthority: 1.28,
+  // "Steering is too steep", reported three times. The first two passes softened
+  // the INPUT curve, which was not wrong but was not the cause. Measured yaw rate
+  // at full lock, and the response has a cliff in it rather than a slope:
+  //
+  //   42 u/s   20.8 deg/s   radius 116 u   12 car lengths
+  //   49 u/s  104.3 deg/s   radius  27 u  2.8 car lengths   <- five times sharper
+  //   65 u/s    3.2 deg/s   radius 1157 u  122 car lengths  <- thirty times duller
+  //   82 u/s    1.6 deg/s   radius 2855 u  300 car lengths
+  //
+  // Seven u/s takes the car from a wide turn to a spin, and sixteen more takes it
+  // to no turn at all. Both halves come from the same place. `kinematic` is
+  // atan(latCap * wheelbase / v^2), a 1/v-squared curve, so it holds at the
+  // steerMaxLow ceiling and then falls off a cliff — and `steerAuthority` above
+  // 1.0 deliberately lets the commanded angle EXCEED what the front tyres can
+  // hold, which is what turns the 49 u/s case into a snap spin rather than a
+  // turn.
+  //
+  // So: no overdrive by default (authority 1.0), a ceiling low enough that full
+  // lock at walking pace is not a pirouette, and a floor high enough that a fast
+  // corner is still steerable instead of a straight line. The drift is still
+  // available — it is what the handbrake is for, and handbrakeGrip drops the rear
+  // mu to 0.42-0.66 per chassis — it just is not what happens by accident at one
+  // particular speed.
+  steerMaxLow: 30 * DEG,     // full lock, standing still
+  steerMinHigh: 8.5 * DEG,   // floor at top speed — never zero
+  steerAuthority: 1.02,
   steerRate: 7.2,            // rad/s of lock the input can command
   steerReturn: 11.0,         // rad/s of self-centring with no input
   counterSteerGrip: 1.14,    // front grip bonus while counter-steering
@@ -199,6 +222,13 @@ export const VEHICLE_TUNING = {
   respawnDelay: 0.85,        // s of falling before the car is put back
   respawnFallDepth: 42,      // u below the ground plane that counts as fallen
   respawnKeepSpeed: 0.42,    // fraction of speed restored, so it is not a stop
+  // Wedged-on-a-barrier recovery. See _checkNoProgress: the older beached test
+  // gates on speed, and a car grinding against a wall keeps ~5 u/s, so it never
+  // fires. These two gate on ADVANCE ALONG THE TRACK instead. 0.04 u per tick at
+  // 120 Hz is 4.8 u/s of genuine progress — an order of magnitude below anything
+  // a driving car does, so it only catches a car that is truly going nowhere.
+  stuckProgressPerTick: 0.04,
+  stuckProgressDelay: 2.2,   // s of no progress before the car is put back
   damageScale: 0.0055,       // damage per unit of impact impulse past threshold
   damageThreshold: 26,
   damagePowerLoss: 0.18,     // fraction of power lost at damage = 1
@@ -539,6 +569,8 @@ export class Vehicle {
     this._reverseHold = 0;
     this._fallTimer = 0;
     this._stuckTimer = 0;
+    this._noProgress = 0;      // seconds without advancing along the track
+    this._progressT = NaN;     // previous trackT; NaN until the first sample
     this._respawnCooldown = 0;
     this._lastGoodT = 0;
     this._lastGoodLateral = 0;
@@ -2014,6 +2046,63 @@ export class Vehicle {
       if (this._stuckTimer > (this.up.y < 0.25 ? 1.9 : 4.2)) this.respawn(this._lastGoodT);
     } else {
       this._stuckTimer = 0;
+    }
+
+    this._checkNoProgress(fdt);
+  }
+
+  /**
+   * Wedged against a barrier from the outside, which the beached test cannot see.
+   *
+   * Playtest: "I often find myself in a position like this, and accelerating or
+   * turning does not allow me to continue. The only solution seems to be reverse
+   * and restart, but that takes a lot of time." The screenshot was a car OUTSIDE
+   * the barrier, nose-on, with the wall between it and the road.
+   *
+   * Reproduced: placed outside the barrier facing back at it, full throttle and
+   * full steer for 7.5 seconds — the car moved 0.9 u total and sat at a steady
+   * -5 u/s, grinding. The beached test above never fires there, and the reason
+   * is the same mistake this project has made three times now in other places:
+   * IT MEASURES A PROXY INSTEAD OF THE THING. A car pinned on a wall keeps about
+   * 5 u/s of wheel speed, comfortably above the `speed < 2.5` gate, so by that
+   * test it is driving. It is not driving. It is going nowhere.
+   *
+   * So measure what actually matters: progress ALONG THE TRACK. `trackT` is the
+   * spline parameter, so the wrap has to be removed before differencing or the
+   * start line reads as a full lap of progress in one tick. A car that has not
+   * advanced a car length in this many seconds is stuck no matter what its
+   * wheels are doing.
+   *
+   * Deliberately generous on time and strict on distance: respawning a player
+   * who was about to recover is worse than two extra seconds of trying, but a
+   * car that has genuinely covered nothing should not have to reverse out.
+   */
+  _checkNoProgress(fdt) {
+    const t = this.tuning;
+
+    // Never while held on the grid, mid-respawn, or legitimately stationary
+    // before the flag — the clock only runs once the car is meant to be racing.
+    if (this.frozen || this._respawnCooldown > 0) { this._noProgress = 0; return; }
+    if (!Number.isFinite(this.trackT)) { this._noProgress = 0; return; }
+
+    const prev = this._progressT;
+    this._progressT = this.trackT;
+    if (!Number.isFinite(prev)) { this._noProgress = 0; return; }
+
+    // Shortest signed distance around the loop, so the seam is not a jump.
+    let d = this.trackT - prev;
+    if (d > 0.5) d -= 1;
+    else if (d < -0.5) d += 1;
+    const advanced = Math.abs(d) * (this.ctx?.track?.length || 1800);
+
+    // A car doing anything useful covers far more than this per tick; the
+    // threshold only has to exclude numerical jitter while it is pinned.
+    if (advanced > t.stuckProgressPerTick) { this._noProgress = 0; return; }
+
+    this._noProgress += fdt;
+    if (this._noProgress > t.stuckProgressDelay) {
+      this._noProgress = 0;
+      this.respawn(this._lastGoodT);
     }
   }
 

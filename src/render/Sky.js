@@ -37,6 +37,13 @@ export const DEFAULT_BACKDROP = {
   windowFalloff: 2.6,
   mullion: 1.0,
 
+  // Ceiling structure. See the ceiling block in ENV_SHADER_PARS for why this is
+  // the only part of the environment a clearcoated car roof can ever see, and
+  // why `ceilingPanel` is a CONTRAST RATIO against the local ceiling rather than
+  // an absolute radiance.
+  ceilingPanel: 7.0,
+  cornice: 0.22,
+
   sunColor: 0xffe6c0,
   sunDir: [-0.62, 0.36, -0.70],
   sunDisc: 0.0,
@@ -74,6 +81,9 @@ uniform float uWindowRound;
 uniform float uWindowSoft;
 uniform float uWindowFalloff;
 uniform float uMullion;
+
+uniform float uCeilingPanel;
+uniform float uCornice;
 
 uniform vec3  uSunColor;
 uniform vec3  uSunToward;
@@ -131,6 +141,83 @@ vec3 mgEnvColor( vec3 dir ) {
   // Defocused furniture, only around the horizon band.
   float cl = mgClutter( d ) * uClutter * ( 1.0 - smoothstep( 0.10, 0.52, abs( h - 0.06 ) ) );
   col = mix( col, uClutterColor * ( 0.7 + 0.6 * uIntensity ), cl * 0.75 );
+
+  // --- ceiling structure, and why it is here rather than in the window -----
+  //
+  // A clearcoat is a mirror, and a mirror of a smooth gradient is a smooth
+  // gradient. The question is WHICH part of the sphere a die-cast roof mirrors,
+  // and the answer is fixed by the camera: reflect() about an up-facing normal
+  // flips only the vertical component, so a view arriving P degrees below
+  // horizontal leaves P degrees ABOVE it and a car roof samples this function at
+  // h = sin(P) and nowhere else. The director runs 48-62 degrees and the
+  // establishing shot 50, so every horizontal panel on every car mirrors the
+  // band h = 0.74 to 0.88, spread to roughly 0.55-1.0 once roof curvature is
+  // allowed for.
+  //
+  // The window cannot serve that band. It is a real, hard-edged, 8x source and
+  // it IS in the PMREM bake — but every preset puts it at 13-22 degrees
+  // elevation (h = 0.22-0.37) to match the key azimuth Lighting tunes against,
+  // and no camera pitch this game uses can bounce a horizontal surface down to
+  // it. Raising it would break the room's pane and the key it is the source of.
+  // So the band the roofs actually see needs its own structure, and until now it
+  // held exactly one thing: a 40-degree crossfade from uZenith into uCeiling.
+  //
+  // Nothing added here is ever rasterised. Every shipped camera has its frame
+  // TOP below the horizon (D12's note measures the establishing shot at 31
+  // degrees below), so no sightline reaches h > 0 at all, and the room geometry
+  // covers what is left. This exists only to be reflected.
+  float ceilBand = uIndoor * smoothstep( 0.42, 0.72, h );
+  if ( ceilBand > 0.0 ) {
+    // The wall/ceiling junction as a line instead of a crossfade. It spans about
+    // 0.06 of h, i.e. 0.7% of hemisphere irradiance at a fifth of the local
+    // level, so it is left uncompensated. Centred at 0.47 rather than 0.45 so
+    // its full width clears the 0.42 where the branch above stops running, which
+    // would otherwise cut the low edge of the line off square.
+    col *= 1.0 - uCornice * ( 1.0 - smoothstep( 0.0, 0.032, abs( h - 0.47 ) ) ) * uIndoor;
+
+    // Two ceiling battens, in ceiling-plane coordinates: cp is the offset across
+    // the ceiling in units of the ceiling's height, so a rectangle in cp is a
+    // rectangle on the ceiling. At half-length 1.15 and offset 0.55 they run
+    // from elevation 38 to 61 degrees, straight through the band a roof
+    // reflects, and they lie ACROSS it rather than along it so a turning car
+    // sweeps over them instead of sitting inside one.
+    vec2 cp = d.xz / max( d.y, 0.35 );
+    // Fold the pair into one rounded box by mirroring across the ceiling centre.
+    vec2 cpf = vec2( cp.x, abs( cp.y ) - 0.55 );
+    float sdc = mgRoundBox( cpf, vec2( 1.15, 0.026 ), 0.020 );
+    float tube = 1.0 - smoothstep( -0.010, 0.014, sdc );
+    float diffuser = exp( -max( sdc, 0.0 ) * 26.0 );
+
+    // Half the preset's own ceiling hue at unit luminance, half neutral: a
+    // 4000 K batten that can never fight the grade. The clamp matters at night,
+    // where uCeiling is a near-black blue and normalising it alone would give
+    // the fitting a blue channel of 3.2 and turn it into moonlight.
+    float ceilLum = max( dot( uCeiling, vec3( 0.2126, 0.7152, 0.0722 ) ), 1e-3 );
+    vec3 tubeCol = mix( clamp( uCeiling / ceilLum, vec3( 0.55 ), vec3( 1.6 ) ), vec3( 1.0 ), 0.5 );
+
+    // uCeilingPanel is a RATIO against the local ceiling, not a radiance. That
+    // is what makes this safe across the preset set: nightLamp's ceiling sits at
+    // luminance 0.011 and morning's at 0.30, so any absolute value bright enough
+    // to read at morning would be a 20x floodlight at night and would lift every
+    // ambient surface in that preset off the floor. As a ratio the contrast is
+    // identical in both and the level tracks whatever light the preset is in.
+    float bandLum = max( dot( col, vec3( 0.2126, 0.7152, 0.0722 ) ), 1e-4 );
+    float tubeRad = uCeilingPanel * uIndoor * bandLum;
+
+    // ENERGY IS CONSERVED, which is the whole reason a 10:1 source can go into
+    // the environment without lifting the game's diffuse IBL. The two strips
+    // cover 0.073 sr of PROJECTED solid angle (integrate d.y^4 dp over the two
+    // rectangles above, which is what a cosine-weighted hemisphere actually
+    // collects); the band they sit in covers about 2.12 sr projected. Taking the
+    // same energy back out of that band trades a flat ~24% off a ceiling no
+    // camera can see for a hard-edged 10:1 highlight on every clearcoat in the
+    // frame, and leaves hemisphere irradiance within a few percent of where it
+    // was. Because tubeRad is proportional to bandLum, the ratio 0.073/2.12
+    // cancels the local level and the compensation is a pure constant.
+    float comp = clamp( 0.0344 * uCeilingPanel * uIndoor, 0.0, 0.5 );
+    col *= 1.0 - comp * ceilBand;
+    col += tubeCol * tubeRad * ( tube + diffuser * 0.12 ) * ceilBand;
+  }
 
   // --- window -------------------------------------------------------------
   vec3 wf = normalize( uWindowDir );
@@ -263,6 +350,9 @@ export function makeEnvUniforms(params) {
     uWindowFalloff: { value: p.windowFalloff },
     uMullion: { value: p.mullion },
 
+    uCeilingPanel: { value: p.ceilingPanel },
+    uCornice: { value: p.cornice },
+
     uSunColor: { value: col(p.sunColor) },
     uSunToward: { value: v3(p.sunDir, DEFAULT_BACKDROP.sunDir).normalize() },
     uSunDisc: { value: p.sunDisc },
@@ -317,6 +407,9 @@ export function setEnvUniforms(u, params, t = 1) {
   lerpN('uWindowSoft', p.windowSoft);
   lerpN('uWindowFalloff', p.windowFalloff);
   lerpN('uMullion', p.mullion);
+
+  lerpN('uCeilingPanel', p.ceilingPanel);
+  lerpN('uCornice', p.cornice);
 
   lerpC('uSunColor', p.sunColor);
   lerpV('uSunToward', p.sunDir, DEFAULT_BACKDROP.sunDir);
@@ -1765,6 +1858,25 @@ export class Sky {
       if (Number.isFinite(opts.floorColor)) u.uFloorColor.value.set(opts.floorColor);
     }
     this._roomSig = null;   // force a refit on the next update
+    return this;
+  }
+
+  /**
+   * Tuning handles for the ceiling structure, which is the only part of the
+   * environment a clearcoated car roof reflects. `panel` is a contrast ratio
+   * against the local ceiling, not a radiance, and the shader takes the same
+   * energy back out of the ceiling band, so raising it sharpens the highlight on
+   * the paint without lifting diffuse IBL anywhere. Writes the shared uniform
+   * objects, so the backdrop and the built room move together; a preset change
+   * writes over both.
+   *
+   * @param {{panel?: number, cornice?: number}} opts
+   */
+  setCeiling(opts = {}) {
+    const u = this.backdrop && this.backdrop.uniforms;
+    if (!u) return this;
+    if (Number.isFinite(opts.panel)) u.uCeilingPanel.value = Math.max(0, opts.panel);
+    if (Number.isFinite(opts.cornice)) u.uCornice.value = Math.max(0, opts.cornice);
     return this;
   }
 

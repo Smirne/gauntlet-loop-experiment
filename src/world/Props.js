@@ -610,6 +610,80 @@ export const PROP_MODELS = {
     },
   },
 
+  // The die-cast carry case the cars came out of: eight moulded pockets, every
+  // one of them empty, and the lid thrown back onto its hinge stop.
+  //
+  // This is the one object on a breakfast table that answers the question the
+  // whole premise asks — why is there a racetrack on it — so it is modelled to
+  // be *named* at establishing distance rather than merely seen. Three things do
+  // that work. The shell is built as a rim and a floor rather than a solid box,
+  // because a capped-off block reads as a lunchbox and only an open well reads
+  // as a case. The pockets are sized against the cars they are missing, 6.6 u
+  // across and 12.3 long against a 4.15 x 9.5 car, so the eye can tell what
+  // belongs in them. And there are exactly eight, which is the size of the
+  // field: everything that lived here is out on the circuit.
+  //
+  // 30.6 u tall with the lid up, i.e. a cereal box, so it obeys the same
+  // placement discipline every tall prop here does.
+  carCase: {
+    tags: ['kitchen', 'bedroom'], collide: 'box', mass: 1.2, restitution: 0.3,
+    build(P) {
+      const W = 30;        // across the pockets
+      const D = 28;        // hinge to front lip
+      const H = 7.5;       // shell height
+      const LID = 26;      // hinge to lid edge
+      const OPEN = -2.05;  // 27 degrees past vertical — where a stiff hinge stops
+      const SHELL = 0xd23a2c;
+      const TRAY = 0xe8b93a;
+      const zF = D / 2;
+      const zB = -D / 2;
+
+      // Floor and four walls.
+      P.box('plasticGloss', W, 1.5, D, { y: 0.75, c: SHELL, radius: 0.4, seg: 3 });
+      P.box('plasticGloss', W, H, 1.7, { y: H / 2, z: zF - 0.85, c: SHELL, radius: 0.35, seg: 3 });
+      P.box('plasticGloss', W, H, 1.7, { y: H / 2, z: zB + 0.85, c: SHELL, radius: 0.35, seg: 3 });
+      P.box('plasticGloss', 1.7, H, D, { y: H / 2, x: -W / 2 + 0.85, c: SHELL, radius: 0.35, seg: 3 });
+      P.box('plasticGloss', 1.7, H, D, { y: H / 2, x: W / 2 - 0.85, c: SHELL, radius: 0.35, seg: 3 });
+
+      // The moulded tray, sunk 5.5 u below the rim, and the ribs that divide it
+      // into four columns of two.
+      const iw = W - 3.4;
+      const id = D - 3.4;
+      P.slab('plasticGloss', iw, 0.5, id, { y: 1.75, c: TRAY });
+      for (let i = 1; i < 4; i++) {
+        P.slab('plasticGloss', 0.6, 3.0, id, { x: -iw / 2 + i * (iw / 4), y: 3.5, c: TRAY });
+      }
+      P.slab('plasticGloss', iw, 3.0, 0.6, { y: 3.5, c: TRAY });
+
+      // Lid, hinged along the back top edge. Its own long axis in world space is
+      // (0, -sin, cos) after the rotation and its inner face points along
+      // (0, -cos, -sin); everything mounted on the lid is positioned by walking
+      // those two vectors out from the hinge, so the panel can never drift off
+      // the panel it is printed on however the angle is retuned.
+      const ax = -Math.sin(OPEN);   // lid length, world Y component
+      const az = Math.cos(OPEN);    // lid length, world Z component
+      const ny = -Math.cos(OPEN);   // inner face normal, world Y
+      const nz = -Math.sin(OPEN);   // inner face normal, world Z
+      P.box('plasticGloss', W, 1.4, LID, {
+        y: H + ax * LID * 0.5, z: zB + az * LID * 0.5, rx: OPEN, c: SHELL, radius: 0.35, seg: 2,
+      });
+      P.slab('plasticGloss', W - 4, 0.35, LID - 4, {
+        y: H + ax * LID * 0.5 + ny, z: zB + az * LID * 0.5 + nz, rx: OPEN, c: 0xf2e8d0,
+      });
+      P.slab('plasticGloss', W - 4, 0.3, 5.0, {
+        y: H + ax * LID * 0.72 + ny * 1.35, z: zB + az * LID * 0.72 + nz * 1.35, rx: OPEN, c: 0x2f6ea8,
+      });
+
+      // Carry handle across the front, and the two latches the lid closes onto.
+      P.tube('plasticMatte', [
+        [-7.5, 5.2, zF + 0.4], [-7.0, 9.4, zF + 1.6], [0, 10.4, zF + 1.9],
+        [7.0, 9.4, zF + 1.6], [7.5, 5.2, zF + 0.4],
+      ], 0.75, { c: 0x2c2f33, tubular: 36, radial: 8 });
+      P.box('chrome', 3.2, 1.6, 1.2, { x: -10.5, y: 6.4, z: zF + 0.7, c: 0xcfd5da, radius: 0.24 });
+      P.box('chrome', 3.2, 1.6, 1.2, { x: 10.5, y: 6.4, z: zF + 0.7, c: 0xcfd5da, radius: 0.24 });
+    },
+  },
+
   /* -------------------------------------------------------------- garden */
 
   plantPot: {
