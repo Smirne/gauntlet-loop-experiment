@@ -2023,6 +2023,47 @@ function makeBarLamp(w, h, d, r = 0.10) {
   return extrudePlate(roundRectShape(w, h, r), d, Math.min(0.05, d * 0.4), 10);
 }
 
+/**
+ * A plated bezel ring for a lens — the thing that gives rear hardware a read
+ * that does not depend on catching a highlight.
+ *
+ * A lens on its own is one value: the emissive tint, which at the 0.2-0.3
+ * intensity a parked car runs is barely above the paint it is set into, so the
+ * whole tail collapses into one slab. A ring of plated metal around it is a
+ * different *substance* — it returns the environment instead of a diffuse
+ * albedo — so the lamp keeps an outline whether or not the sun is on that face.
+ *
+ * Two details that are not cosmetic:
+ *   - The hole is drawn `lap` smaller than the lens so the two solids OVERLAP.
+ *     Sizing the hole to the lens exactly would leave the ring's inner wall and
+ *     the lens's outer wall coplanar over their whole rim, which z-fights at
+ *     precisely the grazing angle the macro camera holds.
+ *   - The depth is chosen so the ring's front face lands level with the tip of
+ *     the lens's own bevel, which puts the flat of the ring about 0.03 u proud
+ *     of the flat of the lens. A bezel standing proud of its glass is the read;
+ *     a bezel flush with it is a painted outline.
+ *
+ * @param {number} w      the lens width this ring wraps
+ * @param {number} h      the lens height
+ * @param {number} d      the lens depth (before its bevel)
+ * @param {number} r      the lens corner radius
+ * @param {number} width  visible band of chrome, per side
+ */
+function makeLampBezel(w, h, d, r = 0.08, width = 0.06) {
+  const bev = 0.02;
+  const lap = 0.028;
+  const iw = Math.max(0.06, w - lap * 2);
+  const ih = Math.max(0.06, h - lap * 2);
+  const ir = Math.max(0.012, Math.min(r, Math.min(iw, ih) * 0.45));
+  const shape = roundRectShape(iw + width * 2, ih + width * 2, ir + width);
+  shape.holes.push(roundRectShape(iw, ih, ir));
+  const depth = Math.max(0.05, d + 2 * (Math.min(0.05, d * 0.4) - bev));
+  // Six segments per corner curve, not the usual ten: this is a ring, so the
+  // count is paid twice over, and a 0.12 u corner arc at six is already inside
+  // a pixel at the game camera and two at the macro one.
+  return extrudePlate(shape, depth, bev, 6);
+}
+
 /** Exhaust: a swept pipe with a flared, polished tip. */
 function makeExhaust(path, r, o = {}) {
   const prof = circleProfile(r, o.segments ?? 10);
@@ -2349,8 +2390,8 @@ function dressChassis(env, d) {
     const g = makeBarLamp(l.w, l.h, depth, l.r ?? 0.09);
     out.pair('lampClear', g, xform(l.x, l.y, lz, l.pitch ?? 0, 0, l.roll ?? 0));
     if (l.surround !== false) {
-      const s = makeBarLamp(l.w + 0.16, l.h + 0.16, depth * 0.7, (l.r ?? 0.09) + 0.05);
-      out.pair('trim', s, xform(l.x, l.y, lz - 0.06, l.pitch ?? 0, 0, l.roll ?? 0));
+      const s = makeLampBezel(l.w, l.h, depth, l.r ?? 0.09, l.bezel ?? 0.06);
+      out.pair('chrome', s, xform(l.x, l.y, lz, l.pitch ?? 0, 0, l.roll ?? 0));
     }
     lights.head.push({ x: l.x, y: l.y, z: lz });
     if (l.x !== 0) lights.head.push({ x: -l.x, y: l.y, z: lz });
@@ -2367,10 +2408,11 @@ function dressChassis(env, d) {
     const g = makeBarLamp(l.w, l.h, depth, l.r ?? 0.08);
     out.pair('lampRed', g, xform(l.x, l.y, lz, l.pitch ?? 0, 0, l.roll ?? 0));
     if (l.surround !== false) {
-      const s = makeBarLamp(l.w + 0.16, l.h + 0.16, depth * 0.7, (l.r ?? 0.08) + 0.05);
-      // Just inboard of the lens, so the bezel reads flush with the paint and
-      // the lens stands out of it rather than the whole assembly floating.
-      out.pair('trim', s, xform(l.x, l.y, lz + 0.02, l.pitch ?? 0, 0, l.roll ?? 0));
+      // Was a black plastic slab *behind* the lens: it added an outline only
+      // where the paint behind it happened to be lighter, which on a dark
+      // livery is nowhere. A plated ring around the lens instead.
+      const s = makeLampBezel(l.w, l.h, depth, l.r ?? 0.08, l.bezel ?? 0.06);
+      out.pair('chrome', s, xform(l.x, l.y, lz, l.pitch ?? 0, 0, l.roll ?? 0));
     }
     lights.brake.push({ x: l.x, y: l.y, z: lz });
     if (l.x !== 0) lights.brake.push({ x: -l.x, y: l.y, z: lz });
@@ -2381,6 +2423,10 @@ function dressChassis(env, d) {
     const lz = lampZ(shell, l, depth, -1, 0.04);
     const g = makeBarLamp(l.w, l.h, depth, l.r ?? 0.06);
     out.pair('lampAmber', g, xform(l.x, l.y, lz));
+    if (l.surround !== false) {
+      out.pair('chrome', makeLampBezel(l.w, l.h, depth, l.r ?? 0.06, l.bezel ?? 0.05),
+        xform(l.x, l.y, lz));
+    }
     lights.reverse.push({ x: l.x, y: l.y, z: lz });
     if (l.x !== 0) lights.reverse.push({ x: -l.x, y: l.y, z: lz });
   }
