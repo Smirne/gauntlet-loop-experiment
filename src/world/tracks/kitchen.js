@@ -191,10 +191,12 @@ export default {
     // all turned the same way, they read as somebody having STOOD THEM UP to
     // stop cars leaving the hairpin — which is the story, and it is also what
     // the `walls` entry across 0.492-0.588 has always been describing.
-    // Distance from the hairpin centreline is 44.4-45.4 u against a 12 u half
-    // width, so all three clear the road by 32.4-33.7 u where the old three
-    // cleared it by 32, 34 and 47. The closest box to the ribbon is now further
-    // from it than the closest box was before: arranging them cost no margin.
+    // Measured against the real ribbon rather than the control points: the new
+    // three clear the driving surface by 31.8-33.1 u at their centres and by
+    // 26.6-28.1 u at their nearest CORNER, where the old three cleared it by
+    // 30.1/46.4/31.2 at the centre and 17.4/33.8/19.7 at the corner. Two of the
+    // three used to sit closer to the road than any of these do. Arranging them
+    // did not cost a single unit of margin; it bought 9.
     { model: 'cerealBox', position: [-239, 0, 56], yaw: 1.60, scale: 1.05, color: 0x2f6c4f },
     { model: 'cerealBox', position: [-241, 0, 83], yaw: 1.54, scale: 1.18 },
     { model: 'cerealBox', position: [-238, 0, 110], yaw: 1.63, scale: 0.95, color: 0xe8a02c },
@@ -225,17 +227,22 @@ export default {
     // through empty table, and so it is behind the action on the longest straight
     // on the lap instead of off in a corner where nothing is looked at.
     //
-    // Placement arithmetic, because it is the tallest thing anywhere near the
-    // ribbon. The pocket runs from the main straight's edge at z = -140 to the
-    // return leg's at z = -69; its centre line is z = -104, which is where this
-    // sits. Yawed to 1.60 the case presents its 30 u width across the pocket and
-    // its 43 u depth along it, so it spans z -119.5 to -88.2 and its nearest
-    // geometry is 19.5 u clear of a road edge, with the centre 35 u clear — in
-    // line with the hand-placed mug at [30, -12] and the milk carton at
-    // [246, 62]. It cannot occlude: both boundaries of this pocket are straights
-    // running past it, so the case is never between a chase camera and the road
-    // that camera's car is about to drive on.
-    { model: 'carCase', position: [-32, 0, -104], yaw: 1.60 },
+    // Placement arithmetic, because at 30.8 u with the lid up it is as tall as a
+    // cereal box and it is the only tall prop inside the circuit. Yawed to 1.53
+    // it lies along the pocket, presenting its 30 u width across the gap and its
+    // 43 u depth down it: it occupies x -99..-55, z -117..-85, and its NEAREST
+    // CORNER — not its centre — is 19.6 u clear of the driving surface, with the
+    // centre 36.1 u clear. That is the widest margin this pocket allows a case
+    // this size; a sweep of the whole pocket at four yaws tops out at 20.6. For
+    // scale, two of the three cereal boxes that used to stand at the Toaster
+    // hairpin had 17.4 and 19.7 u of corner clearance, so nothing here is closer
+    // to a road than what already shipped.
+    //
+    // And it cannot occlude, which is the constraint that actually matters:
+    // both boundaries of this pocket are near-parallel STRAIGHTS running past
+    // it, so there is no corner where a chase camera has to look across this
+    // ground at road its own car is about to reach.
+    { model: 'carCase', position: [-72, 0, -101], yaw: 1.53 },
 
     // The toast that makes the ramp: two slices propped either side of the lip
     // so the jump reads as improvised rather than as a moulded kicker.
