@@ -36,7 +36,7 @@
 import * as THREE from 'three';
 import { clamp, saturate, lerp, smoothstep } from '../core/Random.js';
 import {
-  buildChassis, chassisLivery, wheelTexture, liveryFor, bevelBox,
+  buildChassis, chassisLivery, wheelTexture, liveryFor, bevelBox, plateTexture,
 } from './CarModels.js';
 
 const TAU = Math.PI * 2;
@@ -427,6 +427,37 @@ export class VehicleVisual {
     });
     M.trim = mats.plasticToy({ color: 0x1a1c20, gloss: 0.35 });
     M.grille = mats.plasticToy({ color: 0x0d0f12, gloss: 0.18 });
+    // The rear number plate. Every other substance on the tail — paint, plated
+    // trim, black plastic, a barely-emissive lens — either returns the key or
+    // returns nothing, so with the sun off that face the whole panel goes to one
+    // value. A pressed blank at 0.58 linear is brighter than any paint in the
+    // roster *in shadow*, and it is the one element whose read does not depend
+    // on catching anything.
+    //
+    // The blank now carries characters. Dark glyphs on a light ground is the
+    // highest-contrast element anywhere on the car, and it is what actually
+    // identifies a die-cast from behind — a white rectangle is as much of a
+    // placeholder as the painted slab it replaced. Cloned rather than tinted in
+    // place because plasticToy is cached by signature and every other black
+    // plastic part on every car would inherit the map.
+    M.plate = mats.plasticToy({ color: 0xc9ccd2, gloss: 0.45 });
+    try {
+      const pt = plateTexture(`MG ${String(lv.number ?? 1).padStart(2, '0')}`,
+        { size: this.ctx?.settings?.quality === 'low' ? 256 : 512 });
+      if (pt.map) {
+        const own = M.plate.clone();
+        own.name = 'plate';
+        own.color.setHex(0xffffff);   // the blank's value now comes from the map
+        own.map = pt.map;
+        own.normalMap = pt.normalMap || null;
+        if (own.normalScale) own.normalScale.set(0.85, 0.85);
+        own.userData = { ...(own.userData || {}), mgOwned: true };
+        own.needsUpdate = true;
+        M.plate = own;
+      }
+    } catch (err) {
+      console.warn('[VehicleVisual] plate texture failed', err);
+    }
     // The cabin is now something you can see into, so it has to be a material
     // rather than a hole: near-black returns nothing through the glass and the
     // window reads as a painted rectangle again. Moulded dark grey with a
@@ -560,6 +591,7 @@ export class VehicleVisual {
       paint: 'paint', accent: 'accent', chrome: 'chrome', glass: 'glass',
       trim: 'trim', grille: 'grille', interior: 'interior', base: 'base',
       lampClear: 'lampClear', lampRed: 'lampRed', lampAmber: 'lampAmber',
+      plate: 'plate',
     };
     for (const part of this.chassis.parts) {
       const key = roleMat[part.role] || 'trim';
@@ -1043,6 +1075,11 @@ export class VehicleVisual {
     const owned = new Set([
       this.materials.paint, this.materials.tyre, this.materials.tyreRear,
       this.materials.lampClear, this.materials.lampRed, this.materials.lampAmber,
+      // Only if it is the clone we minted to carry this car's plate texture —
+      // without a texture M.plate is still the shared cached plastic, and
+      // disposing that takes every other car's black trim with it. The texture
+      // itself is cached in CarModels and is not ours to free either way.
+      this.materials.plate?.userData?.mgOwned ? this.materials.plate : null,
       ...(this.materials.discs || []),
     ]);
     owned.delete(undefined);

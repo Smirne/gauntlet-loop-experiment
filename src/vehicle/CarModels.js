@@ -747,6 +747,30 @@ export function extrudePlate(shape, depth, bevel = 0.06, curveSegments = 12) {
   return g;
 }
 
+/**
+ * Rewrite a flat part's UVs as a planar unwrap of its own w x h face.
+ *
+ * ExtrudeGeometry's default UV generator emits the *shape coordinates* as UVs,
+ * so an extruded plate 1.08 u wide comes out with u running -0.54..0.54 — which
+ * with RepeatWrapping tiles a texture five times across the part and mirrors it
+ * about the centre. Derived from position rather than from the existing UVs so
+ * the side walls and the back cap get sane values too instead of the extruder's
+ * (x, 1-z) side-wall scheme, which would smear the face texture up the edge.
+ *
+ * Must be called before the part is placed: positions have to still be in the
+ * shape's own centred space.
+ */
+function planarUV(geom, w, h) {
+  const p = geom?.attributes?.position;
+  const uv = geom?.attributes?.uv;
+  if (!p || !uv || uv.count !== p.count) return geom;
+  for (let i = 0; i < p.count; i++) {
+    uv.setXY(i, (p.getX(i) + w * 0.5) / w, (p.getY(i) + h * 0.5) / h);
+  }
+  uv.needsUpdate = true;
+  return geom;
+}
+
 /** Rounded-rectangle Shape centred on the origin. */
 export function roundRectShape(w, h, r) {
   const hw = w * 0.5;
@@ -1257,6 +1281,132 @@ export function tyreTexture(style = 'road', treadV = [0.35, 0.65], size = 1024) 
     normalMap: finishTexture(normalFromHeight(hc.canvas, 2.1, true) || hc.canvas, false),
   };
   TYRE_TEXTURES.set(key, set);
+  return set;
+}
+
+/* ------------------------------------------------------------- number plate */
+
+const PLATE_TEXTURES = new Map();
+
+/**
+ * The pressed rear registration plate.
+ *
+ * The plate blank was already its own material — an off-white that out-values
+ * every paint in the roster in shadow — but a blank slab of it is a white
+ * rectangle, and a white rectangle on a tail is exactly as much of a
+ * placeholder as the painted slab it replaced. What identifies a die-cast from
+ * behind is *characters*: dark glyphs on a light ground is the highest-contrast
+ * element on the whole car, and it survives being three pixels tall because at
+ * that size it stops being letters and becomes a dark bar with a light margin,
+ * which is still the right read.
+ *
+ * Three separate things carry it:
+ *   - albedo: the pressed ground, a colour band, and the glyphs;
+ *   - height (and so the normal map derived from it): the glyphs stand proud,
+ *     the border groove is pressed in. A plate whose text is painted on rather
+ *     than embossed goes flat the moment the key leaves it, which on a tail is
+ *     most of the time;
+ *   - the border groove itself, which gives the blank an edge that is not just
+ *     the silhouette against the paint behind it.
+ *
+ * Cached by text, so eight cars carrying eight numbers cost eight small
+ * canvases once, and every car of the same number shares one.
+ */
+export function plateTexture(text = 'MG 01', opts = {}) {
+  const label = String(text || 'MG 01').toUpperCase().slice(0, 8);
+  const key = `${label}|${opts.size || 512}`;
+  const hit = PLATE_TEXTURES.get(key);
+  if (hit) return hit;
+
+  const W = opts.size || 512;
+  const H = Math.max(64, Math.round(W * 0.22));
+  const c = canvas2d(W, H);
+  const hc = canvas2d(W, H);
+  if (!c || !hc) return { map: null, normalMap: null };
+  const { g } = c;
+  const gh = hc.g;
+  const rng = makeRng(`plate:${label}`);
+
+  // Ground. Slightly warm off-white with a top-down gradient: a pressed alloy
+  // blank is never one value, it catches the sky along its top edge.
+  const grad = g.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#f2f2ee');
+  grad.addColorStop(0.55, '#e4e5e1');
+  grad.addColorStop(1, '#d2d3cf');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+  gh.fillStyle = '#9a9a9a';
+  gh.fillRect(0, 0, W, H);
+
+  // Colour band down the left edge — the one saturated element on the tail
+  // that is neither paint nor a lamp, so it reads as a separate object even
+  // when the plate itself is in shadow.
+  const bandW = Math.round(W * 0.13);
+  g.fillStyle = '#152a63';
+  g.fillRect(0, 0, bandW, H);
+  g.fillStyle = 'rgba(255,255,255,0.10)';
+  g.fillRect(0, 0, bandW, Math.max(1, H * 0.10));
+  // A ring of pips rather than a country code: three letters at this size are
+  // mush, a dot pattern still resolves as a mark.
+  g.fillStyle = '#e8c23a';
+  const pipR = Math.max(1, H * 0.045);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * TAU - Math.PI / 2;
+    g.beginPath();
+    g.arc(bandW * 0.5 + Math.cos(a) * bandW * 0.26, H * 0.42 + Math.sin(a) * bandW * 0.26, pipR, 0, TAU);
+    g.fill();
+  }
+
+  // Pressed border groove, inset from the edge, on both albedo and height.
+  const pad = Math.max(2, H * 0.10);
+  const lw = Math.max(1.5, H * 0.035);
+  g.lineWidth = lw;
+  g.strokeStyle = 'rgba(60,62,58,0.55)';
+  roundRectPath(g, pad, pad, W - pad * 2, H - pad * 2, H * 0.10);
+  g.stroke();
+  gh.lineWidth = lw;
+  gh.strokeStyle = '#4e4e4e';
+  roundRectPath(gh, pad, pad, W - pad * 2, H - pad * 2, H * 0.10);
+  gh.stroke();
+
+  // Characters. Embossed: the height canvas gets them bright, so the normal
+  // map lifts them off the blank.
+  const textX = bandW + (W - bandW) * 0.5;
+  const fs = H * 0.62;
+  for (const target of [g, gh]) {
+    target.save();
+    target.translate(textX, H * 0.54);
+    target.font = `700 ${fs}px ${PLATE_FONT}`;
+    target.textAlign = 'center';
+    target.textBaseline = 'middle';
+    target.fillStyle = target === g ? '#1a1f2b' : '#e0e0e0';
+    target.fillText(label, 0, 0);
+    target.restore();
+  }
+  // A one-pixel light lip along the top of each glyph sells the emboss in the
+  // albedo as well, for the frames where the normal map is facing away.
+  g.save();
+  g.translate(textX, H * 0.54 - Math.max(1, H * 0.02));
+  g.font = `700 ${fs}px ${PLATE_FONT}`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillStyle = 'rgba(255,255,255,0.16)';
+  g.fillText(label, 0, 0);
+  g.restore();
+
+  noiseWash(g, W, H, rng, 0.028, 11);
+
+  const map = finishTexture(c.canvas, true, 8);
+  const normalMap = finishTexture(normalFromHeight(hc.canvas, 1.5, false) || hc.canvas, false, 8);
+  // The unwrap is exactly 0..1 over one face, so any wrap other than clamp
+  // lets the side walls sample a mirrored copy of the glyphs.
+  for (const t of [map, normalMap]) {
+    t.wrapS = THREE.ClampToEdgeWrapping;
+    t.wrapT = THREE.ClampToEdgeWrapping;
+    t.needsUpdate = true;
+  }
+  const set = { map, normalMap };
+  PLATE_TEXTURES.set(key, set);
   return set;
 }
 
@@ -2482,6 +2632,46 @@ function dressChassis(env, d) {
     }
   }
 
+  // The number plate. Not `d.plate` — that one is the die-cast base pan under
+  // the car, which unfortunately got the name first.
+  //
+  // This is three substances in one assembly, which is the whole point: a
+  // plated surround, a pressed blank in its own near-white material, and the
+  // shadow line between them. A tail whose only materials are paint and black
+  // plastic reads as a painted slab no matter how much geometry is on it.
+  if (d.rearPlate) {
+    const p = d.rearPlate;
+    const w = p.w ?? 1.08;
+    const h = p.h ?? 0.24;
+    const blank = p.d ?? 0.05;
+    const bev = 0.012;
+    // Seated by the same march lampZ uses, but without its never-pull-in rule:
+    // this part is authored by height alone, so it has no hand-tuned z to
+    // defend, and clamping it to an authored guess is what would float it.
+    let reach = null;
+    const hw = w * 0.5 * 0.92;
+    const hh = h * 0.5 * 0.92;
+    for (const px of [0, hw]) {
+      for (const py of [p.y - hh, p.y, p.y + hh]) {
+        const z = endSurfaceZ(shell, px, py, -1);
+        if (z === null) continue;
+        reach = reach === null ? z : Math.min(reach, z);
+      }
+    }
+    const lz = p.z !== undefined ? p.z
+      : (reach === null ? shell.zMin - blank * 0.5 - bev
+        : reach - (p.proud ?? 0.03) + blank * 0.5 + bev);
+    // planarUV before placement: the blank is the one part of the car whose
+    // texture has to land square on it, and the extruder hands out shape
+    // coordinates as UVs.
+    out.add('plate', planarUV(extrudePlate(roundRectShape(w, h, p.r ?? 0.03), blank, bev, 6), w, h),
+      xform(0, p.y, lz));
+    // A hair deeper than the blank so the frame stands proud of it and casts
+    // the line that separates the two.
+    out.add('chrome', makeLampBezel(w, h, blank + 0.03, p.r ?? 0.03, p.bezel ?? 0.055),
+      xform(0, p.y, lz));
+  }
+
   if (d.plate !== false) {
     const p = d.plate || {};
     out.add('base', buildBasePlate(shell, {
@@ -2610,6 +2800,10 @@ export const CAR_MODELS = {
         ],
         glass: { z: [-2.55, 0.98], lift: 0.06, low: 6, steps: 14 },
         interior: { z0: -2.5, z1: 0.9, inset: 0.30, seatY: 1.52, seatZ: -1.2, seatX: [-0.68, 0.68] },
+        // Recessed into the rear bumper's own face, which is where a 60s coupe
+        // carries it. The z is authored rather than seated because it hangs off
+        // the bumper, not off the bodywork the seating march can see.
+        rearPlate: { y: 1.07, z: -4.875, w: 1.10, h: 0.22 },
         plate: { z0: -4.30, z1: 4.30, inset: 0.13 },
       });
       // Bonnet scoop and a raised power bulge — the whole point of the car.
@@ -2634,8 +2828,6 @@ export const CAR_MODELS = {
       // black lower valance under all of it for the tips to exit beside. Each
       // one is placed against the rear panel's real surface at z -4.75, which
       // is what the whole band lacked before.
-      out.add('chrome', bevelBox(1.30, 0.34, 0.10, 0.04, 2), xform(0, 1.07, -4.87));
-      out.add('base', bevelBox(1.10, 0.22, 0.05, 0.02, 2), xform(0, 1.07, -4.91));
       out.add('grille', bevelBox(1.50, 0.30, 0.12, 0.05, 2), xform(0, 0.56, -4.78));
       return lights;
     },
@@ -2695,6 +2887,7 @@ export const CAR_MODELS = {
         exhausts: [{ path: [[0.55, 0.62, -3.9], [0.58, 0.60, -4.45], [0.60, 0.62, -4.80]], r: 0.19, flare: 0.35 }],
         glass: { z: [-1.62, 1.06], lift: 0.05, low: 7, steps: 14 },
         interior: { z0: -1.55, z1: 1.0, inset: 0.26, seatY: 1.30, seatZ: -0.55, seatX: [-0.62, 0.62] },
+        rearPlate: { y: 1.18, w: 1.06, h: 0.22 },
         plate: { z0: -4.20, z1: 4.15, inset: 0.14 },
       });
       // Full-width rear wing on two pylons — the silhouette everyone remembers.
@@ -2771,6 +2964,7 @@ export const CAR_MODELS = {
         exhausts: [{ path: [[1.05, 0.86, -3.5], [1.14, 0.84, -4.2], [1.18, 0.90, -4.55]], r: 0.18, flare: 0.40 }],
         glass: { z: [-2.95, 1.24], lift: 0.055, low: 6, steps: 16 },
         interior: { z0: -2.85, z1: 1.15, inset: 0.28, seatY: 1.80, seatZ: -0.55, seatX: [-0.70, 0.70] },
+        rearPlate: { y: 1.24, w: 1.02, h: 0.22 },
         plate: { z0: -3.95, z1: 3.90, inset: 0.14 },
       });
       // Roof spoiler with a gurney, bonnet vents, a rally light pod, mud flaps.
@@ -3497,6 +3691,11 @@ export function disposeCarModels() {
     t.normalMap?.dispose?.();
   }
   TYRE_TEXTURES.clear();
+  for (const t of PLATE_TEXTURES.values()) {
+    t.map?.dispose?.();
+    t.normalMap?.dispose?.();
+  }
+  PLATE_TEXTURES.clear();
 }
 
 export default CAR_MODELS;
