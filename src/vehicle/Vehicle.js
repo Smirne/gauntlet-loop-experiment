@@ -70,6 +70,10 @@ const _nrm = new THREE.Vector3();
 const _pt = new THREE.Vector3();
 const _q2 = new THREE.Quaternion();
 const _mat = new THREE.Matrix4();
+// Dedicated to _roadPitchAt so it can be called from inside the recovery path
+// without clobbering the scratch respawn() is using two frames later.
+const _pitchA = new THREE.Vector3();
+const _pitchB = new THREE.Vector3();
 const _ground = {
   y: 0, nx: 0, ny: 1, nz: 0, surface: 'concrete', hit: false, gap: false,
 };
@@ -229,6 +233,18 @@ export const VEHICLE_TUNING = {
   // a driving car does, so it only catches a car that is truly going nowhere.
   stuckProgressPerTick: 0.04,
   stuckProgressDelay: 2.2,   // s of no progress before the car is put back
+  // Ground shallow enough to pull away from. A ramp is exactly where cars come
+  // off, so without this the remembered "last good place" is very often ON the
+  // ramp and the recovery drops the player back onto the slope they just fell
+  // off, facing uphill from a standstill. 9 degrees passes ordinary road camber
+  // and banking while rejecting a launch ramp.
+  respawnMaxPitch: 9 * DEG,
+  // Minimum speed a recovery hands back, as a fraction of top. respawnKeepSpeed
+  // scales the speed the car HAD, which after a flip or a wall-stick is zero —
+  // so the car was being put back stationary and then had to drag itself away.
+  // A gentle roll is enough to get the tyres working and reads as a push rather
+  // than as a teleport.
+  respawnMinSpeed: 0.18,
   damageScale: 0.0055,       // damage per unit of impact impulse past threshold
   damageThreshold: 26,
   damagePowerLoss: 0.18,     // fraction of power lost at damage = 1
@@ -2008,12 +2024,45 @@ export class Vehicle {
 
     // Remember the last place the car was unambiguously on the road, so a
     // respawn puts it somewhere it can actually drive away from.
-    if (!this.isAirborne && !this.offTrack && this.speed > 2 && this.up.y > 0.6) {
+    //
+    // "Drive away from" has to include the GRADIENT, and it did not. Playtest:
+    // a car flipped on a ramp, the recovery put it back in the middle of that
+    // same ramp, and it then had to pull away uphill from a standing start —
+    // slower than the crash it was rescuing the player from. A ramp is exactly
+    // where cars come off, so the last on-road point before a fall is very
+    // often ON the ramp, which made the worst case the most likely one.
+    //
+    // Requiring shallow ground here means the remembered point walks back to
+    // the flat road before the ramp on its own, with no extra search.
+    if (!this.isAirborne && !this.offTrack && this.speed > 2 && this.up.y > 0.6
+        && Math.abs(this._roadPitchAt(this.trackT, this.trackLateral)) < this.tuning.respawnMaxPitch) {
       this._lastGoodT = this.trackT;
       this._lastGoodLateral = clamp(this.trackLateral, -this._trackHalfWidth * 0.55, this._trackHalfWidth * 0.55);
     }
 
     this._checkRecovery(fdt, g);
+  }
+
+  /**
+   * Climb angle of the road at `t`, in radians. Positive is uphill.
+   *
+   * Sampled over 6 u of arc rather than differentiated, because the surface
+   * function carries ramps and kerbs as real geometry and a point derivative
+   * would read the lip of a ramp as vertical.
+   */
+  _roadPitchAt(t, lateral = 0) {
+    const track = this.ctx?.track;
+    if (!track?.surfacePoint || !(track.length > 0) || !Number.isFinite(t)) return 0;
+    const dt = 6 / track.length;
+    try {
+      track.surfacePoint(t, lateral, _pitchA);
+      track.surfacePoint((t + dt) % 1, lateral, _pitchB);
+    } catch (_) {
+      return 0;
+    }
+    const dy = _pitchB.y - _pitchA.y;
+    const flat = Math.hypot(_pitchB.x - _pitchA.x, _pitchB.z - _pitchA.z);
+    return flat > 1e-4 ? Math.atan2(dy, flat) : 0;
   }
 
   /** Fall, flip and out-of-bounds detection. */
@@ -2208,7 +2257,12 @@ export class Vehicle {
     const target = Number.isFinite(t) ? t : this._lastGoodT;
     const lateral = opts.lateral ?? this._lastGoodLateral ?? 0;
     const keep = opts.keepSpeed ?? this.tuning.respawnKeepSpeed;
-    const speed = Math.min(this.speed, this.topSpeed) * clamp(keep, 0, 1);
+    // Floor it: a car recovered from a flip or a wall has no speed to scale, and
+    // handing it back stationary is what made the ramp case worse than the crash.
+    const speed = Math.max(
+      Math.min(this.speed, this.topSpeed) * clamp(keep, 0, 1),
+      this.topSpeed * clamp(opts.minSpeed ?? this.tuning.respawnMinSpeed ?? 0, 0, 1)
+    );
 
     if (track?.respawnAt) {
       try {

@@ -1703,3 +1703,139 @@ Band-limiting the joint (floor the falloff at 1.5 texels, scale amplitude so the
 I verified it live rather than take the report: **`_pairCount` 1 → 13**, one oversized proxy, and a car dropped from y=40 now rests at **y = 2.45** instead of falling through.
 
 Wave 10 is on stochastic tiling, the clearcoat environment (a mirror reflecting a smooth gradient shows nothing), verification of the new elimination metric across respawn/reverse/restart, and prop storytelling. I'll verify, commit, and launch wave 11 without stopping.
+
+**You:** i often find myself in position like this, and accellerating/turning does not allow to continue. Only solution seems to be reverse and restart, but that takes a lot of time away. I'd suggest more tolerance (PS: steering is still to steep)
+
+**Claude:** That's a real gameplay problem — being pinned against the wall with no recovery except reverse. Let me measure it rather than guess at the tolerance.
+  - `mcp__Claude_Browser__preview_start: http://localhost:8791/?track=kitchen&skipmenu=1&t=20&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** That scenario recovers fine — so I've reproduced the wrong thing. Looking at your screenshot again: the car is **outside the barrier**, on the bare table, with the white wall between it and the road. Let me test that:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Reproduced exactly. Outside the barrier: **7.5 seconds of full throttle and full steer, and it never moves** — speed grinding at −5, position unchanged. And there's **no automatic recovery at all**.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 echo "=== who handles respawn? ==="`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '1975,2012p' src/vehicle/Veh`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '2012,2035p' src/vehicle/Veh`
+
+**Claude:** Found it, and it's the same class of mistake as the capture guard — **the stuck test measures speed instead of progress**:
+
+```js
+if (this.speed < 6 && (this.up.y < 0.25 || (this.offTrack && this.speed < 2.5)))
+```
+
+Your car grinds along the wall at ~5 u/s. That's above the 2.5 threshold, so it never counts as stuck — it can scrabble there forever.
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/vehicle/Vehicle.js`
+
+**Claude:** Understood — you slid off *from* the track, so from your side you didn't leave the circuit, you just ended up somewhere with no way back. That makes automatic recovery more clearly the right answer, not less. Adding the tuning:
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/vehicle/Vehicle.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 grep -n "_progressT\|_noProgress" s`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/vehicle/Vehicle.js`
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 sed -n '546,551p' src/vehicle/Vehic`
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/vehicle/Vehicle.js`
+
+**Claude:** Now the steering — third report, so let me measure the *turn* rather than keep trimming the input curve:
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 node --input-type=module --check <`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=20&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Two useful results. At 73.8 u/s full lock gives only **7.3°/s** — a 582 u radius, 61 car lengths. So at speed it barely turns; the sharpness must be lower down. Measuring where you actually corner:
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** **That's the real problem, and it isn't the input curve I've been trimming.** The turn response has a cliff in it:
+
+| speed | yaw rate | radius | lock |
+|---|---|---|---|
+| 42 u/s | 20.8°/s | 12 car lengths | 34° |
+| **49 u/s** | **104.3°/s** | **2.8 car lengths** | 34° |
+| 65 u/s | 3.2°/s | 122 car lengths | 19° |
+| 82 u/s | 1.6°/s | 300 car lengths | 20° |
+
+Seven u/s takes you from a 12-car-length turn to a 2.8-car-length spin, then it collapses to no turning at all. That's not sensitivity — it's a cliff you fall off in the exact band where you corner.
+  - `Edit: /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4/src/vehicle/Vehicle.js`
+  - `mcp__Claude_Browser__navigate: http://localhost:8791/?track=kitchen&skipmenu=1&t=20&quality=ultra&autopilot=1&seed=20260730`
+  - `mcp__Claude_Browser__javascript_tool: javascript_exec`
+
+**Claude:** Cliff gone. Same test after:
+
+| speed | 19 | 35 | 49 | 81 |
+|---|---|---|---|---|
+| turn radius | 4.2 | 4.8 | 5.5 | 6.4 car lengths |
+
+A smooth, predictable progression instead of 2.8 → 300.
+  - `Bash: cd /Users/michele.giacobazzi/Desktop/wspace/welld/gauntlet-loop-experiment/.claude/worktrees/gauntlet-loop-experiment-11bcc4 git add -A && git commit -q -F - <<`
+
+**Claude:** Both fixed and committed as `98226a5`. Your steering complaint was right three times over, and I'd been fixing the wrong thing twice.
+
+**The steering had a cliff, not a slope.** I'd softened the input curve twice. Measuring the actual yaw rate at full lock showed why that never helped:
+
+| speed | radius |
+|---|---|
+| 42 u/s | 12 car lengths |
+| **49 u/s** | **2.8 car lengths** |
+| 65 u/s | 122 car lengths |
+| 82 u/s | 300 car lengths |
+
+Seven u/s took you from a wide turn to a spin; sixteen more took you to no turning at all. Both halves come from one place: available lock is `atan(latCap · wheelbase / v²)`, a 1/v² curve that sits on the ceiling and then falls off a cliff — and `steerAuthority: 1.28` deliberately let the commanded angle **exceed what the front tyres can hold**, which is what turned 49 u/s into a snap spin rather than a turn.
+
+Authority to 1.02, ceiling 34°→30°, floor 5.2°→8.5°. Measured after: **4.2, 4.8, 5.5, 6.4 car lengths** at 19/35/49/81 u/s. Drifting is still there and still on the handbrake — it just isn't something that happens by accident at one particular speed.
+
+**The stuck case reproduced exactly**: full throttle and full steer for 7.5 seconds moved the car 0.9 u while grinding at a steady −5 u/s. There *is* a beached detector, and it could never fire, because it gates on `offTrack && speed < 2.5` — a car grinding on a wall holds about 5 u/s, so by that test it's driving.
+
+That's the same mistake this project has now made in three separate files: **measuring a proxy instead of the thing**. The capture guard trusted a state flag instead of motion; the stuck test trusts wheel speed instead of progress. It now differences `trackT` with the wrap removed, and under 4.8 u/s of genuine advance for 2.2 s puts you back on the racing line — generous on time, strict on distance, because respawning someone about to recover is worse than two more seconds of trying.
+
+Worth noting: the collision fix from earlier may already have reduced how often you get wedged at all, since overlapping bodies now separate properly instead of resolving to half depth.
+
+Wave 10 is still running on stochastic tiling, the clearcoat environment, elimination verification and prop storytelling. Give it another drive when you can — I'd like to know whether the turn now feels predictable through a corner, and whether you still end up pinned.
+
+**You:** @"/Users/michele.giacobazzi/Desktop/Screen Recording 2026-08-17 at 23.30.55.mov"
+I don't know if a gameplay video can help. There's the "stuck on the wall problem", and also recovery on a bumb. That's before the fix, should i retry now?
+
+**Claude:** I can't play video directly, but I can extract frames and look at those. Let me check what's available:
+  - `Bash: which ffmpeg ffprobe 2>/dev/null || echo "no ffmpeg" ls -la "/Users/michele.giacobazzi/Desktop/Screen Recording 2026-08-17 at 23.30.55.mov" 2>/dev/null || echo`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+
+**Claude:** 37 seconds at 120fps. Extracting frames so I can actually see what happened:
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Read: /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-`
+
+**Claude:** That's exactly the failure — 7th place, **5 km/h**, off the road on the bare wood beside a prop. Let me look at more:
+  - `Read: /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-`
+
+**Claude:** 10.9 s later: still 7th, still **5 km/h**, now on the road at the foot of a ramp. Let me check whether the car ever moves — and whether that speedo is even working:
+  - `Read: /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-`
+
+**Claude:** The grid frame reads 0 km/h, so the speedo works — which means **5 km/h in both stuck frames is real**. You spent 5+ seconds crawling, twice, once off-road beside a prop and once on-road at the foot of a ramp. That's exactly what both fixes target.
+
+**Yes — retry now.** Everything is committed: the progress-based recovery (2.2 s of no advance puts you back on the racing line) and the steering cliff fix.
+
+Now your page request:
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+
+**Claude:** The updated stamp landed but the jump anchors didn't attach. Fixing so the links point at real sections:
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Bash: SP=/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2b`
+  - `Artifact: /private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-`
+
+**Claude:** The video helped a lot — more than a description could have. I extracted frames and read them.
+
+**Both problems confirmed, and worse than I'd assumed.** The grid frame reads 0 km/h so the speedo works, which means the two stuck frames are real: **5 km/h at 5.9 s, still 5 km/h at 10.9 s**, once off-road beside a prop and once *on the road* at the foot of a ramp. Five-plus seconds of crawling, twice, in a 37-second clip — and you're 7th of 8 as a direct result.
+
+The second one is the more interesting find: **you were on the track**, stopped at a bump, and couldn't climb it. My recovery fix keys on *progress along the track*, not on being off-road, so it catches that case too — which the old beached test never could, since it required `offTrack && speed < 2.5`.
+
+**Yes, retry now.** Both fixes are committed:
+- Recovery after 2.2 s of no real advance, wherever you are.
+- The steering cliff — at 49 u/s a full-lock turn was 2.8 car lengths and at 65 u/s it was 122. Now 4.2→6.4 car lengths across the whole range.
+
+Worth knowing what to look for: the recovery should feel like a quick reset to the racing line rather than something you have to ask for. If it fires when you were about to get out on your own, tell me — 2.2 s is a judgement call and easy to lengthen.
+
+**Page updated**: https://claude.ai/code/artifact/41a6f0af-c1d8-410f-b95a-cc2c96b66666
+
+It now carries a real **updated** stamp in the masthead, and a **Latest changes** panel pinned directly under the status tiles — newest first, with time and short SHA, the most recent entry highlighted. Below it is a jump bar linking to the sections that change most (round 3 scores, the speed-line veil, the black wedge, frames, open work, traps), so you can get to what moved without scrolling the whole history. The changelog is generated from `git log`, so it stays accurate on every republish rather than being hand-maintained.
+
+Wave 10 is still running — stochastic tiling, the clearcoat environment, elimination verification and prop storytelling.
