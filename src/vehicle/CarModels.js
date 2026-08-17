@@ -759,13 +759,19 @@ export function extrudePlate(shape, depth, bevel = 0.06, curveSegments = 12) {
  *
  * Must be called before the part is placed: positions have to still be in the
  * shape's own centred space.
+ *
+ * `flipU` is not cosmetic. +Z is the nose, so a part on the tail is read from
+ * -Z, and a viewer standing there has world +X on their *left*. Mapping u
+ * straight off x therefore hands them mirrored text. Anything on the nose wants
+ * flipU false; anything on the tail wants it true.
  */
-function planarUV(geom, w, h) {
+function planarUV(geom, w, h, flipU = false) {
   const p = geom?.attributes?.position;
   const uv = geom?.attributes?.uv;
   if (!p || !uv || uv.count !== p.count) return geom;
   for (let i = 0; i < p.count; i++) {
-    uv.setXY(i, (p.getX(i) + w * 0.5) / w, (p.getY(i) + h * 0.5) / h);
+    const x = p.getX(i);
+    uv.setXY(i, (flipU ? (w * 0.5 - x) : (x + w * 0.5)) / w, (p.getY(i) + h * 0.5) / h);
   }
   uv.needsUpdate = true;
   return geom;
@@ -2664,7 +2670,7 @@ function dressChassis(env, d) {
     // planarUV before placement: the blank is the one part of the car whose
     // texture has to land square on it, and the extruder hands out shape
     // coordinates as UVs.
-    out.add('plate', planarUV(extrudePlate(roundRectShape(w, h, p.r ?? 0.03), blank, bev, 6), w, h),
+    out.add('plate', planarUV(extrudePlate(roundRectShape(w, h, p.r ?? 0.03), blank, bev, 6), w, h, true),
       xform(0, p.y, lz));
     // A hair deeper than the blank so the frame stands proud of it and casts
     // the line that separates the two.
