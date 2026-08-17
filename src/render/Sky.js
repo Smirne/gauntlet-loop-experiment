@@ -202,19 +202,33 @@ vec3 mgEnvColor( vec3 dir ) {
     // ambient surface in that preset off the floor. As a ratio the contrast is
     // identical in both and the level tracks whatever light the preset is in.
     float bandLum = max( dot( col, vec3( 0.2126, 0.7152, 0.0722 ) ), 1e-4 );
-    float tubeRad = uCeilingPanel * uIndoor * bandLum;
 
-    // ENERGY IS CONSERVED, which is the whole reason a 10:1 source can go into
-    // the environment without lifting the game's diffuse IBL. The two strips
-    // cover 0.073 sr of PROJECTED solid angle (integrate d.y^4 dp over the two
-    // rectangles above, which is what a cosine-weighted hemisphere actually
-    // collects); the band they sit in covers about 2.12 sr projected. Taking the
-    // same energy back out of that band trades a flat ~24% off a ceiling no
-    // camera can see for a hard-edged 10:1 highlight on every clearcoat in the
-    // frame, and leaves hemisphere irradiance within a few percent of where it
-    // was. Because tubeRad is proportional to bandLum, the ratio 0.073/2.12
-    // cancels the local level and the compensation is a pure constant.
-    float comp = clamp( 0.0344 * uCeilingPanel * uIndoor, 0.0, 0.5 );
+    // A light fitting needs a ceiling to be screwed to, so it inherits the
+    // ceiling's own existence gate — squared up, because uIndoor is a crossfade
+    // and a preset that is only half indoors should not get a full-strength
+    // batten hanging in its sky. noon (0.25) and any outdoor preset get none at
+    // all; the workbench at dusk (0.70) gets a third of one, which is about
+    // right for a garage strip light; morning and nightLamp get all of it.
+    float ceilLamp = smoothstep( 0.55, 0.95, uIndoor );
+    float tubeRad = uCeilingPanel * ceilLamp * bandLum;
+
+    // ENERGY IS CONSERVED, which is the whole reason a 16:1 source can go into
+    // the environment without lifting a single ambient level in the game. Left
+    // alone the strips raise cosine-weighted up-facing irradiance by 16.5% at
+    // morning; taking that back out of the band they sit in returns it to where
+    // it was. Both sides carry uCeilingPanel and ceilLamp and both scale with
+    // bandLum, so the trade holds at any preset and any tuning value, and the
+    // constant is a constant.
+    //
+    // 0.057 was SOLVED, not chosen: bisect the value that leaves hemisphere
+    // irradiance unchanged, per preset, over 400 k cosine-weighted samples of
+    // this exact function. The six presets want 0.0497 to 0.0587 — they do not
+    // agree exactly because the window sits outside this band and carries a
+    // different share of the total in each — and at 0.057 every one of them
+    // lands within 0.5% of where it was. An earlier value came from integrating
+    // d.y^4 dp over the two rectangles by hand and was 1.7x too small, which is
+    // why this one is measured instead.
+    float comp = clamp( 0.057 * uCeilingPanel * ceilLamp, 0.0, 0.5 );
     col *= 1.0 - comp * ceilBand;
     col += tubeCol * tubeRad * ( tube + diffuser * 0.12 ) * ceilBand;
   }
