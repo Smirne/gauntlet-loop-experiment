@@ -238,6 +238,17 @@ export const VEHICLE_TUNING = {
   // pinned one manages.
   stuckNetAdvance: 14,
   stuckProgressDelay: 2.2,   // s without that much progress before a reset
+  // Stranded: off the racing surface AND crawling. Separate from the rule above
+  // because a car sliding ALONG a barrier makes real progress around the lap and
+  // is therefore invisible to it, while being just as far out of the race.
+  // Measured over 75 s: legitimate off-track excursions run to 5 s, but they
+  // carry speed. The first attempt used 45% of top and fired 50 times in 75 s of
+  // ordinary racing — a hairpin taken slightly wide is off-surface and under
+  // half pace for several seconds, and resetting someone mid-corner is far worse
+  // than the bug. The stranded case in the playtest video was around a tenth of
+  // top speed, so the gate belongs down there, not at half.
+  strandedSpeedFrac: 0.16,
+  strandedDelay: 3.2,        // s off-surface and slow before a reset
   // Ground shallow enough to pull away from. A ramp is exactly where cars come
   // off, so without this the remembered "last good place" is very often ON the
   // ramp and the recovery drops the player back onto the slope they just fell
@@ -591,6 +602,7 @@ export class Vehicle {
     this._fallTimer = 0;
     this._stuckTimer = 0;
     this._noProgress = 0;      // seconds without advancing along the track
+    this._offTrackDwell = 0;   // seconds off the racing surface AND slow
     this._progressT = NaN;     // previous trackT; NaN until the first sample
     this._respawnCooldown = 0;
     this._lastGoodT = 0;
@@ -2103,6 +2115,7 @@ export class Vehicle {
     }
 
     this._checkNoProgress(fdt);
+    this._checkOffTrackDwell(fdt);
   }
 
   /**
@@ -2178,6 +2191,42 @@ export class Vehicle {
     if (this._noProgress > t.stuckProgressDelay) {
       this._noProgress = 0;
       this._progressT = NaN;
+      this.respawn(this._lastGoodT);
+    }
+  }
+
+  /**
+   * Off the racing surface, slow, and staying that way.
+   *
+   * The net-progress rule above cannot see this one, and a playtest video showed
+   * exactly why: a car that runs wide at a hairpin ends up OUTSIDE the barrier
+   * and then slides ALONG it. Sliding along a barrier makes real forward
+   * progress around the lap — 14 u in 2.2 s easily — so by that rule the car is
+   * racing. It is not racing. It is doing 20 km/h against a wall it cannot get
+   * back over, while the field does 178, and the barrier that is meant to keep
+   * it on the track is now keeping it off.
+   *
+   * The same frame showed three cars piled there, so the AI suffers it too — it
+   * is not a player-input problem and the recovery must not be player-only.
+   *
+   * Gated on speed as well as position because being off the surface is legal
+   * and common: measured over 75 s of racing, cars sit off-track for up to 5 s
+   * at a time while cutting and running wide, and that must never be reset. What
+   * is not legal is being off it AND crawling. A car legitimately cutting a
+   * corner carries speed and is pointed back at the road.
+   */
+  _checkOffTrackDwell(fdt) {
+    const t = this.tuning;
+    if (this.frozen || this._respawnCooldown > 0) { this._offTrackDwell = 0; return; }
+
+    const slow = Math.abs(this.forwardSpeed) < t.strandedSpeedFrac * (this.topSpeed || 99);
+    if (!this.offTrack || !slow) { this._offTrackDwell = 0; return; }
+
+    this._offTrackDwell += fdt;
+    if (this._offTrackDwell > t.strandedDelay) {
+      this._offTrackDwell = 0;
+      this._progressT = NaN;
+      this._noProgress = 0;
       this.respawn(this._lastGoodT);
     }
   }
