@@ -480,6 +480,10 @@ const f = (n) => {
  * second Lighting instance must adopt this configuration rather than assume its
  * own.
  */
+/** Camera motion beyond which a fit is treated as a cut, not as drift. See `_fitToCamera`. */
+const CUT_DIST = 12;
+const CUT_DOT = Math.cos(2 * Math.PI / 180);
+
 const CsmChunk = { installed: false, original: null, cascades: 0, splits: null };
 
 /**
@@ -763,6 +767,11 @@ export class Lighting {
     this.cascades = [];
     this._frame = 0;
     this._intervals = [1, 2, 3, 4];
+    // Camera pose the cascades are currently fitted for, so a cut can be told
+    // apart from drift. Invalid until the first fit.
+    this._fitPos = new THREE.Vector3();
+    this._fitDir = new THREE.Vector3();
+    this._fitValid = false;
 
     this._blend = null; // { from, to, t, rate }
     this._envCache = new Map();
@@ -1349,6 +1358,30 @@ export class Lighting {
     camera.getWorldDirection(_fwd);
     _camPos.setFromMatrixPosition(camera.matrixWorld);
 
+    // A camera CUT breaks the premise the throttle below rests on.
+    //
+    // The throttle assumes frame-to-frame coherence: a cascade that is up to
+    // four frames stale is still fitted close enough to where the camera is,
+    // because the camera only ever creeps. Measured over 179 race frames that
+    // is true by a wide margin — the worst single-frame camera motion is 0.67 u
+    // and 0.08 degrees. A capture, a replay cut or a camera change teleports it
+    // hundreds of units in one step, and then a throttled cascade is fitted to a
+    // shot that is no longer on screen.
+    //
+    // This is not hypothetical and it is not new. It is why review sets keep
+    // disagreeing with the running game about whether this renderer casts
+    // shadows. `Capture` calls `syncSystems()` exactly once after posing, which
+    // is one call to this method, so cascade 2 — the only one wide enough to
+    // cover the table on the wide shots — refits only when the frame counter
+    // happens to be divisible by 3. r18 won that lottery and was scored with
+    // shadows; r19 and r20 lost it and were scored without. Four blind judges
+    // called r18 the better build 4/4 on exactly that difference.
+    //
+    // 12 u and 2 degrees sit ~18x above the worst continuous motion measured, so
+    // this cannot fire on a moving camera, and any real cut clears it by orders
+    // of magnitude.
+    const cut = this._isCameraCut(_camPos, _fwd);
+
     const tanV = Math.tan((camera.fov * DEG) * 0.5);
     const tanH = tanV * camera.aspect;
     const a2 = tanV * tanV + tanH * tanH;
@@ -1362,7 +1395,7 @@ export class Lighting {
       // lag at 100 u out is invisible and each refit costs a full depth pass.
       // A cascade that is not refitted is also not re-rendered, so its stale map
       // and its stale shadow matrix stay consistent with each other.
-      if (!first && this._frame % interval !== 0) continue;
+      if (!first && !cut && this._frame % interval !== 0) continue;
 
       // Without the shader patch there is exactly one map, and it has to cover
       // the whole shadow range rather than just the first slice.
@@ -1384,6 +1417,27 @@ export class Lighting {
       _center.copy(_camPos).addScaledVector(_fwd, cDist);
       this._placeCascade(c, _center, radius);
     }
+
+    this._fitPos.copy(_camPos);
+    this._fitDir.copy(_fwd);
+    this._fitValid = true;
+  }
+
+  /**
+   * Did the camera jump rather than move? See the comment in `_fitToCamera`.
+   *
+   * Deliberately compares against the pose the last *fit* was made for, not the
+   * last frame's pose: a cut followed by four throttled frames must keep
+   * reporting true until every cascade has actually been refitted to it.
+   *
+   * @param {THREE.Vector3} pos current camera world position
+   * @param {THREE.Vector3} dir current camera world direction, normalised
+   * @returns {boolean}
+   */
+  _isCameraCut(pos, dir) {
+    if (!this._fitValid) return true;
+    if (this._fitPos.distanceToSquared(pos) > CUT_DIST * CUT_DIST) return true;
+    return this._fitDir.dot(dir) < CUT_DOT;
   }
 
   /** Fallback when there is no perspective camera: one box over the playfield. */

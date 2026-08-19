@@ -277,7 +277,7 @@ Not yet attempted. The candidate fix is to reject a suspension sample whose grou
 differs from the previous iteration's by more than the strut can span, rather than clamping
 the intersection distance and trusting it.
 
-## D20 — The renderer casts no shadows at all — CRITICAL — OPEN (reopened)
+## D20 — The renderer casts no shadows at all — CRITICAL — FIXED (root cause: the capture path, not the renderer)
 `render/Lighting.js`, the CSM chunk patch. Every critic round to date has been scored on
 shadowless frames, which is most of the lighting score.
 
@@ -736,3 +736,70 @@ shape: a single aggregate number over a whole frame, read as though it were a me
 the thing I cared about. 0.00% from the slab test, 0% from a corner texel read, 5.004% from
 the wrong camera. A frame-wide percentage cannot tell you *where* or *what*. Before believing
 one again, look at the frame.
+
+
+### ROOT CAUSE, at last: the review frames were a lottery and the renderer was never broken
+The premise of this whole entry — "the renderer casts no shadows" — was false. The **running
+game** has cast shadows and has had them throughout. What did not have them, most of the time,
+was the **capture path that produces the frames every critic round is scored on**.
+
+Measured in the live race, as a 32x18 grid of mean luma darkening rather than as one
+frame-wide percentage — which is what should have been done on day one:
+
+    the darkening is not spread over the frame. It sits in a handful of tight blobs
+    in the lower half, peaking at 59.2 luma. Those are cast shadows, and they are strong.
+
+Then the discriminating experiment. Teleport the camera the way `Capture` does, render
+without letting anything refit, and compare against the same shot with one forced refit:
+
+    camera teleported, no refit      4.73% of frame darkened by shadows
+    same camera, cascades refitted  33.65% of frame darkened by shadows
+
+**The mechanism.** `Capture` calls `engine.syncSystems()` once after posing the camera —
+that was the round-4 fix for exactly this class of bug, and it is still there and still
+correct. But one `syncSystems()` is one call to `Lighting._fitToCamera()`, and that method
+throttles each cascade on its own interval, `[1, 2, 3, 4]` at ultra:
+
+    if (!first && this._frame % interval !== 0) continue;
+
+So a single resync refits cascade 2 — the only one wide enough to cover the table on the
+wide shots — only when the frame counter happens to be divisible by 3. Measured by stepping
+`_frame` through six values and recording which cascades actually moved:
+
+    _frame  0: c0 c1 c2      _frame  3: c0 c1 --
+    _frame  1: c0 c1 --      _frame  4: c0 -- --
+    _frame  2: c0 -- c2      _frame  5: c0 c1 c2
+
+**Two of six.** Every review set since the throttle landed has been a coin flip on whether
+the frames show the lighting the game actually has. r18 won the toss and was scored with
+shadows; r19 and r20 lost it and were scored without. Four blind judges then called r18 the
+better build 4/4 on precisely that difference — a real, reproducible verdict about two
+frames, and a completely false one about two builds.
+
+### The fix
+The throttle rests on frame-to-frame coherence: a cascade up to four frames stale is still
+fitted near enough to where the camera is. Measured over 179 race frames, that premise holds
+by a wide margin — worst single-frame camera motion is **0.67 u and 0.08 degrees**. A capture,
+a replay cut or a camera change teleports hundreds of units in one step and breaks it
+outright.
+
+So `_fitToCamera` now detects a cut — more than 12 u or 2 degrees from the pose the cascades
+were last *fitted for*, ~18x above the worst continuous motion — and refits every cascade
+when it sees one. Verified both directions:
+
+    after a cut, at all six frame parities    c0 c1 c2   (was 2 of 6 for c2)
+    during a normal race                      c0 only, mostly — throttle intact
+
+The comparison is against the pose the last fit was made for, not the last frame's pose, so a
+cut followed by throttled frames keeps reporting true until every cascade has caught up.
+
+### Why this took so long, and the standing rule that comes out of it
+Three wrong conclusions, all the same mistake: one aggregate number over a whole frame, read
+as though it measured the thing I cared about. 0.00% from a slab test that never checked
+whether the slab was inside a cascade. 0% from a corner read of a 2048 texture. 5.004% from
+the menu camera, where the wide cascade covers everything and shadows genuinely do work.
+
+A frame-wide percentage cannot tell you *where* or *what*, and every one of those numbers was
+consistent with the truth — the renderer works, the capture of it did not. **Rule: before
+believing an aggregate, render the difference and look at where it lives.** The 32x18 grid
+that cracked this took four lines more than the percentage did.
