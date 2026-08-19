@@ -216,6 +216,31 @@ table. I first read them as pure-black shadows, then as missing road geometry. T
 neither — a raycast finds the road present, and they survive with `shadowMap.enabled = false`.
 
 ## D19 — A ramp's lip injects energy into whatever is standing on it — MAJOR — OPEN
+### Closed false lead: correcting the lip normal makes it worse
+`world/Track.js` `surfaceNormal` central-differences `hazardHeight` over a 2.8 u window, so
+across the lip's step it reports the cliff as the surface and returns a normal lying 71 deg
+forward of vertical — sampled directly: 13.1 deg along the whole ramp face, then 70.7 and
+71.5 deg in the two samples straddling the lip, then 0 deg. That band is exactly the sample
+window and every car crosses it. `Track.normalAt`'s own comment says the suspension uses this
+normal, so a forward-pointing normal reads as an obvious horizontal cannon.
+
+Replacing the central difference with two one-sided slopes, shallower wins, removes the band
+cleanly (verified: 13.1 deg up to the lip, 0 deg after, worst tilt anywhere on the lap 32.2
+deg at the toe, which is real geometry). It also makes the game much worse:
+
+  seed        lip injections        flips
+  20260730       2 ->  0           10 -> 5
+  771            0 ->  5            5 -> 14
+  4413           0 -> 12            7 -> 17
+  total          2 -> 17
+
+Reverted in "Revert the lip normal fix". The mechanism is not understood. The suspicion is
+`_suspension`'s guard `if (denom > -0.12)` — denom is the strut direction dotted with this
+normal, so changing the normal changes which samples take the tangent-plane path instead of
+the plumb-drop fallback, and the shallow normal apparently admits contacts the steep one
+rejected. Whatever the cause, the 2.8 u band is a real artefact and fixing it in isolation is
+not the fix. Do not rediscover it and patch it the same way.
+
 `vehicle/Vehicle.js` `_suspension`, against `world/Track.js`. The 71 deg normal band (fixed,
 see commit "The lip's normal pointed 71 degrees forward") was one cause of this and not the
 only one. What remains, measured on seed 771 with the normal fix live: five one-step speed
