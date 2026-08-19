@@ -52,6 +52,15 @@ const EDGE_OVERHANG = 1.2;     // road material continues this far past the nomi
 const SKIRT_LIFT = 0.06;       // outermost shoulder row floats this far over the ground slab
 
 const ROAD_TEX_SCALE = 62;     // world units per texture repeat on the road
+// Multiplier on the road's racing-line groove and edge dust. 1 is what shipped;
+// `?roadWear=N` overrides it so the two can be captured from one build at one
+// pinned race moment, which is the only way to A/B something this subtle.
+const ROAD_WEAR = (() => {
+  try {
+    const v = Number(new URLSearchParams(location.search).get('roadWear'));
+    return Number.isFinite(v) && v > 0 ? Math.min(4, v) : 1;
+  } catch (e) { return 1; }
+})();
 const GROUND_TEX_SCALE = 96;
 const KERB_TILE = 11;          // two kerb blocks per repeat
 const WALL_TEX_SCALE = 34;
@@ -2101,10 +2110,24 @@ export class TrackBuilder {
         let v = 1;
         if (c.group === 'road') {
           // Rubber laid down on the line, grit and dust collected at the edges.
+          //
+          // This is the road's only ribbon-space identity. The substrate is
+          // projected in world XZ on purpose (see the header) — the grain and
+          // the plank joints run straight through the track because the road IS
+          // a piece of the table, and parameterising it in ribbon space made the
+          // boards bend round the hairpins. So everything that says "a car goes
+          // along here" has to come from this term and the painted markings.
+          //
+          // Four blind judges say the road does not read as a road, and the
+          // measured contrast against the table is 58 luma at the camera the
+          // game ships with — so it is not that the road is too similar in
+          // brightness. `?roadWear=N` scales these two so the hypothesis
+          // "there is not enough history on the surface" can be A/B'd from one
+          // build instead of argued about.
           const d = Math.abs(lat - lineLat[i]);
           const groove = Math.exp(-(d * d) / (5.5 * 5.5));
           const edge = smoothstep(hw * 0.62, hw * 1.02, al);
-          v = 1 - groove * 0.24 - edge * 0.10;
+          v = 1 - groove * (0.24 * ROAD_WEAR) - edge * (0.10 * ROAD_WEAR);
         } else {
           // Dirt banked up against the road, fading out into clean ground.
           const k = smoothstep(hw + EDGE_OVERHANG, hw + shoulder, al);
