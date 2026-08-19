@@ -803,3 +803,46 @@ A frame-wide percentage cannot tell you *where* or *what*, and every one of thos
 consistent with the truth — the renderer works, the capture of it did not. **Rule: before
 believing an aggregate, render the difference and look at where it lives.** The 32x18 grid
 that cracked this took four lines more than the percentage did.
+
+
+## D21 — `renderFrame()` is not idempotent: ~72% of the frame changes on some renders — MAJOR — OPEN
+Found while trying to localise the streak veil by hiding objects and diffing frames. The
+diff kept reporting that hiding a dust emitter changed 72% of the image, which is absurd, so
+I measured the instrument instead of trusting it.
+
+One `stepOnce()`, then nine `renderFrame()` calls in a row with **nothing changed between
+them**, comparing consecutive pairs:
+
+    render     2    3      4  5  6  7    8      9
+    vs prev    0    72.54  0  0  0  0    72.55  0
+    vs first   0    72.54  72.54 72.54 72.54 72.54  72.56  72.56
+
+The scene is frozen. The camera is frozen. Nothing is toggled. Yet render 3 differs from
+render 2 across 72.5% of the frame, holds that state through render 7, and shifts again at
+render 8 — and it does not return to the first state, so there are at least three of them.
+Rendering the same frame twice does not produce the same image.
+
+**Three consequences, in order of how much damage they have already done:**
+
+1. **Every toggle-and-diff probe run outside the first two renders after a step is
+   worthless.** That includes the earlier conclusion that the streak veil "survives disabling
+   all twelve post passes, so it is scene geometry, and survives hiding the light shafts and
+   dust". That was measured with this instrument and has to be treated as unproven — it is
+   the reason the veil was chased into the room shell, which may well be the wrong place.
+   The shadow measurements in this file are not affected: those were taken as `stepOnce()`
+   followed by two or three grabs, inside the stable window.
+
+2. **It is a plausible mechanism for the veil itself.** A full-screen artifact that appears
+   on some renders and not others would show up in a capture whenever the capture lands on
+   one, which is exactly the "sometimes there, sometimes not" character the veil has had. The
+   capture path renders twice and keeps the second — always render 2, so at least it is
+   consistent — but that is luck, not design.
+
+3. **A still camera in the running game is periodically changing 72% of its pixels.** Whatever
+   that is, a player sitting still at a menu or on a grid should not be seeing it.
+
+**Do not** investigate this by comparing frames far apart. The valid window is renders 1-2
+after a `stepOnce()`; past that the comparison is measuring this bug rather than whatever was
+toggled. The first thing to identify is which pass or buffer has a period of about five
+renders — the shape of the sequence (change at 3, hold to 7, change at 8) says something is
+being accumulated or ping-ponged on a schedule, not jittered per frame.
