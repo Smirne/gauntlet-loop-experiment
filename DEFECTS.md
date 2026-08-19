@@ -1026,3 +1026,49 @@ Verde Acido, Forest Green, Bare Primer, Azzurro.
   the first (`#2b1f2c` for the same car), so that instrument is unreliable too.
   **The source of truth is the `LIVERIES` table.** It is authored data; read it directly
   instead of trying to recover it from pixels.
+
+
+## D25 — Every review set was shot at a different race moment — CRITICAL (method) — FIXED
+The blind A/B rests on one premise: the only difference between two sets is the build. That
+premise has been false for every round run so far.
+
+The engine's fast-forward is deterministic — two loads of the identical URL put car 0 at
+exactly `(-125.997, 1.757, 40.595)`, byte for byte, both times. What is not deterministic is
+everything after it. The RAF loop keeps stepping the race from the moment the page is ready
+until somebody calls `captureSet()`, so the shot lands wherever the operator's typing speed
+put it. `assertMoving`'s own leader-advance number, from four runs of the same URL:
+
+    r20  0.01895     r21  0.01945     r22  0.02316     r23  0.01895
+
+Four different moments. **This is my procedure, not the engine**, and it is worse than noise
+because it is invisible in the output: every set looks like a valid capture of the build.
+
+**It has already produced a wrong verdict.** The r22 vs r23 A/B was run to adjudicate the D24
+livery change and came back 3-1 against it. The judges' stated reasons were mostly not about
+liveries: one counted four cars in one set and two in the other and scored the difference,
+which is a fact about when the shutter fell. **That round is void.** The livery change stands
+on its measured colour separation (worst pair 28 -> 75), which is a property of the roster and
+not of any frame, and it needs re-judging under the fixed harness before anything is claimed
+about how it looks.
+
+It very likely explains a good deal of the disagreement between earlier rounds too — including
+why the veil seemed to move between builds. The veil root cause (a boosting car) is measured
+directly and does not depend on this, but "r18 was clean" was always partly luck about the
+moment.
+
+### Fixed
+`captureSet` now pins the moment before it does anything else: pause the engine, then step to
+a fixed race clock (`PIN_RACE_TIME = 20.0 s`), absorbing whatever drift the RAF introduced. If
+the clock is already past the pin it refuses rather than shooting an incomparable set.
+`assertMoving` then steps its usual 60, which is constant from a pinned state.
+
+Verified the only way that counts — two fresh loads of the same build, with a deliberate 2.5 s
+extra delay on the second so the RAF drift differed:
+
+    leader advance          0.01392 both runs   (was varying run to run)
+    pixels differing > 6    0.02%
+    mean signed luma        0.000
+    pixels beyond +/-1      0% brighter, 0% darker
+
+The residue is grain on a handful of pixels, which is D21 and expected. Before the pin, two
+runs differed by a whole race moment.

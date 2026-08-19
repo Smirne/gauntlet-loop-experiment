@@ -101,9 +101,62 @@ function assertMoving(steps = 60) {
   return { moving: true, advanced: +(after - before).toFixed(5), steps };
 }
 
+/**
+ * The captured MOMENT has to be pinned, or a blind A/B is not comparing builds.
+ *
+ * The engine's fast-forward is deterministic — two loads of `?t=16` put car 0 at
+ * exactly (-125.997, 1.757, 40.595), byte for byte. What is NOT deterministic is
+ * everything after it: the RAF loop keeps stepping the race from the moment the
+ * page is ready until somebody calls this function, so the shot lands wherever
+ * the operator's typing speed put it. Rounds r20 through r23 were each taken at a
+ * different race moment — measured through `assertMoving`'s own leader advance,
+ * which came back 0.01895, 0.01945, 0.02316 and 0.01895 across four runs of the
+ * identical URL.
+ *
+ * That is fatal for a blind A/B whose whole premise is that the only difference
+ * between two sets is the build. Judges on r22 vs r23 reported four cars in one
+ * set and two in the other and scored the difference, which is a fact about when
+ * the shutter fell, not about either build.
+ *
+ * So: pause first, then step to a FIXED race clock. Any drift the RAF introduced
+ * is absorbed as long as it is under `TARGET - t`, and every set from every build
+ * is then shot at the same instant of the same deterministic race.
+ */
+const PIN_RACE_TIME = 20.0;
+
+function pinMoment(target = PIN_RACE_TIME) {
+  const engine = window.MG.engine || window.MG.ctx?.engine;
+  const race = window.MG.ctx?.race;
+  if (!engine || !race || typeof race.raceTime !== 'number') return { pinned: false, why: 'no engine or race clock' };
+
+  engine.pause?.('capture-pin');
+  const before = race.raceTime;
+  if (before > target) {
+    return { pinned: false, why: `race clock is already ${before.toFixed(3)} s, past the ${target} s pin`,
+             fix: 'reload and call captureSet sooner, or raise PIN_RACE_TIME' };
+  }
+  // Step with rendering suppressed: the frames on the way to the pin are not
+  // wanted and rendering them is the expensive part.
+  const real = engine.renderFrame;
+  engine.renderFrame = () => {};
+  let steps = 0;
+  try {
+    while (race.raceTime < target && steps < 20000) { engine.stepOnce(); steps++; }
+  } finally {
+    delete engine.renderFrame;
+    if (engine.renderFrame !== real) engine.renderFrame = real;
+  }
+  return { pinned: true, from: +before.toFixed(3), to: +race.raceTime.toFixed(3), steps };
+}
+
 export async function captureSet(suffix = '', opts = {}) {
   const s = window.MG?.status;
   if (!s) return { booting: true, msg: document.querySelector('#boot .boot-msg')?.textContent };
+
+  const pin = pinMoment(opts.pinRaceTime ?? PIN_RACE_TIME);
+  if (!pin.pinned && !opts.force) {
+    return { refused: 'could not pin the capture moment — the frames would not be comparable', pin };
+  }
 
   const live = assertMoving();
   if (!live.moving && !opts.force) {
