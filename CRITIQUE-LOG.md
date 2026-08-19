@@ -117,3 +117,54 @@ table." "A ghost-translucent film over bare wood with only faint white lane line
 driving line is guesswork." "The lane is just bare plywood with a few thin white line strokes
 that break up and float." That is the next thing to fix, and it is an art problem rather than
 a bug.
+
+## Livery A/B — the first rounds where the frame isolates the change
+
+Both schemes captured from ONE build at the SAME pinned race moment via `?liveryMode=index`
+(see D25). Identical geometry, lighting, effects and race state — the only difference in the
+frame is which paint each car wears. Every earlier round in this log compared two moments as
+much as two builds.
+
+### Round A — car-separation only, vs the original
+| Pair | Angle | Winner | Note |
+|---|---|---|---|
+| 1 | gameplay | original | "both dark, low-saturation blobs on brown wood" |
+| 2 | chase | separated | lime-green vs red is "a far bigger colour gap" |
+| 3 | macro | original | "the hero's dark upper surfaces bleed into the neighbouring car" |
+| 4 | establishing | original | "four dark specks on a brown table" |
+
+**Lost 1-3.** The scheme maximised distance between cars and took the worst pair from 28 to
+75, and it still lost. Every judge volunteered the same reason without being asked for it, and
+none of it was car-vs-car: *"change the red hero, red shares the wood's warm hue family"*,
+*"the red car is nearly the same value and hue as the brown track"*, *"both sit within a hair
+of the tabletop and dirt colour and effectively camouflage"*.
+
+They were not saying the cars looked like each other. They were saying the cars looked like
+the table — and the metric had no term for that.
+
+### Round B — background-aware, vs the original
+| Pair | Angle | Winner | Confidence |
+|---|---|---|---|
+| 1 | gameplay | **background-aware** | high |
+| 2 | chase | **background-aware** | high |
+| 3 | macro | **background-aware** | high |
+| 4 | establishing | original | medium |
+
+**Won 3-1**, and the judges' language tracks the measurement exactly. On the old hero car:
+"sinks badly", "it is camouflage", "the eye slides off it and jumps to the blue car instead".
+On the new one: "holds the eye firmly", "clamps the surface from both ends". The player's car
+went from 69 to 157 units away from the oak it drives on.
+
+### The loss is a real finding, not noise
+The wide shot is the one frame dominated by the **dirt** sections rather than the oak table,
+and there the background-aware scheme puts Rally Orange (79 from the oak) and Night Stage on
+dirt, where the judge says they "sink" and "go muddy against the shaded dirt track". Optimising
+against a single surface colour is better than optimising against none, and still wrong: the
+kitchen track runs over varnished oak, pine, newspaper, crumbs and a ceramic trivet, and a
+livery only has to lose against one of them to disappear for that stretch of the lap.
+
+**Next: score each livery against the SET of surfaces the track actually uses, not one.**
+That needs the rendered colour of each surface measured the way the oak was — from the frame,
+not from the texture — and it should be judged blind like everything else. Do not assume the
+multi-surface version is better because the reasoning is nicer; the car-only version had nice
+reasoning too and lost 1-3.
