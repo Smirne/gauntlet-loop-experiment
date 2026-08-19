@@ -215,6 +215,43 @@ It is also where the dark navy bands in `shots/diag-live-blur.png` and the first
 table. I first read them as pure-black shadows, then as missing road geometry. They are
 neither — a raycast finds the road present, and they survive with `shadowMap.enabled = false`.
 
+## D19 — A ramp's lip injects energy into whatever is standing on it — MAJOR — OPEN
+`vehicle/Vehicle.js` `_suspension`, against `world/Track.js`. The 71 deg normal band (fixed,
+see commit "The lip's normal pointed 71 degrees forward") was one cause of this and not the
+only one. What remains, measured on seed 771 with the normal fix live: five one-step speed
+gains of 12-15 u/s within 1 u of the lip, each on a car whose centre is at y 6.0-6.8 while
+the ramp surface there is 8.4 — the car is roughly 2 u inside the ramp.
+
+The suspension finds ground by intersecting the strut with the tangent plane through a
+sampled point, iterated twice. That model assumes the surface is locally a plane. At the lip
+the surface is a cliff: `heightAt` drops from 8.96 to 0.50 between two samples 0.5 u apart.
+A strut whose sample lands on the far side of the step intersects a plane 8.5 u below where
+the wheel actually is, and `clamp(d, -2, maxRay + 4)` admits the result.
+
+Traced, one car over the lip at 26 u/s (u = signed units from the lip, clr = y - heightAt):
+
+      u      y    surf    clr   air  up.y  spd
+    -0.4   8.68   8.96  -0.28    0   0.97   26
+    +0.1   8.52   0.50   8.02    0   0.96   28
+    +1.3   8.27   0.50   7.77    0   0.78   31
+    +2.6   8.44   0.50   7.94    0   0.71   42
+    +6.1   8.82   0.50   8.33    1   0.22   41
+    +8.1   8.48   0.50   7.72    1  -0.05   43
+
+The car is legitimately still grounded through most of that window — its rear wheels are on
+the last of the ramp while its nose is over the void, which is what a lip is for — so
+`isAirborne` is not the bug. The bug is that the front struts, sampling past the step, are
+still returning contact against a plane 8 u down and feeding tyre forces from it. Note the
+speed: 26 to 42 while nothing but the rear axle is on anything.
+
+Ruled out: penetration recovery in the solver (the injection is horizontal with y unchanged,
+and `velocityBias` uses a split impulse); car-car contact (two of the original ten flips had
+the nearest car 42 and 52 u away).
+
+Not yet attempted. The candidate fix is to reject a suspension sample whose ground height
+differs from the previous iteration's by more than the strut can span, rather than clamping
+the intersection distance and trusting it.
+
 ## D13 — Fog is heavy enough to erase the backdrop — MAJOR — OPEN
 `render/Sky.js` [A4]. Follows from D12 and may share a fix. At the distances the establishing
 and low-angle cameras use, fog has already taken everything to near-flat. Whatever is built
