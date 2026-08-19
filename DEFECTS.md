@@ -277,6 +277,53 @@ Not yet attempted. The candidate fix is to reject a suspension sample whose grou
 differs from the previous iteration's by more than the strut can span, rather than clamping
 the intersection distance and trusting it.
 
+## D20 — The renderer casts no shadows at all — CRITICAL — OPEN
+`render/Lighting.js`, the CSM chunk patch. Every critic round to date has been scored on
+shadowless frames, which is most of the lighting score.
+
+The test that settles it needs no flags and no shader recompiles: put a 300x300 slab 60 u
+above the field and toggle only its `castShadow`.
+
+    slab added to the scene vs not      13.13% of pixels change   (it is plainly visible)
+    slab casting vs slab not casting     0.00% of pixels change   (it casts nothing)
+
+Repeated at subject view depths of 61, 121, 303, 607, 708, 809 and 910 u: 0.00% at every
+one. A clean-room scene built from scratch in the same renderer - new DirectionalLight with
+castShadow, new ground plane with receiveShadow, new box - also gives 0.00%.
+
+Configuration is all correct, which is why this survived so long: `shadowMap.enabled` true,
+type PCFSoftShadowMap, three cascades all agreeing at elevation 24 deg / azimuth -52 deg,
+2048x2048 maps allocated with `hasMap` true, 160 casters and 286 receivers in the scene. The
+sun is also doing most of the lighting - zeroing the cascades changes 55.89% of pixels - so
+there is plenty of direct light for shadows to attenuate.
+
+Ruled out, each by measurement:
+  - `shadow.autoUpdate` / `needsUpdate` being false. Forcing both on, renderer included,
+    leaves the slab test at 0.00%.
+  - Cascade frustum placement. The frusta are indeed aimed at nothing useful (targets at
+    [410,284,552], [-107,-33,-70], [-322,-129,-336] while the cars sit at [9,1,31]) but
+    re-aiming all three at the car field, with spans of 60/160/420, still gives 0.00%.
+  - `Materials.js` tampering with shader chunks. `lights_fragment_begin`,
+    `shadowmap_pars_fragment` and `shadowmask_pars_fragment` are pristine - no `mg_`
+    substitution, `getShadowMask` intact.
+  - The CSM patch's baked far fade. The installed chunk ends the key light with
+    `mix( 1.0, getShadow(...), 1.0 - smoothstep( 684.0, 760.0, -geometryPosition.z ) )`,
+    which does mean shadows are fully faded out past 760 u and the establishing camera sits
+    at 819 u. That is a real second bug. It is not this one: the slab test is 0.00% at 61 u
+    too.
+  - Post-processing. Shadows are absent in a direct `renderer.render()` that never touches
+    the composer.
+
+Note for whoever picks this up: `renderer.info.programs` in this three build does not expose
+`fragmentShader` as a string, so a probe that greps program sources for `USE_SHADOWMAP`
+reports 0 for every program and means nothing. Do not read that as evidence.
+
+The CSM patch rewrites the global `lights_fragment_begin` and bakes per-cascade depth
+windows in as literals: `directLight.color *= ( 1.0 - smoothstep( 98.3487, 112.0229, ... ) )`
+and two more. That rewrite assumes exactly three directional lights forming the cascade set,
+and it is applied to every material in the process, including any scene that does not have
+that arrangement. That is the next thing to examine.
+
 ## D13 — Fog is heavy enough to erase the backdrop — MAJOR — OPEN
 `render/Sky.js` [A4]. Follows from D12 and may share a fix. At the distances the establishing
 and low-angle cameras use, fog has already taken everything to near-flat. Whatever is built
