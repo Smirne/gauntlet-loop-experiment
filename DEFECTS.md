@@ -277,7 +277,7 @@ Not yet attempted. The candidate fix is to reject a suspension sample whose grou
 differs from the previous iteration's by more than the strut can span, rather than clamping
 the intersection distance and trusting it.
 
-## D20 — The cascades are fitted for a camera 4-8x closer than any the game uses — CRITICAL — ROOT-CAUSED
+## D20 — The renderer casts no shadows at all — CRITICAL — OPEN (one of two causes fixed)
 `render/Lighting.js`, the CSM chunk patch. Every critic round to date has been scored on
 shadowless frames, which is most of the lighting score.
 
@@ -348,6 +348,24 @@ The fix is to derive the splits from the actual camera distance rather than from
 tuned for a close chase camera, and to re-derive the shader's baked fade window from the same
 source. Note the fade boundaries are baked into the shader as literals at install time and
 the patch is one-shot per session, so changing splits at runtime will not move them.
+
+### Far plane: fixed, and it was not enough
+`shadowFar` 760 -> 1300, committed. The fade window verifiably moved 684-760 -> 1170-1300
+and cascade 2's fit radius grew 380 -> 714, which now contains the playfield that spans
+541-1111 u. Shadows did not come back: the slab test still reads 0.00% and all three cascade
+maps still read back empty after a normal frame. So the far plane was a real second bug
+sitting on top of this one, and removing it changes nothing visible on its own.
+
+### What is left
+All three cascade shadow maps come back empty (0 of 16384 sampled texels carry geometry)
+after `stepOnce()` + `renderFrame()`, even with `needsUpdate` forced on all three
+immediately before the render, and even with cascade 2's frustum now demonstrably containing
+the track. Before stepping the engine, cascade 0's map did contain geometry (27990 texels,
+min depth 76), so the maps are writable and the read-back method works - something about the
+normal per-frame path leaves them empty. `Lighting._intervals` throttles cascade updates on a
+per-tier schedule ([1,2,3,4] at ultra), which is the first thing to examine: a cascade that
+is skipped should retain its previous contents rather than clear, so if it is clearing, the
+throttle and the map lifetime disagree.
 
 ### Correction to the exclusions above
 The line ruling out cascade frustum placement was first measured with an invalid method -
