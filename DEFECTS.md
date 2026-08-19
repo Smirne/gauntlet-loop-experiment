@@ -277,7 +277,7 @@ Not yet attempted. The candidate fix is to reject a suspension sample whose grou
 differs from the previous iteration's by more than the strut can span, rather than clamping
 the intersection distance and trusting it.
 
-## D20 — The renderer casts no shadows at all — CRITICAL — OPEN
+## D20 — The cascades are fitted for a camera 4-8x closer than any the game uses — CRITICAL — ROOT-CAUSED
 `render/Lighting.js`, the CSM chunk patch. Every critic round to date has been scored on
 shadowless frames, which is most of the lighting score.
 
@@ -318,11 +318,46 @@ Note for whoever picks this up: `renderer.info.programs` in this three build doe
 `fragmentShader` as a string, so a probe that greps program sources for `USE_SHADOWMAP`
 reports 0 for every program and means nothing. Do not read that as evidence.
 
-The CSM patch rewrites the global `lights_fragment_begin` and bakes per-cascade depth
-windows in as literals: `directLight.color *= ( 1.0 - smoothstep( 98.3487, 112.0229, ... ) )`
-and two more. That rewrite assumes exactly three directional lights forming the cascade set,
-and it is applied to every material in the process, including any scene that does not have
-that arrangement. That is the next thing to examine.
+### Root cause
+Measured after stepping the engine so `Lighting` re-fits the cascades to the real camera,
+which is the state the game actually ships:
+
+    subject view depth                                     825 u
+    shader fades all shadows out over                  684 - 760 u
+    Cascade0  fit to view slice 0-112,   772 u from subject, map empty (0 of 16384 texels)
+    Cascade1  fit to view slice 98-213,  660 u from subject, map empty
+    Cascade2  covers the subject (297 u away, radius 380),   map empty
+
+The split distances are sized for a camera sitting 100-200 u from the action. Every camera
+the game uses sits 790-900 u out. Two consequences, either of which alone is fatal:
+
+  1. The far fade. Cascade 2's shadow term is
+     `mix( 1.0, getShadow(...), 1.0 - smoothstep( 684.0, 760.0, -geometryPosition.z ) )`.
+     At 825 u the smoothstep is 1, so the whole expression is 1.0. No shadow is possible at
+     any camera distance the game uses, regardless of what is in the maps.
+  2. The near cascades are fitted onto nothing. `_fitToCamera` centres each cascade on its
+     own view-frustum slice, so cascades 0 and 1 land 660-772 u away from the track, in open
+     air. Their maps come back empty, which is correct behaviour for a fit that is pointed
+     at nothing.
+
+Still unexplained: cascade 2 geometrically contains the subject and its map is empty too.
+That is a third thing to chase, but it is not needed to explain the black-and-white result -
+(1) forces the shadow term to 1.0 on its own.
+
+The fix is to derive the splits from the actual camera distance rather than from constants
+tuned for a close chase camera, and to re-derive the shader's baked fade window from the same
+source. Note the fade boundaries are baked into the shader as literals at install time and
+the patch is one-shot per session, so changing splits at runtime will not move them.
+
+### Correction to the exclusions above
+The line ruling out cascade frustum placement was first measured with an invalid method -
+toggling `shadowMap.enabled` without forcing material recompiles, which cannot show a
+difference. Re-run properly with the slab `castShadow` toggle it still reads 0.00%, so the
+exclusion stands, but the first evidence for it was worthless. Separately, every close-range
+slab test in this entry is invalid for a different reason: `_fitToCamera` fits cascades to
+`ctx.camera`, and those tests rendered with a throwaway camera while the cascades stayed
+fitted to the real one. The subject was never inside the frusta being tested. The numbers
+above, taken after `stepOnce()` on the real camera, are the ones to trust.
 
 ## D13 — Fog is heavy enough to erase the backdrop — MAJOR — OPEN
 `render/Sky.js` [A4]. Follows from D12 and may share a fix. At the distances the establishing
