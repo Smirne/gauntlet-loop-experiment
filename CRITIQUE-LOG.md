@@ -69,3 +69,51 @@ The synthesis agent re-measured the disputed regions rather than averaging the c
 
 The dropped items matter as much as the kept ones. An earlier round asserted a UV-stretching
 bug that did not exist and a fix agent spent its whole slot on nothing.
+
+## Blind A/B — r18 vs r22, after the shadow and veil fixes
+
+Three A/B rounds were run in one session, each with a different mixed label assignment so
+that always answering "A" scores 2/4 and cannot be learned across rounds.
+
+| Round | Build vs r18 | Result | What the judges named |
+|---|---|---|---|
+| 1 | r20 | **r18 wins 4-0** | r20 has no cast shadows and does have the veil |
+| 2 | r21 (shadow fix) | **2-2** | the two r21 wins both cite shadows; the two losses cite radial streaks |
+| 3 | r22 (+ veil fix) | **r22 wins 3-1** | three of four cite shadows; r18 now carries the border veil |
+
+### Round 3 in full — r18 vs r22
+
+| Pair | Angle | Label A | Label B | Winner | Confidence |
+|---|---|---|---|---|---|
+| 1 | gameplay | r22 | r18 | **A — r22** | high |
+| 2 | chase | r22 | r18 | **B — r18** | high |
+| 3 | macro | r18 | r22 | **B — r22** | high |
+| 4 | establishing | r18 | r22 | **B — r22** | medium |
+
+**0-4, then 2-2, then 3-1** across the two fixes, on the same protocol with the label mix
+changed each round.
+
+**The veil changed sides, which is the confirmation that matters.** In round 1 the judges put
+it on r20 and called r18 clean. In round 3 they put it on r18 — "a bright milky veil washes
+the entire outer border, the top edge blown to near-white", "a milky veil sits along the outer
+border, strongest in the top-left corner", "a milky white veil hugs the top edge and the
+entire upper-right border" — and called r22 clean on three of four cameras. That is exactly
+what a boost-driven artifact should do: it was never a property of a build, only of whether a
+car happened to be boosting when the shutter fell. r18 looked clean in round 1 by luck. The
+fix removes the luck for any locked-off shot rather than winning the coin toss.
+
+**Two caveats recorded so the round is not oversold.**
+- The pair-2 judge reached its verdict very differently from the other three — 17 tool calls
+  over 127 s against roughly 2 calls and 23 s — and needed two prompts to produce a verdict.
+  The verdict stands as given; the process is noted because a judge that behaves unlike its
+  peers is worth watching across rounds.
+- Its description of what it saw on r22 is *not* the boost rim: "ghost arcs are offset copies
+  of geometry rather than a defocused version of it". Offset duplicate geometry is motion-blur
+  ghosting, a different defect, and it is now the leading candidate for the chase camera.
+
+**A theme across all three rounds, from judges that agreed on little else:** the road surface
+does not read as a road. "The track surface is nearly indistinguishable from the surrounding
+table." "A ghost-translucent film over bare wood with only faint white lane lines, so the
+driving line is guesswork." "The lane is just bare plywood with a few thin white line strokes
+that break up and float." That is the next thing to fix, and it is an art problem rather than
+a bug.
