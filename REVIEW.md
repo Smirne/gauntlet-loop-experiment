@@ -81,6 +81,35 @@ so is the most valuable outcome this check can produce.
 > repo. Comparison is against your own knowledge of how those titles look, applied through
 > the rubric above, plus blind A/B between our own iterations.
 
+### The subtle-difference protocol — required whenever the change is small
+
+A round comparing road wear at 1x against 2.4x returned **four judges out of four choosing
+A**, with the label mix putting the heavier setting in slot A for two of them and the lighter
+setting in slot A for the other two. On the variable that is 2-2, a null. Every judge wrote a
+confident rationale for why *their* A had wear and *their* B was bare wood — two of those
+descriptions are of the heavier frame and two of the lighter one. Below some difference
+threshold, a judge picks the first image and then explains it.
+
+Rounds where the difference was obvious do not show this (the background-aware livery round
+came out B, A, B, B), so it is a failure mode of the hard comparison specifically — which is
+where a wrong verdict is hardest to notice. Three rules follow.
+
+1. **Describe before choosing.** Ask the judge to describe each frame separately, and to state
+   what physically differs between them, BEFORE it is asked which is better. A judge that
+   cannot name the difference must say so rather than pick.
+2. **Report the position tally as a first-class result.** A 4-0 split on which *slot* won,
+   against a 2-2 split on the *variable*, is a null however confident the prose. Compute this
+   every round and put it above the verdict.
+3. **On a null, do not ship and do not re-run for a better answer.** Re-running until the
+   result is agreeable is how a loop launders noise into evidence. Change the stimulus so the
+   difference is large enough to be seen, or accept that the change is below the threshold
+   that matters and drop it.
+
+What a null round is still good for: the judges' *descriptions* remain useful even when their
+*verdict* is worthless, because a description does not depend on which frame was which. The
+road-wear round produced its most actionable brief that way — all four independently said
+neither setting read as a road, and agreed on why.
+
 ## Output
 
 Report per-category scores, the single worst problem in the frame, and a prioritised list of
