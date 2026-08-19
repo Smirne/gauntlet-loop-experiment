@@ -1184,3 +1184,59 @@ original argument: contrast is not the missing ingredient, because there is more
 first measured and it still is not enough. The texture-continuity explanation — grain, colour
 and plank seams running through the boundary unbroken — is what is left, and it is now the
 only candidate standing.
+
+
+## D28 — The blind A/B is position-biased when the difference is subtle — CRITICAL (method) — OPEN
+The road-wear round is void, and the way it failed is worth more than its answer.
+
+Four judges, one per camera, 1x wear against 2.4x, captured from one build at one pinned race
+moment so the frames differ ONLY in the wear term. Label assignment mixed as usual — A was the
+heavier setting for pairs 1 and 3, the lighter one for pairs 2 and 4.
+
+    pair 1   A = 2.4x   chose A      pair 3   A = 2.4x   chose A
+    pair 2   A = 1.0x   chose A      pair 4   A = 1.0x   chose A
+
+**Four out of four chose A.** On the actual variable that is 2-2, a dead null. And it is not
+that they were guessing: each one wrote a confident, detailed rationale for why their A had
+wear and their B did not — "visible tyre-worn grooves and a scuffed racing line" vs "bare
+wood"; "a darkened tyre corridor" vs "essentially bare tabletop"; "the only frame where the
+track corridor is a different, worked-over surface" vs "identical bare wood". Two of those
+sentences describe the 2.4x frame and two describe the 1.0x frame. They are the same sentence.
+
+So when the difference is small enough, the judge picks the first image and then explains it.
+The mixed label assignment did not prevent this — it *detected* it, which is exactly why it
+exists, and it is the only reason this round did not get written up as a win.
+
+**Earlier rounds do not show the pattern**, which fits: where the difference was obvious the
+choices came out mixed (the background-aware livery round went B, A, B, B). Position bias
+appears to be a failure mode of the *hard* comparison, not of the protocol in general. That
+makes it more dangerous, not less: it will strike precisely on the subtle changes where a
+wrong verdict is hardest to notice.
+
+**Protocol change needed before the next subtle A/B.** Have each judge describe both frames
+separately and commit to what differs BEFORE being asked which is better, and always check the
+position tally as a first-class result — a 4-0 split on position with a 2-2 split on the
+variable is a null, however confident the prose. Consider also running the same pair past two
+judges in opposite orders and keeping the verdict only when they agree.
+
+### What survives, because it does not depend on which frame was which
+All four judges volunteered the same brief, unprompted, and every one of them said plainly
+that **neither setting reads as a road**. Converged list:
+
+  - The wear is a flat, uniform tint across the whole corridor width. Real use is not uniform.
+  - No twin wheel ruts at wheel-track spacing, so the wear has no car's footprint in it.
+  - The line does not migrate: it parallels the kerb at constant offset instead of hugging the
+    apex and drifting wide on exit.
+  - It is albedo darkening only. The missing half is **polish** — the driven line should go
+    smoother and catch a different specular from the surrounding matte grain, which is what
+    actually says "something rubbed here".
+  - No cause: no braking smear before a corner, no scuff arcs where cars slide.
+  - No edge definition, so where kerbs are absent the corridor has no boundary of its own.
+  - Debris should be swept clear of the driven line and piled at its edges, not scattered
+    evenly across it.
+  - **And the darkening must not touch the painted markings.** At 2.4x it visibly dims the
+    white lines, which immediately reads as a lighting or dirt overlay rather than surface
+    wear. `track:markings` is a separate mesh, so this is worth confirming rather than
+    assuming — but the observation was specific and repeated.
+
+`roadWear` stays at its default of 1. Nothing shipped.
