@@ -277,7 +277,7 @@ Not yet attempted. The candidate fix is to reject a suspension sample whose grou
 differs from the previous iteration's by more than the strut can span, rather than clamping
 the intersection distance and trusting it.
 
-## D20 — The renderer casts no shadows at all — CRITICAL — OPEN (one of two causes fixed)
+## D20 — The renderer casts no shadows at all — CRITICAL — FIXED
 `render/Lighting.js`, the CSM chunk patch. Every critic round to date has been scored on
 shadowless frames, which is most of the lighting score.
 
@@ -649,3 +649,39 @@ likely satisfies the crossing test on every tick and increments the lap counter 
   captures and was drawing perfectly. `tools/capture-ui.js` swaps each canvas for an `<img>`
   of its `toDataURL()`. Cloned nodes also restart their CSS animations from keyframe zero,
   which is why the results table rendered with a header and no rows.
+
+
+### RESOLVED — shadows are back, and the far plane was the whole of it
+Measured on the running game with a method that needs no recompile and no new
+geometry: `light.shadow.intensity` is a plain uniform, so setting it to 0 on all three
+cascades turns cast shadows off without changing a single shader permutation.
+
+    shadow.intensity 0.98 vs 0.00     5.004% of pixels change
+    control, 0.98 vs 0.98 again       0.013% of pixels change
+    largest single-channel delta      260
+
+Five percent of a 2560x1440 frame is a lot of shadow. Visually confirmed too: the room
+props throw long directional shadows across the table.
+
+So `shadowFar` 760 -> 1300 was not "necessary but not sufficient" — it was sufficient, and
+every reading that said otherwise came from the slab test, which was measuring the wrong
+thing. Three lessons worth more than the fix:
+
+  - **The slab test was never valid.** It adds a 300x300 slab and toggles its `castShadow`.
+    But `_fitToCamera` centres each cascade on its own view-frustum slice, so whether the
+    slab lands inside any cascade depends on the live camera, and the slab's shadow has to
+    fall on a surface that is both in frame and in the same cascade. It reported 0.00% while
+    the renderer was casting shadows over 5% of the frame. Do not use it again.
+  - **The clean-room test was actively misleading.** A scene built from scratch with one
+    directional light still gets the global CSM chunk, which multiplies cascade 0's
+    contribution by `1.0 - smoothstep(98.3, 112.0, viewDepth)`. Any subject past ~112 u of
+    view depth therefore receives *no direct light at all* from the only light in the scene,
+    so of course toggling its shadow changes nothing. The patch is global; a "clean room"
+    inside this session is not clean.
+  - **Sample the thing the shader samples.** Projecting a known world point through
+    `light.shadow.matrix` and reading that exact texel is the measurement that settles it.
+    At the car: cascade 0 coord y = -3.60 and cascade 1 coord y = -1.39, both outside
+    [0,1] — correct, the car is at 718 u of view depth and those cascades cover 2-105 and
+    105-200. Cascade 2 coord (0.409, 0.678, 0.5755) is inside, and the map at that texel
+    reads 0.57673 — real depth, 2.5 u behind the sample point. The cascade selection, the
+    fit and the map contents all agree.
