@@ -196,7 +196,28 @@ export const VEHICLE_TUNING = {
   airRoll: 3.4,
   airYaw: 1.5,
   airLevel: 7.0,             // auto-levelling gain, ramped in with air time
-  airLevelDelay: 0.22,       // s of pure ballistics before levelling starts
+  // THE LEVELLING WINDOW AND THE JUMP NEVER OVERLAPPED.
+  //
+  // Measured over 75 s of racing: 20 flips, ALL of them airborne, and 19 of the
+  // 20 inside lap fraction 0.20-0.25 — the butter jump, the only ramp on the
+  // circuit. The jump is not broken: entered at 75 and 95 u/s it delivers 0.20
+  // and 0.25 s of air against a designed 0.20, exactly as its own comment in
+  // kitchen.js claims.
+  //
+  // The levelling simply was not there for it. With delay 0.22 and a hardcoded
+  // 0.7 s ramp, smoothstep(0.22, 0.92, 0.26) is 0.01 — one percent of the gain
+  // at the moment the car lands. The assist was tuned for long flights and this
+  // circuit has none: it did nothing on the one jump that exists, so landing
+  // attitude was pure ballistics and a car entering slightly slow or crooked
+  // landed on its edge and went over.
+  //
+  // Delay down so authority arrives inside the flight, and the ramp width is a
+  // named number now rather than a literal buried in the expression. At 0.26 s
+  // of air the ramp is now 0.84 instead of 0.01. Still far too little to fly
+  // with — that is what the gain and the delay together protect — but enough to
+  // land on its wheels.
+  airLevelDelay: 0.06,       // s of pure ballistics before levelling starts
+  airLevelRamp: 0.22,        // s over which levelling reaches full authority
 
   /* --- boost ------------------------------------------------------------ */
   boostForce: 27,            // flat thrust — this is what raises top speed
@@ -1797,7 +1818,24 @@ export class Vehicle {
     this._torque.add(_v);
 
     // Auto-level, ramping in with air time.
-    const ramp = smoothstep(t.airLevelDelay, t.airLevelDelay + 0.7, this.airTime);
+    // LEVEL THE LANDING, NEVER THE LAUNCH.
+    //
+    // A pure time delay cannot tell those apart, and shortening it to reach
+    // inside the jump's 0.2 s taught me that the hard way: with authority
+    // arriving at 0.08 s the assist cancelled the ramp's nose-up pitch BEFORE
+    // the car left the lip and planted it back down. Measured, the butter jump
+    // went from 0.20 s of air to 0.03 s at every entry speed. The jump was
+    // simply gone.
+    //
+    // Rising and falling are different problems. On the way up the car is
+    // taking the ramp's attitude and momentum must be conserved or there is no
+    // jump. On the way down the only thing that matters is landing on the
+    // wheels. So the gate is the sign of vertical velocity, with the time delay
+    // kept only to stop a kerb tap from twitching the car.
+    const descending = this.velocity.y < 0;
+    const ramp = descending
+      ? smoothstep(t.airLevelDelay, t.airLevelDelay + (t.airLevelRamp ?? 0.7), this.airTime)
+      : 0;
     if (ramp > 0.001) {
       _nrm.set(0, 1, 0);
       const track = this.ctx?.track;
