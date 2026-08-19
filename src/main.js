@@ -271,8 +271,15 @@ async function boot() {
   // keeps the chassis cycle and picks liveries by farthest-point, taking the
   // worst pair on a full grid from 28 to 75. Falls back to the old arithmetic if
   // the module predates it.
+  //
+  // `?liveryMode=index` restores the old `livery: i` arithmetic. It exists so the
+  // two schemes can be captured from ONE build at the SAME pinned race moment,
+  // which is the only way to A/B a change that is purely about colour — see D25.
   const assignField = pick(vModels, 'assignField');
-  const grid = typeof assignField === 'function' ? assignField(FIELD, roster) : null;
+  const liveryMode = params.get('liveryMode') || 'separated';
+  const grid = (liveryMode !== 'index' && typeof assignField === 'function')
+    ? assignField(FIELD, roster)
+    : null;
 
   ctx.drivers = [];
   if (Vehicle) {
