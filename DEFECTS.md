@@ -356,8 +356,32 @@ and cascade 2's fit radius grew 380 -> 714, which now contains the playfield tha
 maps still read back empty after a normal frame. So the far plane was a real second bug
 sitting on top of this one, and removing it changes nothing visible on its own.
 
+### Correction: the maps are NOT empty. That was my instrument.
+Every "map comes back empty" reading in this entry was taken with
+`readRenderTargetPixels( map, 0, 0, 128, 128, ... )` - a 128x128 corner of a 2048x2048
+texture, 0.4% of it, in the corner where a fitted shadow map is least likely to project
+anything. Re-sampled at four blocks across the map:
+
+    cascade    corner(0,0)   centre    quarter   three-quarter
+    Cascade0     18.2%         0%       17.3%        0%          min depth 145
+    Cascade1      0%           0.7%      0%          0.9%        min depth 70
+    Cascade2      0%           0%        0%          0%
+
+Cascade 0 carries substantial real depth data. The shadow maps are being rendered. Do not
+repeat the corner read; sample the centre, or downsample the whole target.
+
 ### What is left
-All three cascade shadow maps come back empty (0 of 16384 sampled texels carry geometry)
+With maps populated, shader shadow code compiled, `shadowIntensity` 0.98, the fade window now
+1170-1300 and the subject at 114 u of view depth (well inside it), the slab test still
+measures 0.00%. Casters are in frustum - 98, 127 and 160 for the three cascades. So the
+remaining fault is between a populated map and the sampled result: candidate suspects are the
+shadow matrix / `vDirectionalShadowCoord` not matching the fitted camera, `receiveShadow`
+being false on the surface the test shadow should land on, or the per-cascade depth windows
+selecting a cascade whose map covers a different region than the one being shaded.
+Cascade 2's map read nothing at four sample blocks, but that is 1.7% of its area and after
+the corner-read lesson it should not be called empty without a fuller sample.
+
+The old claim was that maps come back empty (0 of 16384 sampled texels carry geometry)
 after `stepOnce()` + `renderFrame()`, even with `needsUpdate` forced on all three
 immediately before the render, and even with cascade 2's frustum now demonstrably containing
 the track. Before stepping the engine, cascade 0's map did contain geometry (27990 texels,
