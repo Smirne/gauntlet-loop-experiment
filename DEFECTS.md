@@ -925,7 +925,7 @@ its damping), clear the gate on a cut instead of holding it, check for the cut b
     after a capture-style cut           boost 0.00, overlay NOT drawn
 
 
-## D23 — The road does not read as a road — MAJOR — OPEN (numbers below are VOID, see D26)
+## D23 — The road does not read as a road — MAJOR — OPEN (original numbers VOID; re-measured at the end)
 Every blind judge in all three A/B rounds said some version of this, having agreed on little
 else. "The track surface is nearly indistinguishable from the surrounding table." "The lane is
 just bare plywood with a few thin white line strokes that break up and float." "A
@@ -1144,3 +1144,43 @@ from every surface, and the three worst — Candy Plum (51, sinks into the varni
 Bianco (55, sinks into the newspaper) and Bare Primer (58, sinks into the varnished road) —
 fail against a surface the track actually spends a chunk of a lap on. **To do better, author
 liveries that clear all six surfaces rather than re-permuting the fifteen that exist.**
+
+
+### D23 re-measured, with the director disabled
+Every figure in the original entry was taken through the bug in D26 and is void. Redone with
+`ctx.director.enabled = false` first, drift verified at 0.00 u, 720 road samples and 480 table
+samples per point:
+
+    camera elevation   road luma   table luma   delta
+         12 deg           84.3       116.9      -32.6
+         20 deg           73.0       114.9      -41.9
+         35 deg           59.1       113.3      -54.3
+         55 deg           55.8       113.4      -57.7
+         80 deg           56.4       114.2      -57.8
+
+    pine worn patch, 20 deg   160.0 vs 98.4   +61.6
+    pine worn patch, 55 deg   155.9 vs 96.0   +59.9
+
+**Three corrections to the original entry.**
+
+1. The delta is **not** constant across viewing angle. It runs from −33 at 12 degrees to −58
+   at 55 and above — the road brightens as the camera drops, which is exactly what a surface
+   with a specular/environment term should do, and exactly what the roughness tuning note in
+   `Surfaces.js` was guarding against. The original "−40 ± 1 at every elevation" was the
+   camera not moving.
+
+2. The magnitude was understated at the angle that matters. The live race camera sits at
+   **51.8 degrees** above the player car, measured over 90 steps, which lands on the strong
+   end of that curve: **−57.7 luma**, not −39.
+
+3. My follow-up guess was also wrong. Having found the view dependence I assumed the game must
+   be played at the grazing end where contrast is weakest. It is not — 52 degrees is near the
+   top of the range.
+
+**The conclusion of the entry survives, and is now better supported than it was.** The road
+carries 58 luma of separation from the table at the exact camera the game ships with, and four
+independent judges still say it does not read as a road. That is a stronger version of the
+original argument: contrast is not the missing ingredient, because there is more of it than I
+first measured and it still is not enough. The texture-continuity explanation — grain, colour
+and plank seams running through the boundary unbroken — is what is left, and it is now the
+only candidate standing.
