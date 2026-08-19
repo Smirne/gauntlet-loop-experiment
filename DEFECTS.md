@@ -1240,3 +1240,57 @@ that **neither setting reads as a road**. Converged list:
     assuming — but the observation was specific and repeated.
 
 `roadWear` stays at its default of 1. Nothing shipped.
+
+
+### D23 implementation plan — costed, with the mechanism located
+Not started. Recorded at this level of detail because the expensive part of this defect has
+been the false starts, and three of the four dead ends are now closed off by evidence.
+
+**Ruled out, do not retry.**
+- Changing the road's UV projection to ribbon space. Deliberate, documented, and already tried
+  and reverted — the boards bent round the hairpins. `TrackBuilder` header, and the `uv:`
+  comment in the deck sweep.
+- Raising contrast against the table. There is 58 luma of it at the camera the game ships
+  with and it is not enough (D23 re-measurement).
+- Simply scaling the existing wear. Tested at 2.4x; the round was a null (D28), and all four
+  judges said neither setting reads as a road.
+
+**The mechanism to use, and it already exists.** The markings layer is a separate ribbon-space
+mesh over the deck (`track:markings`), built from an atlas of rows via
+`buildLongitudinalMark({ row, lateral, lift })`, where `lateral` is a per-row callback — so a
+strip can follow any lateral path, including the racing line, which the deck sweep already
+samples into `lineLat[]`. Critically the markings material carries a **per-row roughness map**:
+
+    const ROW_ROUGH = [0.30, 0.32, 0.94, 0.28, 0.60, 0.32, 0.30, 0.88];
+
+That is exactly the "polish, not darkening" half that all four judges asked for — a row can be
+smoother than the wood around it and catch a highlight the matte grain does not. No new
+material and no shader work is needed; this is the same trick that already makes paint read as
+paint and chalk read as chalk.
+
+**The work.**
+1. Add a `rut` row. `MARK_ROWS` is 8 and `rowH = size / MARK_ROWS`, which is exactly 128 px at
+   size 1024. Nine rows gives 113.78 px and will bleed between rows under filtering, so this
+   step is not free — either pad the atlas to 16 rows of 64 px (halves the narrow-axis
+   resolution of `checker` and `tape`, which are 5.2 and 6.5 u wide, so check them) or give
+   the ruts their own small texture and accept one extra draw call.
+2. Paint the row as a soft-edged strip: slight albedo darkening, and a roughness well below
+   the road's 0.29 floor so it reads as polished. Width one tyre, about 1.6 u.
+3. Emit two of them per lap at wheel-track spacing (`trackWidth` on the chassis physics, 3.6 u
+   default, so +/- 1.8 u), with `lateral: (i) => lineLat[i] +/- halfTrack`. `lineLat` already
+   migrates with the racing line, which is the "tight at the apex, wide on exit" the judges
+   asked for — it comes free from using the line rather than the kerb offset.
+4. Do NOT let it touch the painted markings. One judge specifically saw the 2.4x wear dimming
+   the white lines, which reads as a lighting overlay rather than wear. `track:markings` is a
+   separate mesh so this should already hold, but it was reported and is worth confirming.
+5. Leave the existing corridor-wide vertex tint at 1x underneath as the dust component, and
+   reduce it if the ruts make it redundant.
+
+**Still missing after that**, from the same brief, in rough order of value: braking smears
+before corners and scuff arcs where cars slide (both need per-corner data the racing line
+already implies); debris swept off the driven line and banked at its edges; and a corridor
+edge so the road has a boundary where kerbs are absent.
+
+**Judge it with the subtle-difference protocol in REVIEW.md**, and expect to need the ruts at
+an exaggerated strength first just to confirm the mechanism is visible at all, then tune down.
+A null round here is likely and is not a reason to re-run.
