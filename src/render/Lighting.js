@@ -735,7 +735,17 @@ export class Lighting {
     // with the camera 400 u back at 250 u up, framing the whole 500 x 383 u
     // playfield: the near edge of the table is at 264 u of view depth and the
     // far corner at 726. At the old 620 that corner had no cast shadow at all.
-    this.shadowFar = opts.shadowFar || 760;
+    //
+    // 760 was measured against an establishing camera that has since been
+    // re-posed further back, twice. Re-measured from the shot as it is framed
+    // now, the track spans 541 to 1111 u of view depth, and the shader fades
+    // every shadow out between 0.90 * shadowFar and shadowFar - so at 760 the
+    // fade began at 684 and 427 u of table, most of it, could not receive a
+    // shadow from any light. That is what made all four critic cameras score
+    // lighting 3/10 with "nothing casts a shadow" (D20). 1300 puts the fade
+    // start at 1170, clear of the far corner, with headroom for the props and
+    // the room behind them.
+    this.shadowFar = opts.shadowFar || 1300;
     // ...but the *detail* range is a separate decision, and conflating the two
     // is what makes extending the reach expensive. The interior split
     // boundaries are placed against this, so pushing shadowFar out stretches
