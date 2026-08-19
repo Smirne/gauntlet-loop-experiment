@@ -925,7 +925,7 @@ its damping), clear the gate on a cut instead of holding it, check for the cut b
     after a capture-style cut           boost 0.00, overlay NOT drawn
 
 
-## D23 — The road does not read as a road, and it is not a contrast problem — MAJOR — OPEN
+## D23 — The road does not read as a road — MAJOR — OPEN (numbers below are VOID, see D26)
 Every blind judge in all three A/B rounds said some version of this, having agreed on little
 else. "The track surface is nearly indistinguishable from the surrounding table." "The lane is
 just bare plywood with a few thin white line strokes that break up and float." "A
@@ -1072,3 +1072,75 @@ extra delay on the second so the RAF drift differed:
 
 The residue is grain on a handful of pixels, which is D21 and expected. Before the pin, two
 runs differed by a whole race moment.
+
+
+## D26 — `syncSystems()` hands the camera back to the director, and I measured through it — CRITICAL (method) — FIXED
+Found while trying to measure the rendered colour of each track surface, when five of six
+spans returned zero samples from points that provably project to the dead centre of the
+screen.
+
+    I set the camera to            (150.8, 120.5, -71.2)
+    after engine.syncSystems()     (-189.7,  85.8,  43.3)     moved 360.9 u
+    after engine.renderFrame()     unchanged                   moved 0.0 u
+
+`syncSystems()` runs update/lateUpdate, and the camera director is one of those systems. It
+owns `ctx.camera` and overwrites any pose set by hand. So the sequence I had been using —
+**pose the camera, syncSystems, render, project my sample points** — renders from the
+*director's* camera while projecting against the pose I thought I had set. `renderFrame()`
+alone does not move it; only the sync does.
+
+### What this voids
+**Every number in D23.** The road-vs-table figures were taken exactly that way. Worse, the
+part of that entry I found most convincing is now the tell rather than the evidence: I
+reported −40 ± 1 luma at every camera elevation from 12 to 80 degrees and read the constancy
+as proof the finding was robust to viewing angle. It was proof the camera never moved. A
+measurement that refuses to change when you change its input is not stable, it is
+disconnected.
+
+Re-measured with `ctx.director.enabled = false` first — drift 0 at every span, and all six
+surfaces return 600 samples instead of five of them returning none:
+
+    varnishedWood  #604b48  luma  81        crumbs       #b98358  luma 142
+    oak table      #9a603b  luma 109        ceramicTile  #cdaf96  luma 181
+    pine           #c7996f  luma 162        paper        #e7d4c1  luma 216
+
+The road-against-table difference is **−28 luma**, not −39. The direction of D23's conclusion
+survives — the varnished road is darker than the oak — but the magnitude was wrong and the
+elevation sweep must be redone before anything is claimed about viewing angle.
+
+### What this does NOT void, checked case by case
+- The cascade refit work (D20). Those probes called `Lighting._fitToCamera()` directly and
+  rendered with `renderFrame()`, which does not move the camera. Verified above.
+- The veil (D22). No camera reposing involved.
+- The capture-moment pin (D25) and both livery A/B rounds. Those go through `captureSet`,
+  which releases the director properly — that is what the "SETTLE FIRST, THEN AIM" comment in
+  it is about.
+- The livery colours. Read from the authored `LIVERIES` table, not from pixels.
+
+### The rule
+**The camera is not yours to set while the director owns it.** Disable the director first, or
+hold the pose across frames. And when a measurement returns the same answer no matter how you
+vary its input, that is a reason to distrust the instrument, not to trust the result.
+
+## D27 — The livery assignment lever is nearly exhausted; the roster is the limit — MINOR — OPEN
+With all six surfaces measured, an exhaustive search over every legal assignment (5P3 x 5P3 x
+5P2 = 72,000) puts a ceiling on what re-shuffling can achieve:
+
+    shipped (oak-aware, won its A/B 3-1)   worst car-car 65   worst car-surface 51   player 99
+    greedy, all six surfaces               worst car-car 65   worst car-surface 58   player 99
+    exhaustive optimum on min(both)        worst car-car 62   worst car-surface 61   player 70
+
+**The greedy multi-surface version was not shipped.** It buys 7 units on the worst car, does
+not move the player's car at all, and pays for it by dropping Bianco — which judges singled
+out as reading well. Shipping a marginal change on nice reasoning is exactly what lost the
+first livery round 1-3, and the rule from that round applies to this one.
+
+The exhaustive optimum is not obviously better either: it raises the worst car from 51 to 61
+by putting **Hemi Orange back on the player's car**, dropping the player from 99 to 70 — undoing
+the one change three judges asked for by name.
+
+The real constraint is the palette. Only five of the fifteen authored liveries clear 89 units
+from every surface, and the three worst — Candy Plum (51, sinks into the varnished road),
+Bianco (55, sinks into the newspaper) and Bare Primer (58, sinks into the varnished road) —
+fail against a surface the track actually spends a chunk of a lap on. **To do better, author
+liveries that clear all six surfaces rather than re-permuting the fifteen that exist.**
