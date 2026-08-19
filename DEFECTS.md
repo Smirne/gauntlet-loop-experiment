@@ -277,7 +277,7 @@ Not yet attempted. The candidate fix is to reject a suspension sample whose grou
 differs from the previous iteration's by more than the strut can span, rather than clamping
 the intersection distance and trusting it.
 
-## D20 — The renderer casts no shadows at all — CRITICAL — FIXED
+## D20 — The renderer casts no shadows at all — CRITICAL — OPEN (reopened)
 `render/Lighting.js`, the CSM chunk patch. Every critic round to date has been scored on
 shadowless frames, which is most of the lighting score.
 
@@ -651,7 +651,7 @@ likely satisfies the crossing test on every tick and increments the lap counter 
   which is why the results table rendered with a header and no rows.
 
 
-### RESOLVED — shadows are back, and the far plane was the whole of it
+### WRONG — I closed this and four blind judges reopened it. See the retraction at the end.
 Measured on the running game with a method that needs no recompile and no new
 geometry: `light.shadow.intensity` is a plain uniform, so setting it to 0 on all three
 cascades turns cast shadows off without changing a single shader permutation.
@@ -685,3 +685,54 @@ thing. Three lessons worth more than the fix:
     105-200. Cascade 2 coord (0.409, 0.678, 0.5755) is inside, and the map at that texel
     reads 0.57673 — real depth, 2.5 u behind the sample point. The cascade selection, the
     fit and the map contents all agree.
+
+
+### Retraction of the "RESOLVED" section above
+The 5.004% figure is real but it does not mean what I said it meant. It was measured on the
+**menu** camera, where the subject sits at 718 u of view depth and cascade 2 — the one with a
+900 u radius covering the whole room — is the active cascade. Long-range shadows do work.
+The game is not played there.
+
+Measured again on the race, the same way:
+
+    mean luma darkening from shadows      0.7 of 255
+    fraction of frame darkened at all     2.2%
+    fraction of pixels moving < 10 luma   98.2%
+
+That is not a lit scene with shadows in it. Blind A/B, r18 vs r20, four judges, one per
+camera, labels mixed so always-answer-A scores 2/4:
+
+| Pair | Angle | Label A | Label B | Winner | Confidence |
+|---|---|---|---|---|---|
+| 1 | gameplay | r20 | r18 | **B — r18** | high |
+| 2 | chase | r18 | r20 | **A — r18** | high |
+| 3 | macro | r18 | r20 | **A — r18** | high |
+| 4 | establishing | r20 | r18 | **B — r18** | high |
+
+**r18 won 4 of 4 at high confidence.** Unprompted, all four judges reported the same pair of
+things, in both directions:
+
+  - r18 has cast shadows and they are obvious — "a large dark soft shadow offset down-left
+    from the car", "the table legs on the floor", "consistent direction, upper-right key".
+  - r20 has none — "the wheels meet the surface with no darkening at all", "the car looks
+    pasted onto the sheet".
+  - r20 has the veil — "a broad, hazy diagonal band ... it ignores geometry and passes over
+    the table and background at the same strength".
+  - r18 does not.
+
+So the shape of this defect is different from what the entry above assumed. Shadows are not
+absent by construction; they **regressed between r18 and r19**, and the same regression
+brought the veil. Those are very likely one change, not two, which is the first thing the
+next session should test. `shadowFar` 760 -> 1300 did not restore them; keep the change (the
+fade window was genuinely wrong) but do not credit it with a fix.
+
+**Next step, concretely: bisect the commits between the r18 and r19 captures.** That is a
+bounded list and the symptom is loud in a single frame, so it is a much cheaper route than
+any further reasoning about the CSM patch — and my track record on reasoning about the CSM
+patch in this entry is three wrong conclusions out of three.
+
+**Standing method note, earned the hard way.** Every wrong call in this entry has the same
+shape: a single aggregate number over a whole frame, read as though it were a measurement of
+the thing I cared about. 0.00% from the slab test, 0% from a corner texel read, 5.004% from
+the wrong camera. A frame-wide percentage cannot tell you *where* or *what*. Before believing
+one again, look at the frame.
