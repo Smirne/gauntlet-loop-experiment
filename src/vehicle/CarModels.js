@@ -3683,6 +3683,70 @@ export const LIVERIES = {
  */
 export const ROSTER = ['muscle', 'wedge', 'rally'];
 
+/**
+ * Choose the (chassis, livery) pair for every car on a grid so the FIELD READS.
+ *
+ * `roster[i % 3]` with `livery: i` produced eight distinct pairs and the comment
+ * above is right that no two cars were the same object — but distinct objects are
+ * not distinct *cars* at racing distance, where a 40-pixel body is a colour and a
+ * silhouette and nothing else. With three chassis and five liveries, indices 5, 6
+ * and 7 wrapped onto livery slots 0, 1 and 2, and the colours that fell out were:
+ *
+ *     car4 Azzurro     #2a7fd4      car5 Works Blue  #1546a8
+ *     car6 Petrol Blue #18468c
+ *
+ * Three blues in eight cars, and Works Blue against Petrol Blue is an RGB distance
+ * of **28** — the same car twice as far as a player can tell. Nothing in the old
+ * assignment ever looked at a colour, so this was luck rather than a mistake, and
+ * it went the wrong way.
+ *
+ * Farthest-point selection instead: keep the chassis cycle, because the silhouette
+ * separation it gives is deliberate, and pick each car's livery to maximise the
+ * minimum colour distance to every car already on the grid. Deterministic, needs no
+ * hand-kept table, and degrades gracefully — the worst pair on a full grid goes
+ * 28 -> 75, and smaller fields do better still (N=6 -> 106, N=4 -> 121).
+ *
+ * @param {number} count cars on the grid
+ * @param {string[]} [roster] chassis cycle; defaults to the promoted three
+ * @returns {{model: string, livery: number}[]} one entry per grid slot
+ */
+export function assignField(count, roster = ROSTER) {
+  const ids = (Array.isArray(roster) && roster.length ? roster : ROSTER).filter((id) => LIVERIES[id]);
+  const cycle = ids.length ? ids : ['muscle'];
+  const rgb = (c) => [(c >> 16) & 255, (c >> 8) & 255, c & 255];
+  const dist = (a, b) => {
+    const x = rgb(a); const y = rgb(b);
+    return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+  };
+
+  const out = [];
+  const taken = new Map();   // chassis id -> Set of livery indices already used
+  for (let i = 0; i < Math.max(0, count); i++) {
+    const model = cycle[i % cycle.length];
+    const set = LIVERIES[model];
+    const used = taken.get(model) || new Set();
+    // Once a chassis has worn every livery it has, start over rather than fail.
+    if (used.size >= set.length) used.clear();
+    let pool = [];
+    for (let k = 0; k < set.length; k++) if (!used.has(k)) pool.push(k);
+
+    let pick = pool[0];
+    if (out.length) {
+      let best = -1;
+      for (const k of pool) {
+        let nearest = Infinity;
+        for (const prev of out) nearest = Math.min(nearest, dist(set[k].base, prev.base));
+        if (nearest > best) { best = nearest; pick = k; }
+      }
+    }
+    used.add(pick);
+    taken.set(model, used);
+    out.push({ model, livery: pick, base: set[pick].base });
+  }
+  return out.map(({ model, livery }) => ({ model, livery }));
+}
+
+
 /** Resolve a livery for a model, wrapping the index. */
 export function liveryFor(modelId, index = 0) {
   const set = LIVERIES[modelId] || LIVERIES.muscle;

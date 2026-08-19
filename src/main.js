@@ -264,13 +264,23 @@ async function boot() {
     : allModelIds;
 
   const FIELD = Number(params.get('cars') ?? 8);
+
+  // Colour-separated grid. `roster[i % 3]` with `livery: i` gave eight distinct
+  // (chassis, livery) pairs but three blues, two of them 28 apart in RGB — the
+  // same car twice as far as a player can tell at 40 pixels. `assignField`
+  // keeps the chassis cycle and picks liveries by farthest-point, taking the
+  // worst pair on a full grid from 28 to 75. Falls back to the old arithmetic if
+  // the module predates it.
+  const assignField = pick(vModels, 'assignField');
+  const grid = typeof assignField === 'function' ? assignField(FIELD, roster) : null;
+
   ctx.drivers = [];
   if (Vehicle) {
     for (let i = 0; i < FIELD; i++) {
       const isPlayer = i === 0;
       const v = build(Vehicle, `Vehicle[${i}]`, ctx, {
-        model: modelIds[i % Math.max(1, modelIds.length)] ?? 'muscle',
-        livery: i,
+        model: grid?.[i]?.model ?? modelIds[i % Math.max(1, modelIds.length)] ?? 'muscle',
+        livery: grid?.[i]?.livery ?? i,
         isPlayer,
         driverName: isPlayer ? 'YOU' : `CPU ${i}`,
         gridIndex: i,

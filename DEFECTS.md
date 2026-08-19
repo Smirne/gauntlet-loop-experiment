@@ -977,3 +977,52 @@ The lever is **texture identity and boundary**, not level:
 Adjudicate it blind against the current build like any other change. Do not adjudicate it on a
 luma delta — that number is already large and it is measuring the wrong thing, which is the
 whole content of this entry.
+
+
+## D24 — Three of the eight cars were blue, two of them the same blue — MAJOR — FIXED
+`main.js` field build + `vehicle/CarModels.js`. Found while chasing a judge's report of
+"duplicated ghost curves" and "offset copies of geometry" on the chase frame. The frame does
+show what looks like the same car twice. It is not ghosting — they are two different cars.
+
+Field assignment was `roster[i % 3]` for the chassis and `livery: i` for the paint, and
+`liveryFor` wraps at five liveries per chassis. So indices 5, 6 and 7 fell onto livery slots
+0, 1 and 2, and what came out was:
+
+    car0 Hemi Orange  #d85a1c      car4 Azzurro      #2a7fd4
+    car1 Bianco       #eceef1      car5 Works Blue   #1546a8
+    car2 Forest Green #1d5a34      car6 Petrol Blue  #18468c
+    car3 Candy Plum   #6a1d5c      car7 Verde Acido  #8fce1c
+
+Three blues in a field of eight, and **Works Blue against Petrol Blue is an RGB distance of
+28** — indistinguishable at the size a rival car occupies on screen. (Bianco's hue computes as
+216 but it is white at about 2% saturation, so it is not part of that cluster; do not count it.)
+
+The docstring above `ROSTER` claims the scheme "yields eight distinct (chassis, livery) pairs
+across a default grid — no two cars on track are the same object", and that is true. It is
+just not the property that matters. At forty pixels a rival is a colour and a silhouette, and
+**nothing in the assignment ever looked at a colour** — the separation was luck, and it came
+out badly.
+
+### Fixed
+`assignField(count, roster)` keeps the chassis cycle, because the silhouette separation it
+gives is deliberate and documented, and picks each car's livery by farthest-point selection:
+maximise the minimum colour distance to every car already on the grid. Deterministic, no
+hand-kept table, and it degrades gracefully with grid size.
+
+    worst pair, full grid of 8     28 -> 75
+    worst pair, N = 6              106
+    worst pair, N = 4              121
+
+Verified in the running game — the field is now Hemi Orange, Bianco, Works Blue, Candy Plum,
+Verde Acido, Forest Green, Bare Primer, Azzurro.
+
+### Two measurements that were wrong on the way here, so nobody repeats them
+- **Reading livery colour off the material.** Every `car:paint` material is `#ffffff`; the
+  livery is baked into the map, so material colour tells you nothing.
+- **Averaging the baked livery atlas.** That gave a mean saturation of 0.24 and "every car is
+  nearly black", which is false — the atlas includes undersides, interiors and dark trim that
+  are never visible on a body. Sampling rendered pixels for the same cars gave `#b0342c` at
+  0.60 saturation where the atlas said `#794832`. A second rendered pass then disagreed with
+  the first (`#2b1f2c` for the same car), so that instrument is unreliable too.
+  **The source of truth is the `LIVERIES` table.** It is authored data; read it directly
+  instead of trying to recover it from pixels.
