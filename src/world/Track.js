@@ -1045,9 +1045,28 @@ export class Track {
     if (this.hasHazards) {
       const e = 1.4;
       const dt = e / Math.max(1, this.length);
+      const h0 = this.hazardHeight(t, lateral, s.halfWidth);
       const hUp = this.hazardHeight(wrap01(t + dt), lateral, s.halfWidth);
       const hDn = this.hazardHeight(wrap01(t - dt), lateral, s.halfWidth);
-      const slope = (hUp - hDn) / (2 * e);
+      // Two one-sided slopes, and the shallower one wins.
+      //
+      // A ramp's lip is a step in hazardHeight by design - 8.5 u to 0 in no
+      // distance at all, which is what launches the car instead of lofting it.
+      // A central difference straight across that step reports the cliff as if
+      // it were the surface: 8.5 u over the 2.8 u sample window is a slope of
+      // -3.04, i.e. a normal lying 71 deg forward of vertical, and the band it
+      // covers is exactly the 2.8 u every car crosses on its way off. The
+      // suspension resolves its spring force along this normal (see normalAt),
+      // so the car gets fired horizontally down the road: measured at the
+      // butter jump, +29 u/s of speed and 12 rad/s of pitch injected in a
+      // single 8.3 ms step, which is the somersault.
+      //
+      // The shallow side is the face the wheel is actually standing on. On
+      // anything smooth the two sides agree and this is the old central
+      // difference to within rounding.
+      const up = (hUp - h0) / e;
+      const dn = (h0 - hDn) / e;
+      const slope = Math.abs(up) <= Math.abs(dn) ? up : dn;
       if (slope !== 0) res.addScaledVector(s.tangent, -slope).normalize();
     }
     return res;
