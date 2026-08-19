@@ -805,7 +805,7 @@ believing an aggregate, render the difference and look at where it lives.** The 
 that cracked this took four lines more than the percentage did.
 
 
-## D21 — `renderFrame()` is not idempotent: ~72% of the frame changes on some renders — MAJOR — OPEN
+## D21 — `renderFrame()` is not idempotent: ~72% of the frame changes on some renders — NOT A DEFECT (see resolution)
 Found while trying to localise the streak veil by hiding objects and diffing frames. The
 diff kept reporting that hiding a dust emitter changed 72% of the image, which is absurd, so
 I measured the instrument instead of trusting it.
@@ -846,3 +846,80 @@ after a `stepOnce()`; past that the comparison is measuring this bug rather than
 toggled. The first thing to identify is which pass or buffer has a period of about five
 renders — the shape of the sequence (change at 3, hold to 7, change at 8) says something is
 being accumulated or ping-ponged on a schedule, not jittered per frame.
+
+
+### D21 resolved: it is the film grain, and it is deliberate
+The flip is perfectly periodic — every 5th render, ~71.8% of pixels, phase following a global
+counter. Signed, it is zero-mean: 42.5% of pixels brighter, 42.4% darker, flat at every scale
+on a 32x18 grid. That is noise re-seeding, not a structural change.
+
+`GrainShader` quantises its hash to `floor( uTime * 24.0 )` — 24 steps a second, on purpose,
+with the comment "grain that updates every frame at 60 fps reads as electronic noise, not
+film." At the 120 Hz fixed step that is exactly one re-seed every 5 renders. Setting
+`uAmount` to 0 makes consecutive renders byte-identical:
+
+    grain on   . . # . . . . # . . . .      (# = >1% of pixels differ)
+    grain off  . . . . . . . . . . . .
+
+So the renderer is fine and the framing in the entry above was overblown. What survives is
+the instrument rule, and it is worth keeping: **zero the grain before any frame-diff probe.**
+At the default amount of 0.03 the grain crosses a per-channel threshold of 6 on ~72% of
+pixels, which is enough to bury any real signal. Every toggle-and-diff measurement taken
+without doing this — including "the veil survives disabling all twelve post passes, so it is
+scene geometry" — was reading grain.
+
+## D22 — A boosting car paints a bright ring around the whole frame, in any shot — MAJOR — FIXED
+`fx/Impacts.js`. This is the streak veil that lost r19 and r20 the blind A/B, and it is the
+same bug that was already found and fixed once for speed lines, with the second uniform
+missed.
+
+With the grain zeroed so the probe means something, hiding one object changes the frame more
+than everything else in the scene combined:
+
+    fx:impacts   59.71%        decals        6.62%
+    ao pass       2.28%        MG.Room       0%
+    fx:particles  1.09%        control       0%
+
+`fx:impacts` holds a single child: `fx:overlay`, a full-screen additively-blended quad. Mapped
+as brightness added, it is dark in the middle and blazing at the edges — **up to 134 of 255
+luma added in a ring around the entire frame** while the centre stays clean:
+
+    ##########*++-:::--++**#########
+    ########*+-.......:.+++**#######
+    ######*+-.............:-*#######
+    #####**-................-*######
+    ########-..............-+#######
+    #########+#*#+**-+++-**#########
+
+Its uniforms at that moment: `uFlash 0`, `uSpeed 0`, `uBoost 0.86`. The boost rim alone.
+
+### Root cause, and why the earlier fix missed it
+`Impacts.update()` already carries a long comment titled "SPEED LINES BELONG TO THE CAMERA,
+NOT THE SUBJECT", written when a wide establishing shot of a motionless table was found
+wearing a full-screen streak veil because a 40-pixel toy car in frame was going fast. The fix
+scales the subject term by how far the camera itself moved:
+
+    wantSpeed *= this._cameraMotionGate(dt);
+
+`wantBoost` sits two lines above and never got the same treatment. So the exact bug that
+paragraph describes was still live, just through the other uniform.
+
+There was a second half. `_cameraMotionGate` does detect a cut — `if (dist > 40)` — but it
+**held** the previous gate value instead of clearing it, so a new shot inherited whatever
+self-motion the last one had earned. And it returned that stale value from an early
+`!(dt > 0)` guard placed before the position was even read, which is precisely the path a
+capture takes: `Capture` re-poses the camera and syncs with `dt = 0` deliberately, so nothing
+integrates.
+
+Third half, found by testing the fix rather than assuming it: clearing the gate is not enough,
+because `this.boost` is damped as `+= (want - boost) * (1 - exp(-dt * 7))`, which at `dt = 0`
+is a no-op. The damped terms have to be snapped on a cut, which is also what a cut means — the
+new shot has no history to ease out of.
+
+### Fixed
+Gate both uniforms on one shared `viewerMotion` (calling the gate twice would double-advance
+its damping), clear the gate on a cut instead of holding it, check for the cut before the
+`dt > 0` guard, and snap the damped terms when one is seen. Verified:
+
+    live chase camera, field boosting   boost 0.18, overlay visible   (correctly earned)
+    after a capture-style cut           boost 0.00, overlay NOT drawn

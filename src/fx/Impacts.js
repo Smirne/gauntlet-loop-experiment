@@ -620,7 +620,7 @@ export class Impacts {
    */
   _cameraMotionGate(dt) {
     const cam = this.ctx?.camera;
-    if (!cam || !(dt > 0)) return this._camGate ?? 0;
+    if (!cam) return this._camGate ?? 0;
 
     const p = cam.position;
     const prev = this._prevCamPos;
@@ -632,11 +632,31 @@ export class Impacts {
 
     const dx = p.x - prev.x, dy = p.y - prev.y, dz = p.z - prev.z;
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    prev.x = p.x; prev.y = p.y; prev.z = p.z;
 
     // A real chase camera at 100 u/s covers under 1 u per frame. 40 u in one
     // frame is not a camera, it is a different shot.
-    if (dist > 40) return this._camGate ?? 0;
+    //
+    // A cut must CLEAR the gate, not hold it. Holding was the bug: the new shot
+    // inherited however much self-motion the previous shot had earned, so a
+    // locked-off establishing wide rendered with the chase camera's gate and
+    // wore its full-screen effects. A shot that has not moved yet has no viewer
+    // motion to report and must re-earn it, which takes two frames.
+    //
+    // Checked BEFORE the dt guard on purpose. `Capture` re-poses the camera and
+    // then syncs with dt = 0 — deliberately, so nothing integrates — and the old
+    // early return handed back the stale gate without ever looking at where the
+    // camera now is. The cut is exactly the thing a zero-length frame still has
+    // to notice.
+    if (dist > 40) {
+      prev.x = p.x; prev.y = p.y; prev.z = p.z;
+      this._camGate = 0;
+      this._camCut = true;
+      return 0;
+    }
+
+    if (!(dt > 0)) return this._camGate ?? 0;
+
+    prev.x = p.x; prev.y = p.y; prev.z = p.z;
 
     const subject = this.ctx?.director?.focusTarget || this.ctx?.player || this.ctx?.vehicles?.[0];
     const top = Math.max(1, subject?.topSpeed || 100);
@@ -685,7 +705,35 @@ export class Impacts {
     // camera rides with the car and earns them; a locked-off wide does not,
     // however fast the subject is moving. So the subject term is now scaled by
     // how far the camera itself moved this frame.
-    wantSpeed *= this._cameraMotionGate(dt);
+    //
+    // THE BOOST RIM IS THE SAME EFFECT AND WAS MISSED WHEN THIS GATE WENT IN.
+    // `uBoost` drives `rim = smoothstep(0.62, 1.25, r) * uBoost` — a bright ring
+    // around the whole frame edge — and it was keyed to the subject alone. So the
+    // exact bug the paragraph above describes was still live, just through the
+    // other uniform: measured on the chase capture with the car boosting, the
+    // overlay was adding up to 134 of 255 luma in a ring around the entire frame
+    // while leaving the centre clean. Four blind judges called that a "radial
+    // white streak burst", a "hazy diagonal veil" and a "broken volumetric", and
+    // it cost the build two of four cameras in the A/B.
+    //
+    // Gate both on the same value, computed once — `_cameraMotionGate` advances
+    // its own damping state, so calling it twice would run it at double rate.
+    this._camCut = false;
+    const viewerMotion = this._cameraMotionGate(dt);
+    wantSpeed *= viewerMotion;
+    wantBoost *= viewerMotion;
+
+    // On a cut, SNAP rather than damp. The damping below is framed in dt, and a
+    // cut arrives on the one frame most likely to have dt = 0 — a capture syncs
+    // with a zero-length frame on purpose — where `1 - exp(-dt * k)` is 0 and the
+    // damped terms would simply keep the previous shot's values however hard the
+    // gate is held at zero. Snapping is also what a cut means: the new shot has
+    // no history to ease out of.
+    if (this._camCut) {
+      this.speedLines = wantSpeed;
+      this.boost = wantBoost;
+      this.flash = 0;
+    }
 
     // Damped, like everything else the camera does: lines that snapped on at
     // exactly the threshold would strobe every time the car sat on the boundary.
