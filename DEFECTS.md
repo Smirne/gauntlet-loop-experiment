@@ -923,3 +923,57 @@ its damping), clear the gate on a cut instead of holding it, check for the cut b
 
     live chase camera, field boosting   boost 0.18, overlay visible   (correctly earned)
     after a capture-style cut           boost 0.00, overlay NOT drawn
+
+
+## D23 — The road does not read as a road, and it is not a contrast problem — MAJOR — OPEN
+Every blind judge in all three A/B rounds said some version of this, having agreed on little
+else. "The track surface is nearly indistinguishable from the surrounding table." "The lane is
+just bare plywood with a few thin white line strokes that break up and float." "A
+ghost-translucent film over bare wood with only faint white lane lines, so the driving line is
+guesswork."
+
+**The obvious explanation is wrong.** Sampling the rendered frame at the road centre against
+the table 30 u outside the kerb, over the whole lap and at camera elevations from 12 to 80
+degrees:
+
+    varnishedWood road   -39.3 luma vs the table beside it   (n = 321)
+    pine worn patch      +41.5 luma                          (n = 16)
+    crumbs                -3.4 luma
+    and -40 +/- 1 at every elevation from 12 to 80 degrees — not view-dependent
+
+Forty luma is a lot of contrast, in both directions, and it is stable across viewing angle. So
+"the road is too similar in brightness to the table" is false and should not be chased.
+
+**What the frame shows instead.** The wood grain, the colour and — decisively — the **plank
+seams run continuously through the track and out into the surrounding table**. The road is
+the same material as the table with a different exposure. The eye segments surfaces by
+texture and by boundary, not by mean level, so a 40-luma step across a boundary that no
+texture feature respects reads as a lighting change, not as a different surface. The only
+things actually saying "road" in frame are the kerb tubes and the painted lane lines, which is
+precisely the list the judges gave.
+
+Local detail does not explain it either: mean local luma std-dev in 11x11 px windows is 3.67
+on the varnish road and 3.27 on the pine, against 0.54-1.77 on the table. The road has *more*
+texture than the table, not less.
+
+### Why the obvious fix is not safe
+`varnishedWood` is described as polished varnish and the physics treats it as polished
+(grip 0.92 against oak's 1.00), but its material is `clearcoat: 0.10` — visually almost matte.
+Raising it is the first thing anyone will reach for and it would undo deliberate tuning:
+`Surfaces.js` carries a note that roughness was raised to a 0.29 floor / 0.33 mean
+specifically because "three's split-sum DFG returns ~63% of the environment at grazing
+incidence for roughness 0.16 and ~29% at 0.33", to stop the surface going hot to the horizon
+under a long lens. A clearcoat lobe would reintroduce exactly what that tuning removed.
+
+### What to try instead, and how to judge it
+The lever is **texture identity and boundary**, not level:
+  - break or wear the plank seams where the track crosses them, so the boundary is something
+    the texture respects rather than something painted over it;
+  - give the driving line its own history — rubber and grime toward the centre, dust and
+    debris pushed to the edges — which is what makes a real racing line legible;
+  - keep the "the track is the varnished part of the same table" concept, which is deliberate
+    and documented at the top of `world/tracks/kitchen.js`.
+
+Adjudicate it blind against the current build like any other change. Do not adjudicate it on a
+luma delta — that number is already large and it is measuring the wrong thing, which is the
+whole content of this entry.
