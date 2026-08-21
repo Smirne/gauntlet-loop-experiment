@@ -1343,7 +1343,7 @@ capture to the noise floor on the wide shot (0.14% against a 0.13% floor). The r
 difference on the closer cameras is the background-aware livery change, which is intended.
 
 
-## D29 — A full race ends on lap 2 of 3 because the player is eliminated at exactly the threshold — MAJOR — OPEN
+## D29 — A full race ends on lap 2 of 3 because the player is eliminated at exactly the threshold — MAJOR — FIXED (gap widened to half a lap)
 Measured by running a complete race with the engine stepped directly and rendering suppressed,
 `?autopilot=1` so car 0 is driven. Not a capture, a whole race.
 
@@ -1390,3 +1390,31 @@ Two candidate directions if it does need changing, neither measured yet:
     the hardest to be thrown out of rather than the easiest.
   - Let the race play out to the flag when the player is eliminated, showing the finish rather
     than cutting to results — the four cars still running had a race on.
+
+
+### D29 fixed: `ELIM_LAP_FRACTION` 0.34 -> 0.50, on a direct call
+Not a tuning I derived — it was asked for, and the measurement backs it. Same race, same seed,
+same autopilot, stepped directly with rendering suppressed:
+
+                            before (0.34)        after (0.50)
+    elimination gap            630 u              927 u
+    race ends at              73.5 s             106.5 s
+    final state             'finished'          'results'
+    cars that FINISHED           0                  7
+    eliminated                   4                  1
+    player                  eliminated, lap 2    FINISHED, 5th of 8
+
+Before, the race declared itself over on lap 2 with nobody across the line and four cars still
+circulating. After, seven of eight complete all three laps, the player among them, and the one
+elimination is a car that was genuinely a lap down (car 3, still on lap 1 when the leaders were
+on lap 3). The race reaches a proper `results` state instead of cutting out.
+
+The elimination rule still fires — it is not disabled, just no longer catching cars that are
+in touch with the pack. Half a lap on kitchen is 927 u, which at racing pace is roughly 13
+seconds of road: a gap you can watch opening rather than one an ordinary mistake puts you in.
+
+**Still unverified: how it feels.** Seven finishers out of eight may now be too soft — an
+elimination race where almost nobody is eliminated has lost its threat. That is the same
+question D29 always was, and it still needs hands on the controls. If it reads as toothless,
+the next thing to try is scaling the gap with laps remaining — generous early, tightening
+toward the flag — rather than moving the single number again.

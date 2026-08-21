@@ -75,7 +75,13 @@ const ELIM_MIN_REMAINING = 3;   // never eliminate down to a two-car procession
 const ELIM_COOLDOWN = 9.0;      // seconds between eliminations
 const ELIM_HIDE_DELAY = 1.1;    // the car is already off-screen; this is just a beat
 const ELIM_SCREENS = 4.5;       // how many camera-fulls behind counts as "a screen ahead"
-const ELIM_LAP_FRACTION = 0.34; // ...or this much of the lap, whichever is larger
+// Widened 0.34 -> 0.50 on a direct call after a measured full race: the player
+// was eliminated at a gap of exactly 0.34, on the FINAL lap, sitting fourth of
+// five still running — and because an eliminated player ends the race, the four
+// cars still circulating never reached the flag (D29). Half a lap is a gap you
+// can see opening; a third of one is reachable from a single ordinary mistake
+// on a 28 s circuit.
+const ELIM_LAP_FRACTION = 0.50; // ...or this much of the lap, whichever is larger
 // No elimination at all until the leader has a lap in. A bad start is the most
 // recoverable thing in a race and the least fair thing to be knocked out for:
 // on the opening lap the field is still bunched from the grid, so a spin that
