@@ -63,11 +63,33 @@ release. **9** = indistinguishable from a well-funded commercial title. Be sting
 | 4 | Geometry & silhouette | Cars read as desirable die-cast objects; bevels catch light; props are modelled, not blocked out |
 | 5 | Effects | Smoke has volume and turbulence; sparks stretch and bounce; particles depth-fade; skid marks follow the real contact path |
 | 6 | Composition & camera | Frame is composed, not merely pointed; scale reads correctly; action is legible; motion is damped |
-| 7 | UI & type | Designed, hierarchical, consistent rhythm, animated, doesn't obscure the action |
+| 7 | UI & type | Designed, hierarchical, consistent rhythm, animated, doesn't obscure the action. **NOT SCOREABLE from a `MG.capture()` frame — see below.** |
 | 8 | Environment richness | The world feels like a real place with a story, not a track in a void |
 | 9 | Cohesion | Does it look like one art-directed product, or parts from different projects? |
 
 **A frame is AAA only when every category is ≥ 8 and none is below 7.**
+
+### Category 7 cannot be judged from a capture, and scoring it anyway has cost a round
+
+The HUD is **DOM, not canvas** (`capture-set.js`: "it can never appear in these captures").
+`MG.capture()` reads the WebGL canvas, so the UI is structurally absent from every review
+frame regardless of whether it is built, styled or animated.
+
+In critic round 6 all three reporting judges scored this category **1 out of 10** — "there is
+no UI at all", "there isn't any" — and two of them named it in the tell test as evidence the
+project was a hobby build. The HUD exists: position, lap, lap time, a speedometer with a boost
+gauge, and a minimap, all visible in an ordinary browser screenshot of the same moment.
+
+So: **do not score category 7 from a captured frame.** Either skip it and score out of eight,
+or judge it from a real browser screenshot, which does composite the DOM. A judge asked to
+score it from a capture will not report "I cannot see this" — it will report a 1, and it will
+carry that into the tell test as well, which poisons more than one number.
+
+This is the third time this project has scored a round on evidence the harness could not
+produce: rounds 1-2 were scored on a race that had already stopped, rounds up to 5 on frames
+whose shadows were a coin flip, and round 6 on a UI that cannot be photographed. **Before a
+review round, ask what the harness is incapable of showing, and take those categories off the
+sheet.**
 
 ## Blind A/B
 
