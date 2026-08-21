@@ -1492,6 +1492,13 @@ export class Sky {
     };
 
     const floor = make(plane, material, 'MG.Room.floor');
+    // The one exception to "none of it castShadow or receiveShadow" above. The
+    // room is a backdrop and that exclusion is right for the walls and the block
+    // silhouettes, which sit behind the playfield. The floor does not: the
+    // establishing camera frames it BESIDE the table, where a table that casts
+    // nothing is the first thing a viewer notices. Receiving only — it still
+    // casts nothing, so the shadow pass gains no draws from this.
+    floor.receiveShadow = true;
     floor.rotation.x = -Math.PI / 2;
 
     // Order is fixed and referenced by _fitRoom: -Z, +Z, -X, +X. Each rotation

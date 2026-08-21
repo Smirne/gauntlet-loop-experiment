@@ -1834,7 +1834,13 @@ export class TrackBuilder {
       leg.name = `track:tableLeg${i}`;
       leg.scale.set(LEG_TOP, height, LEG_TOP);
       leg.position.set(x, -TABLE_THICK - height * 0.5 + LEG_SINK * 0.0, z);
-      leg.castShadow = false;      // far outside the shadow cascade
+      // Was false with the note "far outside the shadow cascade", and that was
+      // true when shadowFar was 760. It is 1300 now and cascade 2 carries a 902 u
+      // radius, so the legs are inside it — and the round-6 establishing judge
+      // called their absence "a shadow-cascade/receiver bug visible from across a
+      // room": a 3 cm milk carton throws a crisp shadow while the largest object
+      // in frame puts nothing on the floor. See D30.
+      leg.castShadow = true;
       leg.receiveShadow = false;
       leg.matrixAutoUpdate = false;
       leg.updateMatrix();
@@ -1963,7 +1969,9 @@ export class TrackBuilder {
     const mesh = new THREE.Mesh(finaliseGeometry(geo, { tangents: false }), mat);
     mesh.name = 'track:tableUnderside';
     mesh.receiveShadow = false;
-    mesh.castShadow = false;
+    // The table's own silhouette on the floor. Without this the legs cast four
+    // sticks and nothing joins them. See D30.
+    mesh.castShadow = true;
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
     this.add(mesh);

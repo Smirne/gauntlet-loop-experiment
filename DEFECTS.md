@@ -1420,7 +1420,7 @@ the next thing to try is scaling the gap with laps remaining — generous early,
 toward the flag — rather than moving the single number again.
 
 
-## D30 — The room is outside the shadow system, so the table casts nothing on the floor — MAJOR — OPEN
+## D30 — The room is outside the shadow system, so the table casts nothing on the floor — MAJOR — PARTIALLY FIXED (flags corrected; the visible result is still missing)
 Found by the round-6 establishing judge, which called it "a shadow-cascade/receiver bug
 visible from across a room": a 3 cm milk carton on the tabletop throws a crisp shadow three
 times its own length, while the largest object in frame — the table — puts nothing on the
@@ -1452,3 +1452,37 @@ the floor receive, which is four flags and one cascade that already reaches (cas
 
 Do not re-test this by looking at the gameplay or chase cameras: the floor is not in frame
 there, and the change will correctly appear to do nothing.
+
+
+### D30 attempt: flags corrected, far plane tried and reverted, effect still not visible
+Three flags were wrong and are now right, at no cost: `MG.Room.floor` receives, and
+`track:tableLeg0..3` and `track:tableUnderside` cast. The legs were marked "far outside the
+shadow cascade", which was true at `shadowFar` 760 and has not been true since it went to
+1300 — measured, all four legs sit inside cascade 2's frustum.
+
+**And it barely changed the frame.** Cast-shadow coverage on the establishing camera, both
+variants captured from one build at one pinned moment:
+
+    before D30                       2.35%
+    after the flag fix               2.51%
+    after ALSO raising shadowFar     2.55%
+
+**The far-plane theory was right about the arithmetic and wrong about the outcome.** The
+table's shadow lands on the floor at a view depth of 1312, and the shader's baked fade window
+was 1170-1300, so `smoothstep` returned 1 and the shadow term collapsed to 1.0 — genuinely
+faded out, with cascade 2's coordinate at (0.376, 0.44, 0.617), comfortably inside the map.
+Raising `shadowFar` to 1650 moved the window to 1485-1650 and the point stopped being clipped.
+It made no measurable difference, and it cost real quality everywhere: cascade 2's radius went
+902 -> 1157 and its texel 0.88 -> 1.13, i.e. **every shadow in the game 28% blurrier** to buy
+0.04% of frame. Reverted.
+
+**What is still unexplained.** The floor is 16.75% of the frame at the live director camera,
+and the round-6 judge described the floor and the table leg in the establishing capture — so
+it is in shot. Either the capture pose shows much less floor than the live camera does, or
+something downstream of the fade is still suppressing it. **Measure what fraction of the
+CAPTURE establishing frame is floor before going further** — capture once with
+`MG.Room.floor` hidden and diff. If it is a few percent, the whole defect is worth less than
+it looks and the flags alone are the right stopping point.
+
+Keep the flags: they are correct, they cost nothing, and they are a precondition for any
+later fix. Do not raise `shadowFar` again without a measured gain to justify the texel cost.
