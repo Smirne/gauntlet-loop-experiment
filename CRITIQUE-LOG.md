@@ -168,3 +168,70 @@ That needs the rendered colour of each surface measured the way the oak was — 
 not from the texture — and it should be judged blind like everything else. Do not assume the
 multi-surface version is better because the reasoning is nicer; the car-only version had nice
 reasoning too and lost 1-3.
+
+
+## Round 6 — the first round scored on frames that show the lighting the game has
+
+Four judges, one per camera, on the r24 set captured at the pinned moment. Every earlier round
+was scored on a parked race, on frames whose shadows were a coin flip, or both.
+
+| # | Category | gameplay | chase | macro | establishing | mean |
+|---|---|---|---|---|---|---|
+| 1 | Materials & texture | 3 | 4 | 4 | 3 | 3.5 |
+| 2 | Lighting & shadow | 3 | 3 | 3 | 3 | **3.0** |
+| 3 | Post & grade | 3 | 5 | 5 | 2 | 3.8 |
+| 4 | Geometry & silhouette | 3 | 4 | 5 | 3 | 3.8 |
+| 5 | Effects | 1 | 3 | 2 | 2 | **2.0** |
+| 6 | Composition & camera | 3 | 4 | 4 | 4 | 3.8 |
+| 7 | UI & type | 1 | 1 | 3 | 1 | **VOID** |
+| 8 | Environment richness | 3 | 3 | 3 | 3 | 3.0 |
+| 9 | Cohesion | 2 | 4 | 4 | 4 | 3.5 |
+
+**Tell test: failed 4/4, all four saying "under two seconds".** Mean 3.3 excluding the void
+category, against an anchor where 5 is a competent hobby project. That is the honest position
+and it is worse than the round-2 numbers, which were measured on evidence that could not
+support them.
+
+### Two of the four judges were wrong about the headline, and measurement settled it
+
+The chase and macro judges both led with "nothing casts a shadow". Captured the same pinned
+moment with only the cast-shadow term zeroed and diffed:
+
+    gameplay 11.1% of frame darkened, max 138 luma    macro 12.7%, max 161
+    chase     6.0%,                   max 140         establishing 2.4%, max 91
+
+Shadows are unambiguously present. The gameplay judge — the only one that pulled magnified
+crops — saw them and made the sharper call: *"There is a long, confident directional shadow
+thrown to the right of the blue car — so a key exists"*, and then *"the hero car casts a sun
+but doesn't receive one."*
+
+### What is actually wrong, measured
+
+The perception all four shared — ambient dome, no lit side and shadow side, uniformly
+mid-grey, milky — is real. The cause is not the light rig:
+
+    mean frame luma            134.4
+      fog contributes           39.0   (29%)   <-- largest single source
+      sun / key                 20.4   (15%)
+      environment / IBL          8.1   (6%)
+      fill lights                1.8   (1%)
+      unlit floor + grade lift  47.3   (35%)
+
+**Fog puts more light into the frame than the sun does.** Key-to-fill measures 11.2:1, not the
+1.3:1 the establishing judge estimated — the rig is fine. What flattens the image is a
+`FogExp2` at density 0.00055 in `#d9d0bd`, plus a grade that lifts an unlit scene to 47 luma
+before anything is lit at all. That is D13, and it is promoted from "erases the backdrop" to
+"flattens every frame".
+
+### Three harness faults found in one round
+
+1. **Category 7 is unscoreable from a capture.** The HUD is DOM, not canvas. Three judges gave
+   it a 1 and two carried "no UI" into the tell test. The HUD exists and is visible in an
+   ordinary browser screenshot. Rubric fixed.
+2. **The establishing judge was shown a letterboxed square.** Its JPEG was 1400x1400 with rows
+   2-300 and 1100-1397 at pure luma 0.0 — about 44% black bars — while the other three
+   converted correctly to 1400x787. It caught this itself and still scored composition and
+   grade partly on the padding. That camera must be re-judged.
+3. Both faults are the same failure as rounds 1-2 and 1-5 before them: **scoring a round on
+   evidence the harness could not produce.** Ask what the harness cannot show before the
+   round, not after.
