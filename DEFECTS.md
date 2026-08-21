@@ -1486,3 +1486,51 @@ it looks and the flags alone are the right stopping point.
 
 Keep the flags: they are correct, they cost nothing, and they are a precondition for any
 later fix. Do not raise `shadowFar` again without a measured gain to justify the texel cost.
+
+---
+
+## D31 — the paint never reaches the screen: a clearcoat reflecting a beige kitchen eats about half of every livery's chroma
+
+**Status: OPEN.** Found while shooting the before/after for the livery change, which is the
+only reason it was found at all — nothing else in the project had ever photographed all eight
+cars at once with the lens blur switched off.
+
+**The symptom.** In the line-up frame, `Candy Plum #6a1d5c` — a deep purple — is grey.
+`Petrol Blue #18468c` is grey-brown. `Arrest Me Red #c21520` is a dusty mauve. `Verde Acido
+#8fce1c`, an acid green, is olive. Every car in the field has been pulled toward the colour of
+the table it is standing on, which is *precisely* the complaint three independent judges made
+in their own words in round 4 and which I answered with colour arithmetic instead of looking.
+
+**The cause, isolated with one probe.** `car:paint` carries `clearcoat: 1` and
+`envMapIntensity: 1.35` over a `metalness` of 0.34, and the scene's environment is a warm room
+at `environmentIntensity` 0.6 lit by a `#ffd8ae` sun at intensity 5.91. The clearcoat lobe is
+a full-strength mirror of that warm room laid over every painted panel, and the paint is
+underneath it. Captured from one build at one pinned pose, paint materials only, everything
+else untouched:
+
+    shipping     clearcoat 1   envMapIntensity 1.35   metalness 0.34
+    probe        clearcoat 0   envMapIntensity 0.25   metalness 0
+
+The probe frame is in `shots/livery-board-probe-nocoat.png`. Green becomes green, orange
+becomes orange, white becomes white. It is not subtle and it does not need a judge.
+
+**THIS IS NOT A BUG REPORT AGAINST THE CLEARCOAT.** The probe is *worse* as an image: the cars
+go flat and plasticky, and the die-cast read — a highlight rolling around a cast fillet — is
+most of what sells the scale. The defect is that the veil is at **full strength**, not that it
+exists. The fix is a value between the two ends, and it has to be found by looking, not by
+picking a number that sounds moderate.
+
+**What this costs the work already done.** D24 and the change committed alongside this entry
+both optimise *authored* hex distance. The authored numbers are the right thing to choose on —
+they are the only stable handle — but the improvement they promise arrives at the screen
+heavily attenuated, and no number in either writeup accounted for that. Both are still
+improvements. Neither is worth what its table says.
+
+**Rule earned: A COLOUR DECISION IS NOT DONE UNTIL YOU HAVE SEEN THE PIXELS.** Authored data
+is the right thing to *decide* on (that rule stands). It is not evidence about what a player
+sees. Two instruments failed on the way here and both failed silently: sampling the
+most-saturated pixels in a patch around each car returned the colour of the oak for all eight,
+because fogged paint is less saturated than wood; and aiming the patch at 0.82 of body height
+returned the colour of the tinted canopy. Both produced complete, plausible tables of numbers.
+The contact sheet of sample points is what caught them — print the patch, look at it, and only
+then read the number off it.

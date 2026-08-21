@@ -3613,6 +3613,12 @@ export const LIVERIES = {
     L('Bare Primer', 0x6d6f74, 0x2a2c31, 0xd0521e, 'flame', 13, { preset: 'matte', flake: 0.10, rim: 'dark', sponsors: ['SOLDER', 'RIVET'] }),
     L('Candy Plum', 0x6a1d5c, 0x100f16, 0xf0c24a, 'twoTone', 21, { preset: 'candy', flake: 0.80, rim: 'gold', split: 0.62, sponsors: ['VOLT'] }),
     L('Sunburst', 0xe8a410, 0x1b1c20, 0xffffff, 'checker', 3, { preset: 'pearl', flake: 0.42, rim: 'chrome', sponsors: ['HALO OIL', 'CRUMB'] }),
+    // Authored to answer a measurement, not a mood. Every other base colour
+    // in the game sits somewhere on the warm side of the wheel, and so does
+    // every surface the kitchen track is made of. Cyan is the one hue that
+    // is far from ALL SIX of them at once (202 from varnish, its nearest),
+    // which is why it lands on the player's car — see DEFAULT_SURFACES.
+    L('Cyan Flash', 0x00b8d4, 0x0d1014, 0xf2f4f8, 'stripes', 88, { preset: 'pearl', flake: 0.50, rim: 'chrome', stripeY: 0.30, stripeW: 0.16, sponsors: ['FLUX', 'NINE'] }),
   ],
   wedge: [
     L('Arrest Me Red', 0xc21520, 0x101216, 0xf5f6f8, 'solid', 9, { preset: 'candy', flake: 0.72, rim: 'gold', sponsors: ['APEX FUEL'] }),
@@ -3728,16 +3734,55 @@ export const ROSTER = ['muscle', 'wedge', 'rally'];
  *     worst car-to-table  69 -> 79
  *     PLAYER car-to-table 69 -> 157
  *
+ * ONE SURFACE WAS NOT THE SURFACE.
+ *
+ * That version scored against a single colour: the table's oak. But a lap does
+ * not happen on oak. It happens on six surfaces, and the six were sampled off a
+ * rendered frame rather than read out of the textures, because tone mapping,
+ * fog and the sun all move them:
+ *
+ *     varnish (96, 75, 72)   the road itself, the darkest thing under a car
+ *     pine    (199,153,111)  the raw table between sections
+ *     paper   (231,212,193)  the newspaper straight
+ *     crumbs  (185,131,88)   the scatter
+ *     ceramic (205,175,150)  plates and mugs
+ *     oak     (154, 96, 59)  the old single default
+ *
+ * Scoring against oak alone let two cars through that vanish elsewhere: Candy
+ * Plum is 92 from oak but **51** from the varnished road, and Bianco is 111
+ * from oak but **55** from the newspaper. Both were on the grid. A car is only
+ * as readable as its worst moment, so the score is now the minimum over every
+ * surface in the list, and both of them lose their slot.
+ *
+ *     worst car-to-car     65 -> 71
+ *     worst car-to-surface 51 -> 70
+ *     PLAYER car-to-surface 51 -> 202   (Cyan Flash, authored for this)
+ *
  * @param {number} count cars on the grid
  * @param {string[]} [roster] chassis cycle; defaults to the promoted three
  * @param {object} [opts]
- * @param {number[]} [opts.surface] RGB 0-255 of the surface the cars are seen
- *   against. Default is the kitchen table's oak as rendered, sampled from the
- *   frame rather than from the texture — (158, 100, 64). A track on a different
- *   surface should pass its own.
+ * @param {number[][]} [opts.surfaces] list of RGB 0-255 triples the cars are
+ *   seen against. Defaults to the six measured above. A track made of something
+ *   else should pass its own.
+ * @param {number[]} [opts.surface] single RGB triple; legacy form of `surfaces`,
+ *   kept so `?liveryMode=oak` can reproduce the previous grid from this build.
+ * @param {string[]} [opts.exclude] livery names to leave out of the pool. With
+ *   `surface` above this is what makes the change A/B-able: ONE build renders
+ *   both the old grid and the new one at the same pinned race moment, which is
+ *   the only honest way to judge a change that is purely about colour (D25).
  * @returns {{model: string, livery: number}[]} one entry per grid slot
  */
 export const DEFAULT_SURFACE_RGB = [158, 100, 64];
+
+/** Every surface a car is seen against on the kitchen track, as rendered. */
+export const DEFAULT_SURFACES = [
+  [96, 75, 72],     // varnish — the road
+  [199, 153, 111],  // pine
+  [231, 212, 193],  // newspaper
+  [185, 131, 88],   // crumbs
+  [205, 175, 150],  // ceramic
+  [154, 96, 59],    // oak
+];
 
 export function assignField(count, roster = ROSTER, opts = {}) {
   const ids = (Array.isArray(roster) && roster.length ? roster : ROSTER).filter((id) => LIVERIES[id]);
@@ -3748,10 +3793,13 @@ export function assignField(count, roster = ROSTER, opts = {}) {
     return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
   };
 
-  const surface = Array.isArray(opts.surface) && opts.surface.length === 3
-    ? opts.surface
-    : DEFAULT_SURFACE_RGB;
+  const surfaces = Array.isArray(opts.surfaces) && opts.surfaces.length
+    ? opts.surfaces
+    : (Array.isArray(opts.surface) && opts.surface.length === 3
+      ? [opts.surface]
+      : DEFAULT_SURFACES);
 
+  const banned = new Set(Array.isArray(opts.exclude) ? opts.exclude : []);
   const out = [];
   const taken = new Map();   // chassis id -> Set of livery indices already used
   for (let i = 0; i < Math.max(0, count); i++) {
@@ -3761,14 +3809,22 @@ export function assignField(count, roster = ROSTER, opts = {}) {
     // Once a chassis has worn every livery it has, start over rather than fail.
     if (used.size >= set.length) used.clear();
     let pool = [];
-    for (let k = 0; k < set.length; k++) if (!used.has(k)) pool.push(k);
+    for (let k = 0; k < set.length; k++) {
+      if (used.has(k)) continue;
+      if (banned.has(set[k].name)) continue;
+      pool.push(k);
+    }
+    if (!pool.length) for (let k = 0; k < set.length; k++) if (!used.has(k)) pool.push(k);
 
     let pick = pool[0];
     let best = -1;
     for (const k of pool) {
       const c = rgb(set[k].base);
-      // The surface counts as something to be distinct from, exactly like a car.
-      let nearest = Math.hypot(c[0] - surface[0], c[1] - surface[1], c[2] - surface[2]);
+      // Every surface counts as something to be distinct from, exactly like a
+      // car — and a car is only as readable as its worst surface, so it is the
+      // minimum over all of them, not the average.
+      let nearest = Infinity;
+      for (const s of surfaces) nearest = Math.min(nearest, Math.hypot(c[0] - s[0], c[1] - s[1], c[2] - s[2]));
       for (const prev of out) nearest = Math.min(nearest, dist(set[k].base, prev.base));
       if (nearest > best) { best = nearest; pick = k; }
     }

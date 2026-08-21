@@ -275,10 +275,18 @@ async function boot() {
   // `?liveryMode=index` restores the old `livery: i` arithmetic. It exists so the
   // two schemes can be captured from ONE build at the SAME pinned race moment,
   // which is the only way to A/B a change that is purely about colour — see D25.
+  //
+  // `?liveryMode=oak` reproduces the grid as it stood BEFORE the field was scored
+  // against all six of the kitchen's surfaces instead of just the table's oak:
+  // one surface, and no Cyan Flash. Same purpose as `index` above — a colour
+  // change can only be judged with both versions rendered from one build.
   const assignField = pick(vModels, 'assignField');
+  const legacySurface = pick(vModels, 'DEFAULT_SURFACE_RGB');
   const liveryMode = params.get('liveryMode') || 'separated';
   const grid = (liveryMode !== 'index' && typeof assignField === 'function')
-    ? assignField(FIELD, roster)
+    ? assignField(FIELD, roster, liveryMode === 'oak'
+      ? { surface: legacySurface, exclude: ['Cyan Flash'] }
+      : undefined)
     : null;
 
   ctx.drivers = [];
