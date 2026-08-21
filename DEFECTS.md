@@ -1341,3 +1341,52 @@ and this attempt showed it will silently move all of them.
 Reverted in full; `MARK_ROWS` is 8 again and the reverted build matches the pre-feature
 capture to the noise floor on the wide shot (0.14% against a 0.13% floor). The residual
 difference on the closer cameras is the background-aware livery change, which is intended.
+
+
+## D29 — A full race ends on lap 2 of 3 because the player is eliminated at exactly the threshold — MAJOR — OPEN
+Measured by running a complete race with the engine stepped directly and rendering suppressed,
+`?autopilot=1` so car 0 is driven. Not a capture, a whole race.
+
+    raceTime 73.5 s     state 'finished'     laps configured: 3
+    car 0 (player)  lap 2  t 0.27   ELIMINATED
+    car 1           lap 2  t 0.44   running
+    car 4           lap 2  t 0.61   running   <- leader
+    car 5           lap 2  t 0.31   running
+    car 6           lap 2  t 0.58   running
+    cars 2, 3, 7    lap 1, 1, 0     eliminated
+
+**Nobody finished.** Four cars were still circulating on the final lap when the race declared
+itself over, and the leader was 0.39 of a lap from the flag.
+
+**The mechanism is two rules meeting, and each is defensible alone.**
+
+1. `ELIM_LAP_FRACTION = 0.34` — a car is out when it is 34% of a lap behind the leader. The
+   player was at `lap 2, t 0.27` against a leader at `lap 2, t 0.61`. That is a gap of exactly
+   **0.34**. Eliminated on the threshold, on the last lap, in fourth place of five still
+   running and in plain sight of the car ahead.
+2. `_checkRaceOver` treats an eliminated player as the race being over:
+   `const playerDone = !this.player || this.player.finished || this.player.eliminated;`
+   and enters FINISHED immediately. That is a deliberate choice — it is the player's race —
+   and it is why the other four never got to finish.
+
+**This is not the old D8.** D8 was the field reporting `lap: 3, finished: true` at 5.4 s with
+the pack 8% around the opening lap, which is a bookkeeping fault. This one is the rules
+working as written and producing a race that ends before anyone crosses the line.
+
+**Why the tuning is already suspect.** The header comment records that the gap used to be a
+fifth of a lap with a 6 s cooldown and no grace period, and says elimination "should be a
+threat you can feel closing, not a coin flip". It was widened once, to a third of a lap with a
+9 s cooldown and no elimination until the leader has a lap in. The measurement above says a
+third of a lap is still tight enough to catch a mid-pack car on the final lap.
+
+**Do not fix this from the numbers alone.** Whether 0.34 is punishing or exciting is a
+question about how it feels with hands on the controls, and the loop has no instrument for
+that — D28 established the blind judges cannot even discriminate subtle stills. This is
+first on the list to put in front of a human playtest, with one specific question: when you
+were eliminated, did it feel like something you saw coming?
+
+Two candidate directions if it does need changing, neither measured yet:
+  - Widen the gap on the final lap only, or scale it with laps remaining, so the last lap is
+    the hardest to be thrown out of rather than the easiest.
+  - Let the race play out to the flag when the player is eliminated, showing the finish rather
+    than cutting to results — the four cars still running had a race on.
