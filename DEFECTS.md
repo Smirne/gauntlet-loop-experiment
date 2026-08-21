@@ -401,7 +401,7 @@ slab test in this entry is invalid for a different reason: `_fitToCamera` fits c
 fitted to the real one. The subject was never inside the frusta being tested. The numbers
 above, taken after `stepOnce()` on the real camera, are the ones to trust.
 
-## D13 — Fog is heavy enough to erase the backdrop — MAJOR — OPEN
+## D13 — Fog is heavy enough to erase the backdrop — MAJOR — FIXED (and it was flattening every frame, not just the backdrop)
 `render/Sky.js` [A4]. Follows from D12 and may share a fix. At the distances the establishing
 and low-angle cameras use, fog has already taken everything to near-flat. Whatever is built
 behind the table will not be visible until this is retuned.
@@ -1418,3 +1418,37 @@ elimination race where almost nobody is eliminated has lost its threat. That is 
 question D29 always was, and it still needs hands on the controls. If it reads as toothless,
 the next thing to try is scaling the gap with laps remaining — generous early, tightening
 toward the flag — rather than moving the single number again.
+
+
+## D30 — The room is outside the shadow system, so the table casts nothing on the floor — MAJOR — OPEN
+Found by the round-6 establishing judge, which called it "a shadow-cascade/receiver bug
+visible from across a room": a 3 cm milk carton on the tabletop throws a crisp shadow three
+times its own length, while the largest object in frame — the table — puts nothing on the
+floor beside it.
+
+Checked, and it is broader than that. Every mesh in the room:
+
+    MG.Room.floor            cast false   receive FALSE
+    MG.Room.wall0..wall3     cast false   receive FALSE
+    MG.Room.prop0..prop10    cast false   receive FALSE
+    track:tableLeg0..3       cast FALSE   receive false
+    track:tableUnderside     cast false   receive false
+    track:tableEdge          cast false   receive true     <- the only receiver
+
+So the floor cannot receive and the legs cannot cast; the absence is structural, not a
+cascade-range problem.
+
+**It is deliberate.** `Sky.js` states it outright: "a floor, four walls, and a handful of
+block silhouettes, all behind and below the playfield, all opaque, none of it castShadow or
+receiveShadow", on the reasoning that the room is a distant backdrop that gets fog falloff,
+DOF and occlusion by the table for free. That is sound for a backdrop.
+
+**The assumption is violated by one camera.** The establishing wide frames the floor
+prominently *beside* the table rather than behind it, and there the missing shadow is the
+first thing a viewer notices. The fix is not to switch the whole room on — that would cost
+the shadow budget the exclusion was protecting — but to make the table legs and top cast, and
+the floor receive, which is four flags and one cascade that already reaches (cascade 2 has a
+902 u radius against a 1300 u far plane).
+
+Do not re-test this by looking at the gameplay or chase cameras: the floor is not in frame
+there, and the change will correctly appear to do nothing.

@@ -366,7 +366,37 @@ export default {
 
   ambient: {
     fogColor: 0xd9d0bd,
-    fogDensity: 0.00055,
+    // 0.00055 -> 0.00028. Measured, then judged, and it is the TRACK that owns
+    // this — the lighting preset's own fog.density never applies here, which
+    // cost one wrong edit before the override was found.
+    //
+    // At 0.00055 fog put 39 of the frame's 134 mean luma in, against the sun's
+    // 20.4 — more light than the key — and the darkest 1% of the image sat at
+    // luma 68, so nothing in frame was dark. A density sweep at a fixed camera:
+    //
+    //     density    mean   1st-pct luma   contrast range   key share
+    //     0.00055    134.4       68             151           15.2%
+    //     0.00028    108.6       28             192           25.2%
+    //     0           95.4       16             220           31.9%
+    //
+    // Half is the knee: it recovers most of the black point and the contrast,
+    // and below it the returns flatten while the aerial perspective disappears.
+    //
+    // Blind A/B, four judges, one per camera, both variants captured from one
+    // build at one pinned moment. The establishing wide picked the halved
+    // version at HIGH confidence — "blacks reach black and every object regains
+    // a distinct lit/shadow side". The gameplay and chase judges both reported
+    // "I cannot see a difference", which is correct rather than a failure:
+    // exponential fog barely acts over a few car lengths, and one of them
+    // measured the delta at under half a code value out of 255. So this change
+    // helps where fog is visible and does nothing where it is not.
+    //
+    // Known cost, named by the establishing judge: the tabletop loses some of
+    // its own front-to-back aerial perspective, so table-versus-room separation
+    // leans more on hue than on a value gradient. Buy that back with a height-
+    // or distance-clamped term if needed, not by raising this number, which
+    // lifts the near foreground too.
+    fogDensity: 0.00028,
     dustDensity: 1.15,
   },
 };

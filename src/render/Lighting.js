@@ -136,7 +136,14 @@ export const FOG_DENSITY_MAX = 0.0008;
  */
 const FOG_SCALE = (() => {
   try {
-    const v = Number(new URLSearchParams(location.search).get('fog'));
+    // `get()` returns null when the param is absent, and Number(null) is 0 —
+    // which is finite and >= 0, so a naive guard silently switched fog OFF for
+    // every normal boot. It shipped looking plausible: the black point improved
+    // exactly as a fog reduction would, because it WAS one, just a total one.
+    // Test for the param's presence before parsing it.
+    const raw = new URLSearchParams(location.search).get('fog');
+    if (raw === null || raw === '') return 1;
+    const v = Number(raw);
     return Number.isFinite(v) && v >= 0 ? Math.min(4, v) : 1;
   } catch (e) { return 1; }
 })();
@@ -281,7 +288,7 @@ export const LIGHT_PRESETS = {
     ambient: { color: 0x38455e, intensity: 0.11 },
     shadow: { intensity: 0.98 },
     lamp: { intensity: 0 },
-    fog: { color: 0x92979e, density: 0.00060 },
+fog: { color: 0x92979e, density: 0.00060 },
     env: { intensity: 0.60 },
     contact: { strength: 0.74, tint: 0x2a2620 },
     backdrop: {
