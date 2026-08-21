@@ -1294,3 +1294,50 @@ edge so the road has a boundary where kerbs are absent.
 **Judge it with the subtle-difference protocol in REVIEW.md**, and expect to need the ruts at
 an exaggerated strength first just to confirm the mechanism is visible at all, then tune down.
 A null round here is likely and is not a reason to re-run.
+
+
+### D23 — first implementation attempt: built, measured, REVERTED
+Written up because it cost real time and the next attempt should start from what it found
+rather than from the plan above, which was wrong in one important place.
+
+**What worked.** The geometry approach is sound and is confirmed in frame. Two
+`buildLongitudinalMark` strips at `lineLat[i] +/- 1.8` produce twin ruts that follow the
+racing line through a corner, tightening to the inside and drifting wide on exit — exactly
+the migration four judges asked for, and it comes free from using the line rather than a kerb
+offset. Screenshotted and verified with the director disabled.
+
+**What killed it.** Adding a ninth atlas row regressed every existing marking. Measured with
+the ruts themselves switched OFF, against a pre-feature capture at the same pinned moment:
+
+    gameplay      7.8% of pixels changed, max 196 luma
+    macro        17.9% of pixels changed, max 184 luma
+    run-to-run noise floor for comparison      0.03%
+
+So `MARK_ROWS` cannot simply be incremented. The V convention in `buildLongitudinalMark`
+(`v0 = (row + 0.02) / MARK_ROWS`) does not survive a change to the row count — every existing
+row lands somewhere new. The visible symptom of the same fault on the new row is that the rut
+strips render as **row 6's yellow hazard chevrons**: against a ruts-off capture they made
+7.6-11.8% of the frame *brighter* by up to 189 luma, with 0.01% of pixels darker.
+
+**Ruled out by measurement, so nobody repeats them.**
+- Roughness. 0.24 and 0.60 in the rut row give byte-identical frames — the roughness map is
+  not what makes the strips bright, and my first three explanations all assumed it was.
+- A stale module. The live roughness map reads the new ninth row back at exactly 0.60, so the
+  browser was serving current code.
+- The material's blending. `markMaterial` is plain alpha with `transparent: true`; a dark
+  texel cannot brighten through it. `wearPass` is `destination-out` and only erases.
+- The atlas paint. Reading the live albedo texture back, row 8 is `rgb(31, 25, 22)` at alpha
+  0.32 — exactly what was painted. The atlas was right and the geometry was right; only the
+  mapping between them was wrong.
+
+**Next attempt starts here.** Either (a) find why the V mapping does not survive a row-count
+change — paint row 8 flat magenta, load with the ruts on, and see what colour the strips
+come out; or (b) sidestep the shared atlas entirely and give the ruts their own small texture
+and material, at the cost of one draw call, which avoids touching a layout that eight other
+mark types depend on. **(b) is now the recommended route.** The atlas is load-bearing for
+edge lines, lane lines, chalk, checker, tape, grid boxes, hazard stripes and contact shade,
+and this attempt showed it will silently move all of them.
+
+Reverted in full; `MARK_ROWS` is 8 again and the reverted build matches the pre-feature
+capture to the noise floor on the wide shot (0.14% against a 0.13% floor). The residual
+difference on the closer cameras is the background-aware livery change, which is intended.
