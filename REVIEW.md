@@ -95,8 +95,10 @@ came out B, A, B, B), so it is a failure mode of the hard comparison specificall
 where a wrong verdict is hardest to notice. Three rules follow.
 
 1. **Describe before choosing.** Ask the judge to describe each frame separately, and to state
-   what physically differs between them, BEFORE it is asked which is better. A judge that
-   cannot name the difference must say so rather than pick.
+   what physically differs between them, BEFORE it is asked which is better. **A judge that
+   cannot name the difference must say so and decline to pick** — "I cannot see a difference"
+   is a valid, useful answer and must be offered explicitly in the prompt. This is the
+   adopted policy.
 2. **Report the position tally as a first-class result.** A 4-0 split on which *slot* won,
    against a 2-2 split on the *variable*, is a null however confident the prose. Compute this
    every round and put it above the verdict.
@@ -104,6 +106,13 @@ where a wrong verdict is hardest to notice. Three rules follow.
    result is agreeable is how a loop launders noise into evidence. Change the stimulus so the
    difference is large enough to be seen, or accept that the change is below the threshold
    that matters and drop it.
+
+**Considered and declined: showing each pair to two judges in opposite orders** and keeping
+the verdict only where they agree. It would make subtle results trustworthy, but it doubles
+the agent cost per round and roughly halves the number of usable verdicts. The judgement was
+that describe-first is worth trying first, and that a human playtest is the better instrument
+for anything this loop cannot resolve. If describe-first only converts position bias into
+more honest nulls — which is a real possibility — revisit this.
 
 What a null round is still good for: the judges' *descriptions* remain useful even when their
 *verdict* is worthless, because a description does not depend on which frame was which. The
