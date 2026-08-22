@@ -1619,3 +1619,82 @@ frame and it needs judging, not just landing.
 be listening. Before believing any material property, check that the material's shader actually
 reads it — `/shadowmap_pars/.test(mat.fragmentShader)` would have ended this defect two rounds
 ago, and it cost one line.
+
+---
+
+## D32 — the depth of field blurs the car you are racing. FIXED at 0.55.
+
+Reported from a playthrough as "the ones far behind or before are a bit blurred". Measured on
+the live chase camera, a rival **17 units ahead — two car lengths** — was at `coc 1.00`, the
+entire 67 px kernel. Both terms saturated independently: screen band 1.00, depth 0.71.
+
+The screen band is blind by construction: it blurs by how far up the FRAME a pixel is, and its
+sharp strip is 23% of frame height. Anything ahead of or behind the hero in a chase shot leaves
+it however close it really is.
+
+PostFX already had the right rule with the wrong definition of subject — "the band may never be
+narrower than the hero's own silhouette". The subject of a racing game is the part of the field
+you can still do something about. Both terms now measure the rivals within `DOF_FIELD_REACH` by
+projecting them, which picks up camera pitch, road slope and foreshortening for free.
+
+**Shipped at 0.55 of the way, and the fraction is the point.** Judged from three frames out of
+one build at one pinned clock (20.008 s): A today 67.0 px on the nearest rival; B at 0.55,
+5.5 px; C at 1.0, zero — and the sharp strip at 60%, which is what a wide establishing shot is
+allowed, with the miniature read gone. `?dofField=N` renders any point on the dial.
+
+## D33 — `R` is two different actions and the results screen advertises the other one
+
+`Input.js` binds `respawn: ['KeyR']` and `restart: ['Backslash']`. `Results.js` draws the RETRY
+button with the key hint **R**. So during a race `R` puts the car back on track at its last good
+point, and on the results screen `R` restarts the whole race — and nothing tells the player
+which one they are about to get.
+
+Reported as "the retry key sometimes restarts from the last position, I guess it should start
+the full race again?". It is not intermittent and `Race.start()` is not at fault: it calls
+`_placeOnGrid()` on every entry and resets the clock correctly. This is a key collision plus a
+label, nothing more, and it is a real defect because the player cannot tell the two apart.
+
+## D34 — boost has no top end, because the force that was supposed to give it was never wired up
+
+`boostForce: 27` is declared in the tuning table, commented "flat thrust — **this is what raises
+top speed**", and the comment at the application site says "Boost multiplies torque (the punch)
+and adds a flat force later (the top end)".
+
+**`boostForce` has exactly one mention in the entire tree: its own declaration.** Nothing reads
+it. The flat force is never added. Boost multiplies engine torque by `boostTorque` 1.55 and
+does nothing else, which is why a player reports "Is the boost doing something apart visual
+effect? Effect on speed is not very evident."
+
+One theory checked and dropped: `crank` is zeroed on the limiter, while shifting and in
+neutral, so boost could have been a no-op at the top end for that reason instead. Measured over
+1400 steps across all eight cars — of 304 samples above 90% of top speed, **0%** had the
+torque zeroed. The engine is pulling up there. The missing force is the whole story.
+
+## D35 — the respawn has a visual hook that nothing has ever read
+
+`Vehicle.respawnFlash` is set to 1 in `respawn()` and decayed every frame in `update()`.
+Searched the whole tree: **there are no other references.** No material, no shader, no fx
+system and no HUD element consumes it, so a respawn is a hard teleport with no visual event on
+the car at all. The only feedback is a DOM toast in the corner reading RESPAWN.
+
+Reported as "sometimes my car gets repositioned very quickly, I don't know if it's the crash
+restore, it should have some visual effect?" — which is exactly right, and the codebase already
+agreed with him three years of commits ago and then never finished the sentence.
+
+## D36 — the biscuit. NOT REPRODUCED, and the obvious cause is ruled out.
+
+A player asked "where did that biscuit came from?" over two stills a moment apart, the second
+of which has a large biscuit next to the car where the first appears to show bare paper.
+
+The obvious mechanism is stale instanced bounds: props are `InstancedMesh` with
+`frustumCulled = true`, many are `knockable` and move under `DynamicDrawUsage`, and
+`computeBoundingSphere` does not appear anywhere in `Props.js` — so a mesh whose instances have
+been knocked about could be culled against bounds that no longer describe it.
+
+**Measured, and it is not that.** Of 30 prop meshes, 29 have bounds identical to freshly
+computed ones and the single drifted mesh (`prop:toast:bread`) is out by 1.4 units on a radius
+of 171. Every prop mesh's bounding radius spans the whole table anyway, so per-instance culling
+is not happening and a single biscuit cannot pop on its own.
+
+Two stills is not enough to tell a pop-in from a prop that another car knocked into shot. Needs
+the moment in the full clip, or a systematic pass watching prop visibility over a lap.
