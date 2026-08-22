@@ -1534,3 +1534,88 @@ because fogged paint is less saturated than wood; and aiming the patch at 0.82 o
 returned the colour of the tinted canopy. Both produced complete, plausible tables of numbers.
 The contact sheet of sample points is what caught them — print the patch, look at it, and only
 then read the number off it.
+
+---
+
+## D31 — RETRACTED CAUSE. The symptom is real and measured; the explanation I committed was wrong.
+
+**What I claimed, one commit ago:** that `car:paint`'s `clearcoat: 1` at `envMapIntensity:
+1.35` lays a full-strength mirror of a warm kitchen over every panel, and that this is what
+eats the liveries' colour.
+
+**That is false, and the test that produced it was malformed.** The probe changed THREE things
+at once — `clearcoat` 1→0, `envMapIntensity` 1.35→0.25, `metalness` 0.34→0 — I saw the frames
+differ, and I attributed the difference to the one I had a story about. Changing them one at a
+time, on the eight cars, measured as the 95th percentile of chroma in a box around each car
+(a metric that ignores the number decals, the glass and any table between the wheels):
+
+    paint envMapIntensity 1.35 -> 0        +0%
+    paint clearcoat 1 -> 0                 +0%
+    paint metalness 0.34 -> 0              +5%
+    scene.environment removed entirely     +6%
+
+The clearcoat contributes **nothing** to the colour loss. Neither does the paint's environment
+reflection. The whole postfx stack is no better an explanation: bloom off 0%, AO off +1%, fog
+off 0%, the grade pass off +3%.
+
+**And the tone-map knob was never connected.** Four different operators — Neutral, AgX, Cineon,
+Linear — produced byte-identical frames, because `postfx._gradeOwnsToneMap` is true and the
+grade pass does its own tone mapping in-shader. Any conclusion drawn from
+`renderer.toneMapping` in this project is worthless. Halving the sun moved car luma from 140.5
+to 139.0, which says the sun is not lighting the cars either.
+
+**What survives, and it is worth keeping.** The symptom is measured and not in doubt: on-screen
+chroma is roughly 45% of authored chroma across the field (Cyan Flash authored 212, on screen
+84; Sunburst 216 -> 103). The textures are innocent — sampled straight off the paint map, Cyan
+Flash's modal texel is rgb(3,180,207) against an authored `#00b8d4`. So the colour is correct
+right up to the moment it is lit, and **nothing I have switched off accounts for the loss.**
+The cause is open.
+
+**Rule earned: A PROBE THAT MOVES THREE THINGS EXPLAINS NONE OF THEM.** I would not have
+accepted this test from anyone else. One variable per frame, and a control frame — capturing
+the same state twice and requiring the diff to be 0.000% — before any of it is believed.
+
+---
+
+## D30 — SOLVED. The room cannot receive a shadow: it is a ShaderMaterial with no shadow code in it.
+
+Two rounds of this defect went looking for the missing shadow in the shadow system. It was
+never there. **`MG.Room` is a raw `ShaderMaterial` with `lights: false`**, and its 29 KB
+fragment shader contains no `shadowmap_pars`, no `lights_fragment_begin`, and no shadow sample
+of any kind. The cascaded shadow map is installed by rewriting
+`THREE.ShaderChunk.lights_fragment_begin` — a chunk this material never includes.
+
+**So `floor.receiveShadow = true` is a no-op.** It was set last round, recorded as "correct and
+free", and it is indeed free. It also does nothing at all. The same material covers the floor,
+all four walls and eleven props: **37 objects in the scene, none of which can darken.**
+
+Measured on the establishing frame, grain and chromatic aberration disabled, with a control
+capture of the identical state to prove the instrument (control diff **0.000%**):
+
+    room floor, share of the frame                16.72%
+    all shadow in the frame                        2.25%
+    share of that shadow falling on the floor      0.00%
+
+**Every earlier theory is now falsified, including two of mine from today.**
+
+*The far plane.* The previous writeup put the table's floor shadow at view depth 1312 against
+a baked 1170-1300 fade window. Measured from the actual establishing pose, the floor under the
+table is at depth **926** — comfortably inside `shadowFar` 1300 — and projecting it into
+cascade 2 puts it at (0.21, -0.16, 0.14), inside on every axis. Raising `shadowFar` was
+correctly reverted, for the wrong reason.
+
+*The sun angle.* I proposed that the sun at 24 degrees elevation throws the table's shadow
+clear of the visible floor wedge. Raising it to 55 degrees produced no shadow either.
+
+*Anything at all.* A red slab hung 30 units above the floor, `castShadow = true`, directly in
+the visible wedge, casts nothing. That is the whole defect in one frame:
+`shots/d30c-probe-slab.png`.
+
+**The fix is not in Lighting.js.** It is to give the room a material that participates in
+lighting, or to catch the shadow separately. That is a real visual change to 16.7% of the
+frame and it needs judging, not just landing.
+
+**Rule earned: A FLAG IS NOT A FEATURE.** `receiveShadow` is a request to a shader that may not
+be listening. Before believing any material property, check that the material's shader actually
+reads it — `/shadowmap_pars/.test(mat.fragmentShader)` would have ended this defect two rounds
+ago, and it cost one line.
