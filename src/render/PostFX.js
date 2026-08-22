@@ -531,6 +531,35 @@ const DOF_SUBJECT_HALF = 5.0;
 const DOF_SUBJECT_RAMP = 1.30;
 /** The die-cast body box, world units, from ARCHITECTURE section 2. Used to
  *  work out how much of frame height the subject actually covers. */
+/**
+ * How far up and down the road the racing FIELD has to stay legible, in world
+ * units, measured from the hero.
+ *
+ * A player reported that "the ones far behind or before are a bit blurred", and
+ * the measurement was worse than the phrasing. On the live chase camera a rival
+ * 17 units ahead — two car lengths, close enough to be the car you are actually
+ * fighting — was taking coc 1.00, the whole 22.3 px kernel. Both terms saturated
+ * independently: screen band 1.00, depth 0.71.
+ *
+ * That is the tilt-shift working exactly as specified and specified wrongly. The
+ * band is a fraction of FRAME HEIGHT, which stands in for "the subject is small
+ * in frame" — and the subject of a racing game is not one car, it is the part of
+ * the field you can still do something about. 34 units is a little over three
+ * car lengths, which covers the car you are lining up and the one lining you up.
+ *
+ * The subject rule below already says the band may never be narrower than the
+ * hero's own silhouette. This is that same rule with the right definition of
+ * subject.
+ */
+const DOF_FIELD_REACH = 34;
+/** Ceiling on the field rule as a fraction of focus depth, so a macro shot
+ *  (focus depth ~25) is not handed a 34 u slab and flattened. */
+const DOF_FIELD_FRAC = 0.26;
+/** Slack added to the measured field band so a rival sits inside the sharp
+ *  strip rather than on its edge, where the ramp starts. */
+const BAND_FIELD_PAD = 0.035;
+/** How much of the field rule ships. See the dial's note in update(). */
+const DOF_FIELD_DEFAULT = 0.55;
 const CAR_LENGTH = 9.0;
 const CAR_HEIGHT = 2.8;
 
@@ -1459,6 +1488,17 @@ const POST_TIERS = {
 
 const _size = new THREE.Vector2();
 const _vp = new THREE.Matrix4();
+/**
+ * Critically damped follow, frame-rate independent, snapping across a cut.
+ * The field terms must never overshoot: an overshoot on the sharp slab reads as
+ * the whole frame breathing once per overtake.
+ */
+function damp(current, target, cut, dt, tau = 0.16) {
+  if (!Number.isFinite(target)) return Number.isFinite(current) ? current : 0;
+  if (cut || !Number.isFinite(current)) return target;
+  return current + (target - current) * (1 - Math.exp(-dt / tau));
+}
+
 const _proj = new THREE.Vector3();
 const _cutPos = new THREE.Vector3();
 const _cutQuat = new THREE.Quaternion();
@@ -1526,6 +1566,28 @@ export class PostFX {
      *  since — the pin then loses to a subject that is actually in shot. */
     this._focusPinStale = false;
     this._focusTau = 0.13;
+    /**
+     * `?dofField=0` switches the field rule off. It exists for the same reason
+     * `?liveryMode=oak` does: this changes how much of the frame is sharp, and
+     * a change to a look can only be judged with both versions rendered from
+     * ONE build at ONE moment (D25).
+     */
+    this._fieldRule = (() => {
+      try {
+        const v = new URLSearchParams(location.search).get('dofField');
+        if (v === null || v === '') return DOF_FIELD_DEFAULT;
+        if (v === 'off') return 0;
+        const n = Number(v);
+        // `Number(null)` is 0 and `Number('')` is 0, and both would read as
+        // "off" through a >= 0 guard. Both are handled above, deliberately:
+        // that exact hole switched the fog off on every normal boot once.
+        return Number.isFinite(n) ? clampNum(n, 0, 1) : DOF_FIELD_DEFAULT;
+      } catch (_) { return DOF_FIELD_DEFAULT; }
+    })();
+    /** Half-depth, in world units, the racing field currently needs held sharp. */
+    this._fieldDepth = 0;
+    /** ...and its half-height in the frame, for the screen band. */
+    this._fieldBand = 0;
     /** View depth of the plane of focus, damped. Seeded at a chase distance. */
     this._focusDepth = 130;
     /**
@@ -2489,6 +2551,52 @@ export class PostFX {
       if (!Number.isFinite(this._focusDepth) || this._focusDepth <= 0) this._focusDepth = zf > 0 ? zf : 130;
       u.uFocusDepth.value = this._focusDepth;
 
+      /* --- the field: what else is close enough to matter ----------------- */
+      // Measure the rivals rather than assume a number for them. A fixed world
+      // reach converted to a screen fraction would need the camera pitch, the
+      // road's slope and the foreshortening all folded back in; projecting the
+      // cars that are actually there gets all three for free and stays right
+      // when the director changes lens.
+      //
+      // Damped, and only ever opened by cars that are BOTH within reach and on
+      // screen, so a rival crossing the reach boundary cannot pop the whole
+      // frame's focus. Held through cuts by the same rule as everything else.
+      let fieldDepth = 0;
+      let fieldBand = 0;
+      if (this._fieldRule > 0 && heroPos && ctx.vehicles) {
+        for (const v of ctx.vehicles) {
+          const q = v && v.position;
+          if (!q || q === heroPos) continue;
+          if (q.distanceTo(heroPos) > DOF_FIELD_REACH) continue;
+          _proj.copy(q).project(camera);
+          if (!(Number.isFinite(_proj.y) && _proj.z < 1)) continue;
+          if (Math.abs(_proj.x) > 1.05 || Math.abs(_proj.y) > 1.05) continue;
+          _viewPos.copy(q).applyMatrix4(camera.matrixWorldInverse);
+          if (!(Number.isFinite(_viewPos.z) && _viewPos.z < 0)) continue;
+          fieldDepth = Math.max(fieldDepth, Math.abs(-_viewPos.z - this._focusDepth));
+          fieldBand = Math.max(fieldBand, Math.abs((_proj.y * 0.5 + 0.5) - this._focus));
+        }
+      }
+      // A car's own half-length either side of it, or its nose and tail sit on
+      // the edge of the slab and take the ramp.
+      if (fieldDepth > 0) fieldDepth += CAR_LENGTH * 0.5;
+      // THE DIAL IS A PARTIAL CREDIT, NOT AN ON/OFF.
+      //
+      // Holding the field completely sharp works and is the wrong answer: it
+      // takes the sharp strip from 23% of frame height to the 60% a wide
+      // establishing shot is allowed, and the miniature read — which is most of
+      // what this game looks like — goes with it. The player who reported the
+      // blur said so himself: "if the idea is to highlight the protagonist it
+      // can make sense."
+      //
+      // So the hero stays the sharpest thing in frame and the rivals come back
+      // from coc 1.00 (the entire kernel, unreadable) to something soft but
+      // legible. The dial is how much of the way there we go.
+      const fieldCap = this._focusDepth * DOF_FIELD_FRAC;
+      const k = this._fieldRule;
+      this._fieldDepth = damp(this._fieldDepth, Math.min(fieldDepth, fieldCap) * k, cut, dt);
+      this._fieldBand = damp(this._fieldBand, fieldBand * k, cut, dt);
+
       /* --- ramp spans, read off the shot --------------------------------- */
       // How much depth the frame actually contains, top edge to bottom edge.
       // Deriving the ramps from this is what makes one set of numbers work for
@@ -2526,6 +2634,16 @@ export class PostFX {
       // DOF_SUBJECT_HALF: it binds on the macro camera and on nothing else.
       if (depthBand < DOF_SUBJECT_HALF) {
         depthBand = DOF_SUBJECT_HALF;
+        nearSpan = Math.max(nearSpan, depthBand * DOF_SUBJECT_RAMP);
+        farSpan = Math.max(farSpan, depthBand * DOF_SUBJECT_RAMP);
+      }
+      // ...and never less depth than the field occupies. This is the rule above
+      // with the subject defined as "the cars I can still do something about"
+      // rather than "my own car", which is what a player asked for in as many
+      // words. Capped at DOF_FIELD_FRAC of focus depth, so it binds on a racing
+      // camera and is nearly inert on the macro one.
+      if (this._fieldDepth > depthBand) {
+        depthBand = this._fieldDepth;
         nearSpan = Math.max(nearSpan, depthBand * DOF_SUBJECT_RAMP);
         farSpan = Math.max(farSpan, depthBand * DOF_SUBJECT_RAMP);
       }
@@ -2612,6 +2730,17 @@ export class PostFX {
       if (frameH > 1e-3) {
         const subjectW = (CAR_LENGTH * sinP + CAR_HEIGHT * cosP) * 0.5 / frameH;
         if (Number.isFinite(subjectW)) bandW = Math.max(bandW, Math.min(subjectW, BAND_MAX_WIDE));
+      }
+      // Same again for the field. The screen band is blind to what it is
+      // blurring — it only knows how far up the frame a pixel is — so a rival
+      // two car lengths ahead sits high in shot and takes the full kernel while
+      // being the single most important thing on screen. Open the sharp strip
+      // far enough to hold the cars in reach, and no further: still capped at
+      // BAND_MAX_WIDE, so this can never open the band past what a wide shot is
+      // allowed, and the miniature look survives everywhere it is not fighting
+      // the race.
+      if (this._fieldBand > 0) {
+        bandW = Math.max(bandW, Math.min(this._fieldBand + BAND_FIELD_PAD, BAND_MAX_WIDE));
       }
       u.uBandWidth.value = bandW;
     }
