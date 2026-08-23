@@ -56,6 +56,21 @@ const RPM_PER_RADS = 60 / (Math.PI * 2);
 const RADS_PER_RPM = 1 / RPM_PER_RADS;
 const DEG = Math.PI / 180;
 
+/**
+ * `?boost=N` scales the flat boost force. 1 is as authored, 0 reproduces the
+ * behaviour from before it was connected. Same purpose as `?dofField` and
+ * `?liveryMode=oak`: a change to how the car FEELS cannot be judged across two
+ * builds, so one build has to be able to render both sides of it (D25).
+ */
+const BOOST_FORCE_SCALE = (() => {
+  try {
+    const v = new URLSearchParams(location.search).get('boost');
+    if (v === null || v === '') return 1;      // Number('') is 0 — see the fog bug
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.min(3, n) : 1;
+  } catch (_) { return 1; }
+})();
+
 /* ==========================================================================
  * Module scratch. Never allocate inside a physics tick.
  * ========================================================================== */
@@ -1658,6 +1673,33 @@ export class Vehicle {
       _v.copy(this.forward).multiplyScalar(
         t.driftThrust * this.driftFactor * this.throttle * t.mass
       );
+      this._force.add(_v);
+    }
+
+    /* --- boost thrust ---------------------------------------------------- */
+    // THE FORCE THE TUNING TABLE HAS ALWAYS DESCRIBED AND NEVER HAD.
+    //
+    // `boostForce` was declared, commented "flat thrust — this is what raises
+    // top speed", and referenced by nothing: its own declaration was its only
+    // mention in the tree. The comment where boost is applied to the engine
+    // promises it too — "multiplies torque (the punch) and adds a flat force
+    // later (the top end)" — and the later never arrived.
+    //
+    // Torque alone cannot buy a top end. Top speed is where thrust balances
+    // drag, and `dragCoef` is solved by `_calibrate()` from the chassis top
+    // speed, so multiplying engine torque moves how fast you REACH that balance
+    // and not where it sits. A player found this by feel before it was found in
+    // the file: "Is the boost doing something apart visual effect? Effect on
+    // speed is not very evident."
+    //
+    // Scaled by mass and expressed as an acceleration, exactly like driftThrust
+    // above, and ramped by the smoothed `boostAmount` rather than the binary
+    // `boosting` so it arrives with the audio and the effects instead of
+    // snapping a frame ahead of them. Ground only, again like driftThrust: a
+    // car with no wheels on anything should not be able to push on it.
+    if (this.boostAmount > 0.001 && !this.isAirborne) {
+      _v.copy(this.forward).multiplyScalar(
+        t.boostForce * BOOST_FORCE_SCALE * this.boostAmount * t.mass);
       this._force.add(_v);
     }
 
