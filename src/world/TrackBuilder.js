@@ -1370,6 +1370,30 @@ export class TrackBuilder {
       if (side[i] < 0) { left[i] = inner[i]; right[i] = outer[i]; }
       else { right[i] = inner[i]; left[i] = outer[i]; }
     }
+    // NO KERB WHERE THERE IS ALREADY A BARRIER.
+    //
+    // Kerbs are generated from curvature alone, on the inside and the outside
+    // of every corner tighter than KERB_CURV_MIN, and nothing ever asked
+    // whether that side was already walled. So a corner with a barrier on it
+    // punished going wide twice: the kerb unloads the suspension on the way
+    // out, and then the wall stops you anyway. A player found it from the
+    // driving seat — "kerb should not appear on this side of the turn, I guess.
+    // There's already the white delimiter."
+    //
+    // Zeroed BEFORE the final smoothing pass, so the kerb tapers away as it
+    // approaches the barrier instead of stopping dead against it.
+    const walls = this.resolveWallSpans();
+    if (walls.length) {
+      for (let i = 0; i < n; i++) {
+        const t = this.rowT[i];
+        for (const w of walls) {
+          if (!spanCovers(t, w.from, w.to)) continue;
+          if (w.side <= 0) left[i] = 0;
+          if (w.side >= 0) right[i] = 0;
+        }
+      }
+    }
+
     smooth(left, 3);
     smooth(right, 3);
     this.kerbAmount = { left, right };
@@ -2502,9 +2526,18 @@ export class TrackBuilder {
    * otherwise generated on the outside of every corner tight enough to throw a
    * car off — which is where a real toy circuit gets its plastic borders too.
    */
-  buildWalls() {
+  /**
+   * Where the barriers go, resolved once and memoised.
+   *
+   * Split out of buildWalls because buildKerbAmounts needs the answer and runs
+   * nine stages earlier — see the suppression there. Two callers deriving this
+   * separately would be two chances for the kerbs and the barriers to disagree
+   * about where a wall is.
+   */
+  resolveWallSpans() {
+    if (this._wallSpansResolved) return this._wallSpansResolved;
     const track = this.track;
-    const spans = Array.isArray(track.def.walls) && track.def.walls.length
+    this._wallSpansResolved = Array.isArray(track.def.walls) && track.def.walls.length
       ? track.def.walls.map((w) => ({
         from: wrap01(w.from ?? 0),
         to: wrap01(w.to ?? 1),
@@ -2512,6 +2545,12 @@ export class TrackBuilder {
         height: w.height ?? WALL_HEIGHT,
       }))
       : this.autoWallSpans();
+    return this._wallSpansResolved;
+  }
+
+  buildWalls() {
+    const track = this.track;
+    const spans = this.resolveWallSpans();
     if (!spans.length) return;
 
     const parts = [];
@@ -2898,6 +2937,16 @@ function keyOfRow(row) {
 }
 
 /** Forward span from a to b on the unit circle, always in (0, 1]. */
+/**
+ * Does the cyclic span [from, to] contain t? Spans wrap through 0, which a
+ * plain `t >= from && t <= to` gets wrong for exactly the wall that crosses the
+ * start line — `{ from: 0.915, to: 1.000 }` on the kitchen circuit.
+ */
+function spanCovers(t, from, to) {
+  if (!(Number.isFinite(from) && Number.isFinite(to))) return false;
+  return to >= from ? (t >= from && t <= to) : (t >= from || t <= to);
+}
+
 function cyclicSpan(a, b) {
   let d = b - a;
   d -= Math.floor(d);

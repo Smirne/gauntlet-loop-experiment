@@ -415,7 +415,19 @@ export class HUD {
 
   _buildBottomCentre() {
     const c = el('div', 'hud-c hud-c--bc');
+    // HIDDEN UNTIL THERE IS SOMETHING TO PUT IN IT.
+    //
+    // Nothing in the game emits `pickup:collect`, `pickup:use` or
+    // `pickup:clear` — the only references in the tree are the three listeners
+    // below — so this slot reads EMPTY for the whole race, every race, in the
+    // middle of the bottom edge of the screen. A player asked what it was for,
+    // which is the evidence that it costs something.
+    //
+    // The listeners stay wired and `setPickup` un-hides it, so the slot returns
+    // by itself the moment a pickup system exists. Nothing here needs undoing
+    // to bring it back.
     const slot = el('div', 'hud-pickup');
+    slot.style.display = 'none';
     const inner = el('div', 'hud-pickup-inner');
     this.n.pickupIcon = el('div', 'hud-pickup-icon', '◇');
     inner.appendChild(this.n.pickupIcon);
@@ -1012,8 +1024,12 @@ export class HUD {
       slot.classList.remove('is-full', 'is-armed');
       this.n.pickupIcon.textContent = '◇';
       this.n.pickupName.textContent = 'EMPTY';
+      // Back out of sight rather than sitting there reading EMPTY. `pickup:use`
+      // and `pickup:clear` both land here.
+      slot.style.display = 'none';
       return this;
     }
+    slot.style.display = '';
     slot.classList.add('is-full');
     slot.classList.toggle('is-armed', !!payload?.armed);
     this.n.pickupIcon.textContent = glyphs[kind] || '◆';
