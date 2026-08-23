@@ -283,7 +283,7 @@ export class Results {
     this.n.btnContinue.appendChild(el('span', 'mg-btn-key', 'ENTER'));
     this.n.btnRetry.textContent = '';
     this.n.btnRetry.appendChild(el('span', null, 'RETRY'));
-    this.n.btnRetry.appendChild(el('span', 'mg-btn-key', 'R'));
+    this.n.btnRetry.appendChild(el('span', 'mg-btn-key', '\\'));
   }
 
   _renderChampionship(payload, rows) {
@@ -382,7 +382,16 @@ export class Results {
         e.preventDefault(); e.stopPropagation(); this._move(-1); break;
       case 'Enter': case 'NumpadEnter': case 'Space':
         e.preventDefault(); e.stopPropagation(); this._activate(); break;
-      case 'KeyR':
+      // NOT KeyR. In a race `R` is RESPAWN (Input.js binds it), and this screen
+      // used to advertise RETRY with the key hint `R` — so the same key meant
+      // "put me back on the track where I was" in one context and "restart the
+      // whole race" in another, with nothing to tell them apart. Reported as
+      // "the retry key sometimes restarts from the last position".
+      //
+      // Backslash is what `Input.js` already binds to `restart` during a race,
+      // so now one key means restart everywhere and `R` means respawn
+      // everywhere.
+      case 'Backslash':
         e.preventDefault(); e.stopPropagation(); this._retry(); break;
       case 'Escape':
         e.preventDefault(); e.stopPropagation(); this._continue(); break;

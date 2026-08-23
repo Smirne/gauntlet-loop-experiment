@@ -71,6 +71,27 @@ const BOOST_FORCE_SCALE = (() => {
   } catch (_) { return 1; }
 })();
 
+/**
+ * How fast `Vehicle.respawnFlash` decays, per second. 1.6 gives a 0.63 s
+ * signal — long enough to be read as "that car was just put back", short
+ * enough not to obscure the car through a corner.
+ */
+const RESPAWN_FLASH_DECAY = 1.6;
+
+/* ------------------------------------------------- repeated-failure escalation */
+/** Two respawns closer together than this along the lap count as "the same
+ *  place". 0.02 of a lap is roughly a corner's worth. */
+const RESPAWN_SAME_SPOT = 0.02;
+/** ...and within this many seconds of each other. Long enough to cover a couple
+ *  of failed attempts, short enough that a bad first lap does not still count
+ *  against you on the third. */
+const RESPAWN_REPEAT_WINDOW = 25;
+/** Failures at the same place before the car is moved past it. Two attempts at
+ *  the fair placement first; the third is the one that gets help. */
+const RESPAWN_ESCALATE_AFTER = 2;
+/** How far past the obstacle to place it, as a fraction of the lap. */
+const RESPAWN_SKIP_AHEAD = 0.035;
+
 /* ==========================================================================
  * Module scratch. Never allocate inside a physics tick.
  * ========================================================================== */
@@ -588,7 +609,12 @@ export class Vehicle {
     this.dirt = 0;                // 0..1 picked up off-track
     this.lastImpact = 0;          // impulse magnitude of the most recent hit
     this.impactAge = 99;
-    this.respawnFlash = 0;        // 1 immediately after a respawn, decays
+    // 1 immediately after a respawn, decays at RESPAWN_FLASH_DECAY per second.
+    // VehicleVisual reads it to blink the car back in. It sat here unread for
+    // the whole project before that: set every respawn, decayed every frame,
+    // and consumed by nothing, so a respawn was a hard teleport with no visual
+    // event at all. A player is the one who noticed.
+    this.respawnFlash = 0;
 
     /* --- controls -------------------------------------------------------- */
 
@@ -641,6 +667,10 @@ export class Vehicle {
     this._offTrackDwell = 0;   // seconds off the racing surface AND slow
     this._progressT = NaN;     // previous trackT; NaN until the first sample
     this._respawnCooldown = 0;
+    this._respawnClock = 0;    // seconds of driving, for the repeat window
+    this._lastRespawnT = -9;   // where the last respawn put it, along the lap
+    this._lastRespawnAt = -999;
+    this._respawnRepeats = 0;
     this._lastGoodT = 0;
     this._lastGoodLateral = 0;
     this._freeRevRpm = this.tuning.idleRpm;
@@ -2104,7 +2134,8 @@ export class Vehicle {
     }
 
     if (this.impactAge < 99) this.impactAge += fdt;
-    if (this.respawnFlash > 0) this.respawnFlash = Math.max(0, this.respawnFlash - fdt * 1.6);
+    this._respawnClock += fdt;
+    if (this.respawnFlash > 0) this.respawnFlash = Math.max(0, this.respawnFlash - fdt * RESPAWN_FLASH_DECAY);
     if (this._respawnCooldown > 0) this._respawnCooldown -= fdt;
 
     // Dirt: picked up on loose ground, worn off on hard ground under load.
@@ -2408,9 +2439,48 @@ export class Vehicle {
    * @param {number} [t] defaults to the last point the car was cleanly on-track
    * @param {{lateral?:number, keepSpeed?:number, silent?:boolean}} [opts]
    */
+  /** Shortest signed distance between two lap fractions, in [-0.5, 0.5]. */
+  _wrapT(d) {
+    let x = d % 1;
+    if (x > 0.5) x -= 1;
+    else if (x < -0.5) x += 1;
+    return x;
+  }
+
+  /** Wrap a lap fraction into [0, 1). */
+  _wrapT01(t) {
+    const x = t % 1;
+    return x < 0 ? x + 1 : x;
+  }
+
   respawn(t, opts = {}) {
     const track = this.ctx?.track;
-    const target = Number.isFinite(t) ? t : this._lastGoodT;
+    let target = Number.isFinite(t) ? t : this._lastGoodT;
+
+    /* --- the same-obstacle loop ------------------------------------------ */
+    // Putting a car back where it was last fine is the fair rule and it has a
+    // failure mode: a corner or a ramp you cannot clear puts you back just
+    // before it, so you fail it again, and again, and the race is over without
+    // anything having gone wrong. The player asked about exactly this before it
+    // was implemented -- "I'm afraid it could lead to multiple failures?".
+    //
+    // So the fair rule stands for the first two attempts, and only a car that
+    // has failed the SAME PLACE repeatedly, in quick succession, is moved past
+    // it. Fail somewhere else and the counter resets: this cannot accumulate
+    // over a race into a general free pass.
+    if (!opts.noEscalate) {
+      const now = this._respawnClock;
+      const near = Math.abs(this._wrapT(target - this._lastRespawnT)) < RESPAWN_SAME_SPOT;
+      if (near && now - this._lastRespawnAt < RESPAWN_REPEAT_WINDOW) this._respawnRepeats++;
+      else this._respawnRepeats = 0;
+      this._lastRespawnT = target;
+      this._lastRespawnAt = now;
+      if (this._respawnRepeats >= RESPAWN_ESCALATE_AFTER) {
+        target = this._wrapT01(target + RESPAWN_SKIP_AHEAD);
+        this._respawnRepeats = 0;
+        this.ctx?.bus?.emit?.('vehicle:respawnSkip', { vehicle: this, t: target });
+      }
+    }
     const lateral = opts.lateral ?? this._lastGoodLateral ?? 0;
     const keep = opts.keepSpeed ?? this.tuning.respawnKeepSpeed;
     // Floor it: a car recovered from a flip or a wall has no speed to scale, and

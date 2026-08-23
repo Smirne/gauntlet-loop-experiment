@@ -62,6 +62,16 @@ const PRESET_DARKNESS = {
 // the scene when the light count changes. Six across the whole field is plenty
 // — the player's are the ones anybody looks at.
 const SPOT_BUDGET = 6;
+
+/* --------------------------------------------------------------- respawn blink */
+/** Blinks per second while a respawned car is coming back. */
+const RESPAWN_BLINK_HZ = 11;
+/** Fraction of each blink the car is visible for at the START of the effect. */
+const RESPAWN_BLINK_DUTY = 0.34;
+/** Seconds over which the duty cycle climbs to solid, so it reads as
+ *  materialising rather than as a fault. Slightly shorter than the flash
+ *  itself, so the car is solid for the last moments of it. */
+const RESPAWN_BLINK_TIME = 0.5;
 let _spotsUsed = 0;
 
 /* ==========================================================================
@@ -325,6 +335,10 @@ export class VehicleVisual {
     this._reverseMix = 0;
     this._wear = 0;
     this._dirt = 0;
+    /** True while the respawn blink owns `root.visible`, so it can hand it back. */
+    this._respawning = false;
+    this._respawnT = 0;
+    this._respawnLast = 0;
     this._ready = false;
     this._disposed = false;
     this._ownContact = false;
@@ -777,6 +791,51 @@ export class VehicleVisual {
     this._updateLinkage(v);
     this._updateWear(d, v);
     this._updateLamps(d, v);
+    this._updateRespawn(d, v);
+  }
+
+  /* ------------------------------------------------------------- respawn */
+
+  /**
+   * Blink the car back in after a respawn.
+   *
+   * `Vehicle.respawnFlash` has been set on every respawn and decayed every
+   * frame since the vehicle was written, and until now nothing read it — so
+   * being put back on the track was a hard teleport with no visual event
+   * whatsoever, and the only feedback was a DOM toast in the corner. A player
+   * reported it as "sometimes my car gets repositioned very quickly, I don't
+   * know if it's the crash restore, it should have some visual effect?".
+   *
+   * WHY A DUTY-CYCLE RAMP AND NOT AN ALPHA FADE. A real fade means setting
+   * `transparent` on every material the car owns — around thirty of them,
+   * including the paint's clearcoat and the glass that is already transparent —
+   * which moves them all into the sorted transparent pass for the duration and
+   * changes how they composite against each other. That is a rendering change
+   * to buy a 0.6 s effect. Blinking with a duty cycle that climbs from a third
+   * to solid reads as materialising, costs one boolean, and cannot disturb
+   * anything it does not own.
+   */
+  _updateRespawn(dt, v) {
+    const f = v?.respawnFlash || 0;
+    if (f <= 0) {
+      // Hand `visible` back exactly once, and never fight whoever else owns it
+      // — Race.start() sets it true for the whole field on a restart.
+      if (this._respawning) { this.root.visible = true; this._respawning = false; }
+      this._respawnLast = 0;
+      return;
+    }
+    this._respawning = true;
+    // Own clock. Recovering the elapsed time from Vehicle's decay rate would
+    // mean importing that constant across a module boundary Vehicle already
+    // crosses the other way, and duplicating it here would silently drift the
+    // day someone retunes one of them. `respawnFlash` going UP is the edge.
+    if (f > this._respawnLast) this._respawnT = 0;
+    this._respawnLast = f;
+    this._respawnT += dt;
+
+    const k = saturate(this._respawnT / RESPAWN_BLINK_TIME);
+    const duty = RESPAWN_BLINK_DUTY + (1 - RESPAWN_BLINK_DUTY) * k;
+    this.root.visible = ((this._respawnT * RESPAWN_BLINK_HZ) % 1) < duty;
   }
 
   lateUpdate(dt, ctx, vehicle) {
