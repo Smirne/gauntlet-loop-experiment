@@ -506,6 +506,10 @@ export class PhysicsWorld {
       surface: typeof body.surface === 'string' ? body.surface : null,
       topSpeed: isVehicle ? (body.vehicle?.topSpeed ?? 100) : 0,
 
+      // Last `Vehicle.teleportStamp` this proxy has seen; -1 so the first tick
+      // after registration always counts as a teleport and seeds prevPos.
+      teleportStamp: -1,
+
       sleeping: !isVehicle && !isStatic,
       sleepTimer: 0,
       stamp: 0,
@@ -1084,11 +1088,35 @@ export class PhysicsWorld {
     for (let i = 0; i < this.proxies.length; i++) {
       const p = this.proxies[i];
       if (!p || !p.isVehicle) continue;
+      // A TELEPORT ANNOUNCES ITSELF. It is not something to infer from distance.
+      //
+      // The threshold below used to be the only teleport test, and it was wrong
+      // in the one case that matters most: pressing RETRY moves each car from
+      // wherever the last race left it back to its grid slot, which measured
+      // 190-330 units on the kitchen circuit -- comfortably UNDER 400. So the
+      // guard treated a grid placement as ordinary travel, cast a ray along
+      // those 250 units, hit the table edge on the way, and dragged the car
+      // back to it. Six of eight cars, one frame after the restart, some of
+      // them left sinking off the table at y = -0.9. The player reported it as
+      // "sometime the race starts up fine, sometime my car is in strange
+      // places", and it is intermittent only because it depends on where each
+      // car happened to die.
+      //
+      // Vehicle bumps `teleportStamp` whenever it MOVES a car rather than
+      // driving it. That cannot be confused with fast travel at any distance.
+      const veh = p.body.vehicle;
+      if (veh && veh.teleportStamp !== p.teleportStamp) {
+        p.teleportStamp = veh.teleportStamp;
+        p.prevPos.copy(p.com);
+        this._forgetContacts(p);
+        continue;
+      }
+
       _v0.subVectors(p.com, p.prevPos);
       const dist = _v0.length();
       // Below a quarter unit nothing can have been missed, and the ray would
-      // just be noise. Above 400 the car was teleported (a respawn) and must
-      // not be dragged back.
+      // just be noise. The 400 stays as a backstop for anything that moves a
+      // body without stamping it.
       if (dist < 0.25 || dist > 400) { p.prevPos.copy(p.com); continue; }
       _v0.multiplyScalar(1 / dist);
       const hit = this.raycast(p.prevPos, _v0, dist + 0.6, {
@@ -1177,6 +1205,23 @@ export class PhysicsWorld {
           this._addPair(ai, bi);
         }
       }
+    }
+  }
+
+  /**
+   * Drop every manifold this proxy is part of.
+   *
+   * A teleported body's cached contacts describe geometry it is no longer
+   * anywhere near, and warm-starting from them applies last frame's impulses at
+   * this frame's position — which is how a car that has just been placed on the
+   * grid gets shoved by a wall it left two hundred units ago.
+   */
+  _forgetContacts(p) {
+    if (!p || !this._manifolds.size) return;
+    for (const key of this._manifolds.keys()) {
+      const a = Math.floor(key / 1048576);
+      const b = key % 1048576;
+      if (a === p.id || b === p.id) this._manifolds.delete(key);
     }
   }
 

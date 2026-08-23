@@ -673,6 +673,12 @@ export class Vehicle {
     this._offTrackDwell = 0;   // seconds off the racing surface AND slow
     this._progressT = NaN;     // previous trackT; NaN until the first sample
     this._respawnCooldown = 0;
+    /**
+     * Bumped every time this car is MOVED rather than driven — a grid
+     * placement or a respawn. physics/World.js watches it to tell a teleport
+     * from fast travel, which a distance threshold cannot do: see _sweepGuard.
+     */
+    this.teleportStamp = 0;
     this._respawnClock = 0;    // seconds of driving, for the repeat window
     this._graceHeld = 0;       // seconds of respawn grace used so far
     this._lastRespawnT = -9;   // where the last respawn put it, along the lap
@@ -889,6 +895,7 @@ export class Vehicle {
       w.compression = this._staticComp;
       w.grounded = true;
     }
+    this.teleportStamp++;
     return this;
   }
 
@@ -2557,6 +2564,7 @@ export class Vehicle {
     }
 
     this._graceHeld = 0;
+    this.teleportStamp++;
     this._syncBasis();
     this.position.addScaledVector(this.up, 0.35);
     this.velocity.copy(this.forward).multiplyScalar(speed);
