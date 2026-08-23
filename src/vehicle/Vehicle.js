@@ -82,6 +82,12 @@ const RESPAWN_FLASH_DECAY = 1.6;
 /** Two respawns closer together than this along the lap count as "the same
  *  place". 0.02 of a lap is roughly a corner's worth. */
 const RESPAWN_SAME_SPOT = 0.02;
+/** Grace is topped back up to this while another car is still in reach, so it
+ *  ends when the car is CLEAR rather than on a stopwatch. */
+const RESPAWN_GRACE_HOLD = 0.25;
+/** ...but never held longer than this in total. A car that respawns into the
+ *  middle of a pack must not be able to ghost through the whole lap. */
+const RESPAWN_GRACE_MAX = 2.0;
 /** ...and within this many seconds of each other. Long enough to cover a couple
  *  of failed attempts, short enough that a bad first lap does not still count
  *  against you on the third. */
@@ -668,6 +674,7 @@ export class Vehicle {
     this._progressT = NaN;     // previous trackT; NaN until the first sample
     this._respawnCooldown = 0;
     this._respawnClock = 0;    // seconds of driving, for the repeat window
+    this._graceHeld = 0;       // seconds of respawn grace used so far
     this._lastRespawnT = -9;   // where the last respawn put it, along the lap
     this._lastRespawnAt = -999;
     this._respawnRepeats = 0;
@@ -2135,7 +2142,17 @@ export class Vehicle {
 
     if (this.impactAge < 99) this.impactAge += fdt;
     this._respawnClock += fdt;
-    if (this.respawnFlash > 0) this.respawnFlash = Math.max(0, this.respawnFlash - fdt * RESPAWN_FLASH_DECAY);
+    // DO NOT ZERO `_graceHeld` WHEN THE FLASH RUNS OUT. Physics updates before
+    // vehicles, so a flash that reaches 0 here is topped straight back up by
+    // holdRespawnGrace on the next tick — and if the counter had been cleared
+    // in between, the cap would restart with it and the car could ghost for as
+    // long as anything stayed near it. Measured before this was understood: a
+    // car held grace for 4 s against a 2 s cap, the counter visibly sawtoothing
+    // 0.81 -> 0.22 -> 1.02 on the way. Only respawn() clears it.
+    if (this.respawnFlash > 0) {
+      this._graceHeld += fdt;
+      this.respawnFlash = Math.max(0, this.respawnFlash - fdt * RESPAWN_FLASH_DECAY);
+    }
     if (this._respawnCooldown > 0) this._respawnCooldown -= fdt;
 
     // Dirt: picked up on loose ground, worn off on hard ground under load.
@@ -2439,6 +2456,37 @@ export class Vehicle {
    * @param {number} [t] defaults to the last point the car was cleanly on-track
    * @param {{lateral?:number, keepSpeed?:number, silent?:boolean}} [opts]
    */
+  /**
+   * True while the car is blinking back in from a respawn, during which
+   * physics/World.js does not let another car touch it.
+   *
+   * ONE SOURCE OF TRUTH WITH THE BLINK, DELIBERATELY. The blink shipped first
+   * and signalled a grace period that did not exist, which is a worse lie than
+   * having neither: the player is told they are safe and then hit. Driving both
+   * off `respawnFlash` means the signal cannot drift from the rule, and the
+   * only way to change how long you are safe is to change how long you blink.
+   */
+  get respawnGrace() { return this.respawnFlash > 0; }
+
+  /**
+   * Called by the physics world each time it skips a car-versus-car contact
+   * because of this car's grace.
+   *
+   * A FIXED WINDOW HAS A NASTY EDGE. If grace simply expires on a stopwatch
+   * while the car is still overlapping another one, the solver sees a deep
+   * penetration appear from nothing and throws both cars apart — which is a
+   * worse outcome than the collision the grace existed to prevent. So the
+   * window is topped back up while anything is still close enough to be in
+   * contact with, and ends when the car is genuinely clear.
+   *
+   * Capped by RESPAWN_GRACE_MAX so respawning into a pack cannot turn into a
+   * ghost lap.
+   */
+  holdRespawnGrace() {
+    if (this._graceHeld >= RESPAWN_GRACE_MAX) return;
+    if (this.respawnFlash < RESPAWN_GRACE_HOLD) this.respawnFlash = RESPAWN_GRACE_HOLD;
+  }
+
   /** Shortest signed distance between two lap fractions, in [-0.5, 0.5]. */
   _wrapT(d) {
     let x = d % 1;
@@ -2508,6 +2556,7 @@ export class Vehicle {
       this._placeOnGrid();
     }
 
+    this._graceHeld = 0;
     this._syncBasis();
     this.position.addScaledVector(this.up, 0.35);
     this.velocity.copy(this.forward).multiplyScalar(speed);

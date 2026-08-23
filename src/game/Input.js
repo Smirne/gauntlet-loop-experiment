@@ -64,7 +64,11 @@ const DEFAULT_KEYS = Object.freeze({
   pause:      ['Escape'],
   photo:      ['KeyC'],
   camera:     ['KeyV'],
-  restart:    ['Backslash'],
+  // BOTH backslash positions. `code` is a physical key, and the key that types
+  // `\` is `Backslash` on a US layout and `IntlBackslash` on an Italian one —
+  // so binding only the first made restart unreachable for anyone on the second,
+  // which is how a player ended up believing `R` was the retry key.
+  restart:    ['Backslash', 'IntlBackslash'],
   accept:     ['Enter', 'NumpadEnter'],
   back:       ['Escape'],
 });

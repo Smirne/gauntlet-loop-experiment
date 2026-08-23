@@ -1198,6 +1198,30 @@ export class PhysicsWorld {
       // Keep the pair key stable regardless of which side drove the query.
       if (a.id > b.id) { const t = a; a = b; b = t; }
 
+      // A car blinking back in from a respawn cannot be touched by another car.
+      //
+      // CARS ONLY. The grace must never reach the track, the walls or a prop —
+      // a respawned car that stopped colliding with the world would fall
+      // through the table, which is the failure the respawn exists to fix.
+      //
+      // Telling the vehicle its contact was skipped is what lets the window end
+      // when the car is CLEAR instead of on a stopwatch: grace expiring while
+      // two cars overlap hands the solver a deep penetration out of nowhere and
+      // it throws them apart, which is worse than the hit. See
+      // Vehicle.holdRespawnGrace.
+      if (a.isVehicle && b.isVehicle) {
+        const va = a.body?.vehicle;
+        const vb = b.body?.vehicle;
+        const ga = va?.respawnGrace === true;
+        const gb = vb?.respawnGrace === true;
+        if (ga || gb) {
+          if (ga) va.holdRespawnGrace?.();
+          if (gb) vb.holdRespawnGrace?.();
+          this._manifolds.delete(a.id * 1048576 + b.id);
+          continue;
+        }
+      }
+
       if (a.isVehicle && b.promotable && !b.promoted) this._tryPromote(b, a);
       else if (b.isVehicle && a.promotable && !a.promoted) this._tryPromote(a, b);
 

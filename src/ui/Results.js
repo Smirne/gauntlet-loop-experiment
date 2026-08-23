@@ -283,7 +283,7 @@ export class Results {
     this.n.btnContinue.appendChild(el('span', 'mg-btn-key', 'ENTER'));
     this.n.btnRetry.textContent = '';
     this.n.btnRetry.appendChild(el('span', null, 'RETRY'));
-    this.n.btnRetry.appendChild(el('span', 'mg-btn-key', '\\'));
+    this.n.btnRetry.appendChild(el('span', 'mg-btn-key', 'T'));
   }
 
   _renderChampionship(payload, rows) {
@@ -388,10 +388,18 @@ export class Results {
       // whole race" in another, with nothing to tell them apart. Reported as
       // "the retry key sometimes restarts from the last position".
       //
-      // Backslash is what `Input.js` already binds to `restart` during a race,
-      // so now one key means restart everywhere and `R` means respawn
-      // everywhere.
-      case 'Backslash':
+      // AND `Backslash` ALONE IS NOT A KEY THE PLAYER CAN PRESS.
+      //
+      // `KeyboardEvent.code` names a PHYSICAL KEY POSITION, not a character. On
+      // an Italian layout the key at the `Backslash` position types `ù`, and the
+      // `\` character comes from `IntlBackslash` — a different physical key,
+      // between Left Shift and Z. So a hint reading `\` asked for a key this
+      // handler was not listening to, and nothing happened. The first version of
+      // this fix shipped exactly that, and the player reported it still broken.
+      //
+      // `KeyT` is the advertised key because a letter's position is the same on
+      // every QWERTY layout. Both backslash codes stay as aliases.
+      case 'KeyT': case 'Backslash': case 'IntlBackslash':
         e.preventDefault(); e.stopPropagation(); this._retry(); break;
       case 'Escape':
         e.preventDefault(); e.stopPropagation(); this._continue(); break;
