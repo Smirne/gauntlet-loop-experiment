@@ -580,8 +580,18 @@ const DOF_FIELD_FRAC = 0.26;
 /** Slack added to the measured field band so a rival sits inside the sharp
  *  strip rather than on its edge, where the ramp starts. */
 const BAND_FIELD_PAD = 0.035;
-/** How much of the field rule ships. See the dial's note in update(). */
-const DOF_FIELD_DEFAULT = 0.55;
+/**
+ * How much of the field rule ships. See the dial's note in update().
+ *
+ * Was 0.55, chosen when the rule only protected rival CARS and the trade was
+ * "rivals legible against miniature look". Once the rule was extended to the
+ * ROAD AHEAD that trade changed, because the road rule only widens the band as
+ * far as the racing line needs rather than uniformly: at 1.0 the corner entry
+ * is legible (45 u ahead goes from 22.5 px of blur to 0.6) and the foreground
+ * and the far verge stay soft, so the miniature read survives. Judged from two
+ * frames out of one build at one pinned race clock.
+ */
+const DOF_FIELD_DEFAULT = 1.0;
 const CAR_LENGTH = 9.0;
 const CAR_HEIGHT = 2.8;
 

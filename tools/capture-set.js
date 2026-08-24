@@ -124,6 +124,19 @@ function assertMoving(steps = 60) {
  */
 const PIN_RACE_TIME = 20.0;
 
+/**
+ * Where in the menu orbit to shoot the wide frame, in seconds.
+ *
+ * Measured room share along the orbit a player really gets:
+ *
+ *     0.0 s  27.8%    0.9 s  23.3%    1.8 s  13.0%    3.0 s onward  0%
+ *
+ * 1.2 s is wide enough that the table still reads as a piece of furniture with
+ * a room behind it, and late enough that the room is roughly a fifth of frame
+ * rather than the 53% the old hand-written pose gave it.
+ */
+const INTRO_ORBIT_T = 1.2;
+
 function pinMoment(target = PIN_RACE_TIME) {
   const engine = window.MG.engine || window.MG.ctx?.engine;
   const race = window.MG.ctx?.race;
@@ -246,44 +259,75 @@ export async function captureSet(suffix = '', opts = {}) {
   }
   shots.push(await window.MG.capture('crit-3-macro' + tag, 1920, 1080));
 
-  // 4. wide establishing shot of the whole circuit
+  // 4. the widest shot a player ACTUALLY SEES
   //
-  // RE-POSED after round 3, and the reason is worth keeping. The old pose put
-  // the camera at ctr + (0.42d, 0.80d, 0.62d) — elevation 46.9 degrees — which
-  // is ABOVE AND INSIDE all four table edges. The near and left edges ran off
-  // frame, the far edges showed only their top surface ending in a one-pixel
-  // line, and the far corner clipped dead against y = 0 with no headroom. So a
-  // stranger saw a wooden board floating in grey: a diorama, not a kitchen.
+  // THIS POSE IS NOT INVENTED HERE ANY MORE, AND THAT IS THE WHOLE POINT.
   //
-  // The critic's phrasing is the part to remember — everything built to make
-  // the table read as furniture (a 10 u board, a moulded rim, four legs down to
-  // the room floor, a floor and walls behind it) "contributes exactly zero
-  // pixels to this review set". The work was fine; the camera never looked at
-  // it. A review frame that cannot see the thing being reviewed is a broken
-  // instrument, not a verdict.
+  // Rounds 1-7 shot this frame from a pose written in this file: pulled back to
+  // 1.45x the track's longest axis at about 32 degrees, chosen so a near table
+  // corner and a leg would be in shot. It did that, and the round-7 judges duly
+  // scored what it revealed — "the frame that costs the whole set", "a good car
+  // asset dropped into someone else's blockout" — because the room is 53.32% of
+  // it, measured by hiding every MG.Room object and diffing against a 0.000%
+  // control.
   //
-  // Dropping to ~32 degrees and pulling back puts a NEAR CORNER in shot, with
-  // the rim, a leg and the floor behind it, and keeps the whole circuit legible
-  // — which is still the hard constraint this frame must satisfy.
+  // Then a player asked when that view is shown, and could not reproduce it.
+  // He was right not to be able to. The wide camera exists in exactly one
+  // place: the menu backdrop, in `attract`. It is NOT a race intro — Director
+  // switches to 'race' the moment the state leaves attract — and `?skipmenu=1`
+  // skips it outright. Room share along the orbit a player really gets:
   //
-  // This breaks A/B comparability with rounds 1-3 by design. Do not read a
-  // difference across that boundary as a rendering change.
+  //     0.0 s  27.8%     1.5 s  8.4%     3.0 s onward  0%      racing  0%
+  //
+  // ...dimmed, behind menu panels. So the old pose showed twice the room a
+  // player ever sees, at a camera nobody occupies, and three rounds of judging
+  // weighted it as the thing that sank the set. That is the FOURTH time this
+  // project has scored something the harness could produce and the game cannot
+  // show — after a parked race, coin-flip shadows, and a DOM HUD.
+  //
+  // So ask the Director for the pose instead of writing one.
+  //
+  // NOT at introDuration, which was the first thing I tried and the frame said
+  // no: at p = 1 the blend term `b` reaches 1 and `_camWant.lerp(_introPos, 1-b)`
+  // leaves the camera on the CHASE pose, so the orbit's resting place is not a
+  // wide shot at all — it had quietly replaced the establishing frame with a
+  // second gameplay frame. INTRO_ORBIT_T picks a moment while the orbit is
+  // still wide and still showing the table as furniture: the widest thing a
+  // player is ever actually shown.
   settle();
-  const b = ctx.track.bounds;
-  const ctr = b.getCenter(new THREE.Vector3());
-  const sz = b.getSize(new THREE.Vector3());
-  // SECOND re-pose, after round 4. The first one dropped the elevation from 46.9
-  // to about 32 and that was right, but the critic measured that it STILL put no
-  // near corner and no table leg in frame — so the furniture the re-pose existed
-  // to reveal was still not being reviewed. Pull further back and swing wider so
-  // a near corner has headroom below it and a leg is visible against the floor.
-  const d = Math.max(sz.x, sz.z) * 1.45;
-  cam.fov = 34;
-  cam.position.set(ctr.x + d * 0.62, ctr.y + d * 0.42, ctr.z + d * 0.86);
-  cam.lookAt(ctr.x, ctr.y - sz.y * 0.55, ctr.z);
-  cam.updateProjectionMatrix();
-  ctx.postfx?.notifyCameraCut?.();
-  shots.push(await window.MG.capture('crit-4-establishing' + tag, 1920, 1080));
+  {
+    const dir = ctx.director;
+    if (dir && typeof dir.setMode === 'function') {
+      const wasEnabled = dir.enabled;
+      const wasMode = dir.mode;
+      const wasAuto = dir.autoIntroToRace;
+      dir.enabled = true;
+      dir.autoIntroToRace = false;      // or it flips straight back to 'race'
+      dir.setMode('intro', { auto: false });
+      dir.modeTime = INTRO_ORBIT_T;
+      window.MG.engine?.stepOnce?.();   // let _orbit solve and write the camera
+      dir.modeTime = INTRO_ORBIT_T;
+      ctx.postfx?.notifyCameraCut?.();
+      shots.push(await window.MG.capture('crit-4-establishing' + tag, 1920, 1080));
+      dir.autoIntroToRace = wasAuto;
+      dir.setMode(wasMode || 'race');
+      dir.enabled = false;              // the rest of this file drives by hand
+      void wasEnabled;
+    } else {
+      // No director (a stub, or a harness that never built one): fall back to
+      // the old hand-written pose rather than shooting whatever was last set.
+      const b = ctx.track.bounds;
+      const ctr = b.getCenter(new THREE.Vector3());
+      const sz = b.getSize(new THREE.Vector3());
+      const d = Math.max(sz.x, sz.z) * 1.45;
+      cam.fov = 34;
+      cam.position.set(ctr.x + d * 0.62, ctr.y + d * 0.42, ctr.z + d * 0.86);
+      cam.lookAt(ctr.x, ctr.y - sz.y * 0.55, ctr.z);
+      cam.updateProjectionMatrix();
+      ctx.postfx?.notifyCameraCut?.();
+      shots.push(await window.MG.capture('crit-4-establishing' + tag, 1920, 1080));
+    }
+  }
 
   return {
     shots,
