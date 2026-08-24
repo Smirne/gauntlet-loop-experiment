@@ -84,7 +84,7 @@ export default {
     { t: 0.00, width: 32 },   // main straight — three cars abreast
     { t: 0.13, width: 30 },
     { t: 0.19, width: 26 },   // Turn One tightens on entry
-    { t: 0.25, width: 29 },   // the jump needs room to land crooked
+    { t: 0.25, width: 33 },   // the jump needs room to land crooked
     { t: 0.32, width: 26 },   // the spill
     { t: 0.40, width: 31 },   // Cereal Canyon, the second overtaking place
     { t: 0.47, width: 27 },
@@ -136,7 +136,17 @@ export default {
     // At 40 the flat top spans 14.4 either side, which covers the road, and the
     // taper falls away over the table where nobody is driving. The toast either
     // side of it is scenery and does not move.
-    { type: 'ramp', id: 'butterJump', t: 0.243, length: 30, height: 8.5, width: 40 },
+    // HEIGHT 6.5, AND 6.5 IS A MEASURED THRESHOLD RATHER THAN A ROUND NUMBER.
+    // Respawns caused at this jump over a 60 s race, interleaved runs so drift
+    // could not favour a value:
+    //
+    //     8.5   7 respawns      7.5   7 and 6      6.5   0 and 0      5.5   0
+    //
+    // Everything at 7.5 and above costs six or seven recoveries a race;
+    // everything at 6.5 and below costs none. So 6.5 is the tallest this can be
+    // and still land — and it should be the tallest, because the jump is the
+    // one moment on this circuit anybody will remember.
+    { type: 'ramp', id: 'butterJump', t: 0.243, length: 30, height: 6.5, width: 40 },
 
     // The milk. No mesh — world/Decals.js paints the pool, and the surface
     // override is what the tyres feel. Two patches: the main sheet across the

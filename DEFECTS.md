@@ -1832,3 +1832,35 @@ tall car, with whatever it lands on.
 **Rule reinforced: FIND THE NOISE FLOOR BEFORE BELIEVING A DIFFERENCE.** Two runs is not a
 measurement when consecutive identical runs disagree. Repeat the same condition until it
 reproduces, then interleave the conditions so drift cannot favour one.
+
+### D38 resolved — the jump was too tall, and 6.5 is where it stops costing races
+
+The side wall was fixed by widening the hazard (above) and it did not move the respawn rate.
+The height did. Respawns caused at the jump over a 60 s race, heights interleaved so drift
+could not favour a value:
+
+    height  8.5    7 respawns
+    height  7.5    7, then 6
+    height  6.5    0, then 0
+    height  5.5    0
+
+A cliff edge, not a gradient: everything at 7.5 and up costs six or seven recoveries a race,
+everything at 6.5 and down costs none. 6.5 ships because the jump should be as tall as it can
+be — it is the one moment on this circuit anyone will remember — and 6.5 is the tallest that
+lands.
+
+Landing width 29 -> 33 (half-width 16.45) on top of that, tested separately over three full
+races each:
+
+    height 6.5, width 29    respawns at the jump  3, 0, 2
+    height 6.5, width 33    respawns at the jump  0, 0, 0
+
+Small, real, and it removes the tail rather than the bulk.
+
+**Whole-race totals, same measurement as the original diagnosis:**
+
+    before   29 respawns, 55% of them at the jump
+    after    8-12 respawns, 0% of them at the jump
+
+The remaining recoveries are somewhere else entirely: lapT 0.05 (the grid, where the field is
+still bunched) and lapT 0.70. Neither has been looked at.
