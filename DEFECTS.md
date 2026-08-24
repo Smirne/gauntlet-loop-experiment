@@ -1864,3 +1864,50 @@ Small, real, and it removes the tail rather than the bulk.
 
 The remaining recoveries are somewhere else entirely: lapT 0.05 (the grid, where the field is
 still bunched) and lapT 0.70. Neither has been looked at.
+
+---
+
+## D39 — the hairpin's banking pumps, because the curvature it is derived from is not smooth
+
+A player, looking at the walled hairpin: *"right side kerb seems to go down, like there's some
+kind of hole / small change in elevation on the track. Is this on purpose?"*
+
+Half on purpose. Banking is on purpose and it is automatic — `bank = -gain * kappa * vRef^2 / g`,
+hard-capped, driven by smoothed curvature, and the kitchen defines no `bankingProfile`, so every
+bank on the circuit is derived rather than authored. Through the hairpin the road rotates about
+its centreline: the inside edge rises to +2.2 and the outside drops to -1.1, a 3.3 u cross-fall.
+The centreline stays at 0.55 throughout, so there is no hole and nothing is broken.
+
+**What is NOT on purpose is that it does it twice.** Sampling the outside edge along the corner:
+
+    t      0.49   0.50   0.51   0.52   0.53   0.54   0.55   0.56   0.57
+    drop  -0.04  -0.56  -1.67  -1.58  -1.06  -0.55  -1.61  -1.66  +0.02
+    radius  1362   140     22     40     77    154     29     21     277
+
+The bank falls, recovers almost to flat at t 0.54, then falls again — and the curvature does
+exactly the same thing, 22 -> 40 -> 77 -> 154 -> 29 -> 21. The hairpin's spline has a slack
+section in its middle, the derived banking follows it faithfully, and the outside kerb visibly
+rises and drops twice through one corner.
+
+Three ways to fix it, none taken:
+- author an explicit `bankingProfile` for the kitchen so this corner stops being derived;
+- smooth the curvature harder before deriving bank (affects every corner on every track);
+- move the hairpin's spline control points so the curvature is monotonic through the corner,
+  which fixes the cause rather than the symptom and is the only one that also fixes how it drives.
+
+## Instrument note — the establishing frame overstates the room, measured
+
+The review's establishing pose puts the room at 53.32% of frame, and both round-7 judges named
+it as the thing that costs the set. Before spending art time on it, measured what a PLAYER
+actually sees. The wide view is not review-only: it is a 9 s intro orbit that opens every race,
+pitching 62 to 47 degrees while pushing in from 1.12 track radii to 0.30. Room share along it:
+
+    0.19 s   55.8%      1.35 s   18.8%      3.60 s   0%
+    0.45 s   26.5%      1.80 s   13.0%      4.96 s   0%
+    0.90 s   23.3%      2.70 s    2.6%      racing   0%
+
+**The room is on screen for about three seconds of a nine-second intro and dominates only the
+first half-second.** It never appears again while racing. So the review frame is representative
+of roughly the first 0.2 s of a session, and the judges' verdict on it — while accurate about
+the room's quality — is weighted far above what it costs a player. Scope the fix to a cheap
+pass, not a rebuild.
