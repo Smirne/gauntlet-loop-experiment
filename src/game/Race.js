@@ -1200,6 +1200,24 @@ export class Race {
     this.elimination.lastAt = this.raceTime;
     this.elimination.count++;
 
+    // START THE FIELD'S GRACE CLOCK. `AI_GRACE` is documented as "seconds the
+    // field gets to finish AFTER THE PLAYER", and `_playerFinishedAt` was set
+    // in exactly one place: crossing the line. Being knocked out never set it,
+    // so it stayed at 0 and `_checkRaceOver` compared the grace against the
+    // whole race clock instead of against the moment the player left.
+    //
+    // The result was a cliff at 26 seconds. Eliminated before it, the AI got
+    // their grace and actually finished; eliminated after it, every remaining
+    // car was DNF'd on the very next tick and a championship round scored
+    // nothing but the knockout point. Measured, one build, same track:
+    //
+    //     player out at  8 s -> 7 real finishers, 0 DNF
+    //     player out at 40 s -> 0 finishers, 7 DNF
+    //
+    // Which is what a player photographed: seven CPUs ranked 1st to 7th, all
+    // showing DNF.
+    if (e.isPlayer) this._playerFinishedAt = this.raceTime;
+
     try {
       e.vehicle?.freeze?.();
       if (e.vehicle) e.vehicle.eliminated = true;

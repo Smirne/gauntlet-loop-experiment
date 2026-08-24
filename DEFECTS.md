@@ -1698,3 +1698,52 @@ is not happening and a single biscuit cannot pop on its own.
 
 Two stills is not enough to tell a pop-in from a prop that another car knocked into shot. Needs
 the moment in the full clip, or a systematic pass watching prop visibility over a lap.
+
+---
+
+## D37 — being eliminated after 26 seconds DNFs the entire field. FIXED.
+
+Spotted in a player's results screenshot: seven CPUs ranked 1st to 7th, **every one of them
+showing DNF**, and a championship round that scored nothing but the knockout point.
+
+`AI_GRACE` is documented as "seconds the field gets to finish **after the player**", and
+`_checkRaceOver` spends it like this:
+
+    if (running === 0 || this.raceTime - this._playerFinishedAt > AI_GRACE) { ...DNF everyone... }
+
+`_playerFinishedAt` was assigned in exactly one place in the file: the `e.isPlayer` branch of
+`_finishEntry`, i.e. **crossing the line**. Being knocked out never set it, so it kept the 0 it
+was given in `start()` and the grace was measured against the whole race clock instead of
+against the moment the player left the race.
+
+That put a cliff at 26 seconds. Measured before the fix, same build, same track:
+
+    player out at  8 s  ->  7 real finishers, 0 DNF   (8 - 0 = 8, inside the grace)
+    player out at 40 s  ->  0 finishers, 7 DNF        (40 - 0 = 40, already expired)
+
+The second row is the screenshot. Every remaining car was classified on the very next tick,
+which is also why the ranking looks incoherent — they are ordered by where they happened to be
+standing, and all of them are DNF.
+
+**Fix:** `_eliminate` sets `_playerFinishedAt` when the eliminated entry is the player. One
+line, restoring what the constant's own comment already promised.
+
+Verified after, three eliminations at different clocks, each played out to the results screen:
+
+    out at  8 s -> ended 11.2 s, 7 finishers, 0 DNF, top three CPU 1/2/3
+    out at 40 s -> ended 43.2 s, 7 finishers, 0 DNF, top three CPU 1/2/3
+    out at 70 s -> ended 73.2 s, 5 finishers, 0 DNF, top three CPU 1/2/4
+
+The grace actually used is 3.2 s in all three: the AI were near the flag each time and the
+`running === 0` branch closed the race long before the 26 s ceiling. The ceiling only ever
+existed to stop a stuck AI holding the results screen hostage, and it still does.
+
+**Not a bug, checked while here:** CPU 1's `+1` in that screenshot is correct. `_eliminate`
+gives the car that knocked you out a point — "the leader banks a point for the knockout,
+exactly as the original does" — and CPU 1 was the reference car. It is not a fastest-lap point
+and it is not scoring off a DNF.
+
+**Rule earned: A CONSTANT'S COMMENT IS A CLAIM ABOUT CODE THAT MAY NOT EXIST.** `AI_GRACE`
+said "after the player" and nothing in the file made that true for half the ways a player can
+leave a race. The same shape as `boostForce`, `respawnFlash` and `receiveShadow` on the room —
+four in one session. Grep for a field's writers before trusting what its neighbours say it does.
