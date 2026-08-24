@@ -552,6 +552,28 @@ const DOF_SUBJECT_RAMP = 1.30;
  * subject.
  */
 const DOF_FIELD_REACH = 34;
+/**
+ * How far along the road ahead of the hero must stay legible, in world units.
+ *
+ * The field rule above protects CARS, and a player reported the gap in it the
+ * only way anyone would — by driving: "it's hard to see the track and the curve
+ * ahead". Measured on the live chase camera, along the racing line:
+ *
+ *     0-20 u ahead   0 px of blur       45 u   36.6 px
+ *     30 u           5.4 px             60 u   67 px, the entire kernel
+ *
+ * At 90 km/h, 60 units is 2.4 seconds in front of the car. The corner you are
+ * about to turn into is at maximum blur, and it is the SCREEN BAND doing it
+ * (band 1.00 against depth 0.73) — the road climbs the frame as it recedes and
+ * leaves the sharp strip, and nothing was protecting it because it is not a car.
+ *
+ * 70 u is a little over two seconds at racing speed, which is the horizon a
+ * driver actually steers on.
+ */
+const DOF_ROAD_REACH = 70;
+/** How many points to sample along that stretch. Six is enough to bound the
+ *  band; the road is smooth between them. */
+const DOF_ROAD_SAMPLES = 6;
 /** Ceiling on the field rule as a fraction of focus depth, so a macro shot
  *  (focus depth ~25) is not handed a 34 u slab and flattened. */
 const DOF_FIELD_FRAC = 0.26;
@@ -1500,6 +1522,7 @@ function damp(current, target, cut, dt, tau = 0.16) {
 }
 
 const _proj = new THREE.Vector3();
+const _roadPt = new THREE.Vector3();
 const _cutPos = new THREE.Vector3();
 const _cutQuat = new THREE.Quaternion();
 const _camPos = new THREE.Vector3();
@@ -2577,6 +2600,34 @@ export class PostFX {
           fieldBand = Math.max(fieldBand, Math.abs((_proj.y * 0.5 + 0.5) - this._focus));
         }
       }
+      // ...and the ROAD AHEAD, which is not a car and so was not covered by any
+      // of the above. Walk the centreline forward from the hero and hold
+      // whatever is still on screen inside the sharp band. Sampled through the
+      // same projection as the cars, so camera pitch, road slope and
+      // foreshortening come for free.
+      const track = ctx.track;
+      if (track && typeof track.nearestT === 'function' && typeof track.surfacePoint === 'function') {
+        const lapLen = track.length || 0;
+        if (lapLen > 0) {
+          const t0 = track.nearestT(heroPos);
+          if (Number.isFinite(t0)) {
+            for (let k = 1; k <= DOF_ROAD_SAMPLES; k++) {
+              const ahead = (DOF_ROAD_REACH * k) / DOF_ROAD_SAMPLES;
+              let tt = (t0 + ahead / lapLen) % 1;
+              if (tt < 0) tt += 1;
+              try { track.surfacePoint(tt, 0, _roadPt); } catch (_) { break; }
+              _proj.copy(_roadPt).project(camera);
+              if (!(Number.isFinite(_proj.y) && _proj.z < 1)) continue;
+              if (Math.abs(_proj.x) > 1.05 || Math.abs(_proj.y) > 1.05) continue;
+              _viewPos.copy(_roadPt).applyMatrix4(camera.matrixWorldInverse);
+              if (!(Number.isFinite(_viewPos.z) && _viewPos.z < 0)) continue;
+              fieldDepth = Math.max(fieldDepth, Math.abs(-_viewPos.z - this._focusDepth));
+              fieldBand = Math.max(fieldBand, Math.abs((_proj.y * 0.5 + 0.5) - this._focus));
+            }
+          }
+        }
+      }
+
       // A car's own half-length either side of it, or its nose and tail sit on
       // the edge of the slab and take the ramp.
       if (fieldDepth > 0) fieldDepth += CAR_LENGTH * 0.5;
