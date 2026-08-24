@@ -1747,3 +1747,47 @@ and it is not scoring off a DNF.
 said "after the player" and nothing in the file made that true for half the ways a player can
 leave a race. The same shape as `boostForce`, `respawnFlash` and `receiveShadow` on the room —
 four in one session. Grep for a field's writers before trusting what its neighbours say it does.
+
+---
+
+## D38 — the respawns at the start are real. The blink just made them visible.
+
+Reported as "at the start of the race I often get respawn and other car does, even if no
+accident occurs". There is an accident. It is a fall, it is silent, and until the respawn blink
+shipped nothing on screen said it had happened.
+
+Instrumented over the first 11 s of a race: **four respawns**, three of them on cars with
+`up.y = -1` — completely inverted — and airborne for over two seconds. Tracing the moment each
+car flips puts them all in the same place:
+
+    flipped at   lapT 0.175 .. 0.256      lateral -6.5 .. -15      y up to 12.5      speed 66..88
+
+Track half-width there is 14.4, so they are leaving the road at the left edge at full speed.
+The cross-section at t = 0.245 says why:
+
+    lateral    0 .. -9     surface y 6.41   (road, dead flat)
+    lateral  -10.5         surface y 5.77
+    lateral  -12           surface y 2.58   <-- a 3.19 u step in 1.5 u of lateral
+    lateral  -13.5         surface y 0.54
+    lateral  -15 outward   surface y ~0.5 -> 0  (the table)
+
+**The road is a ribbon standing 5.9 units proud of the table and it drops that in about three
+units of lateral distance** — near enough a 60 degree wall, with a single 3.19 u step in the
+middle of it. A car that runs wide at 80 does not slide off, it trips and barrel-rolls.
+
+It happens early because that is when the field is bunched and cars get pushed wide.
+
+**NOT the kerbs, and not my change to them.** Three of the six flips traced happened where
+`kerbWidthAt` returns 0 — there is no kerb there at all — and the wall spanning 0.150-0.232 is
+on side +1, the right, while every flip is on the left. Kerb suppression only zeroes the side
+the wall is on, so it touched none of this.
+
+**Not a new bug either.** Nothing in this session altered the road profile. What changed is that
+`respawnFlash` is finally read by something (D35), so a recovery that has always been silent now
+blinks. The report is evidence the blink works.
+
+**OPEN, and it is a design question, not a defect with one right answer.** Options, none taken:
+a taller lip on the elevated sections so a car is turned back instead of tripped; a gentler
+shoulder taper so leaving the road is survivable; AI early-race line tuning so the field does not
+get shoved off in the first corner; or accepting it as a hazard of a raised circuit and leaving
+it. The first three all change how the track drives.
