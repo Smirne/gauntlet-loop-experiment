@@ -125,7 +125,18 @@ export default {
   hazards: [
     // The jump. 8.5 u of lift over 30 u with an abrupt lip: about 0.26 s of air
     // and 24 u of carry at 95 u/s, which is two and a half car lengths.
-    { type: 'ramp', id: 'butterJump', t: 0.243, length: 30, height: 8.5, width: 27 },
+    // WIDER THAN THE ROAD, DELIBERATELY. `hazardLateralWeight` holds a hazard at
+    // full height out to 72% of its half-width and tapers the rest, so a 27-wide
+    // ramp on a 28.75-wide road put its entire 8.5 u fall INSIDE the drivable
+    // surface: flat to lateral 9.7, on the table by 13.5, a 66 degree side. Cars
+    // shoved wide in the opening laps did not slide off it, they tripped and
+    // barrel-rolled — three inverted cars and four respawns in the first eleven
+    // seconds, every one of them traced to this ramp (D38).
+    //
+    // At 40 the flat top spans 14.4 either side, which covers the road, and the
+    // taper falls away over the table where nobody is driving. The toast either
+    // side of it is scenery and does not move.
+    { type: 'ramp', id: 'butterJump', t: 0.243, length: 30, height: 8.5, width: 40 },
 
     // The milk. No mesh — world/Decals.js paints the pool, and the surface
     // override is what the tyres feel. Two patches: the main sheet across the

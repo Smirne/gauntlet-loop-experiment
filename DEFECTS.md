@@ -1791,3 +1791,44 @@ a taller lip on the elevated sections so a car is turned back instead of tripped
 shoulder taper so leaving the road is survivable; AI early-race line tuning so the field does not
 get shoved off in the first corner; or accepting it as a hazard of a raised circuit and leaving
 it. The first three all change how the track drives.
+
+### D38 update — the ramp's SIDE is fixed. The ramp's LANDING is the real problem.
+
+`hazardLateralWeight` holds a hazard at full height out to 72% of its half-width and tapers the
+rest. `butterJump` was 27 wide on a 28.75-wide road, so its entire 8.5 u fall sat INSIDE the
+drivable surface — flat to lateral 9.7, on the table by 13.5. Widened to 40, measured:
+
+    before   flat to  9.7   steepest step 3.19 u per unit lateral   INSIDE the road
+    after    flat to 15.0   steepest step 1.56 u per unit lateral   out on the table
+
+The road edge (14.38) now sits on the ramp's flat top instead of halfway down its side. That
+part is deterministic, measured, and an improvement.
+
+**IT DID NOT REDUCE THE RESPAWN RATE, AND I NEARLY REPORTED THAT IT DID.** A first A/B showed
+14 respawns at width 27 against 8 at width 40, which is the number I would have shipped. Running
+the same width three times in a row gave 10, 10, 10 — stable — but the earlier 8 came from a
+different starting state, because each run inherits the end state of the last. Interleaving the
+two widths, three runs each:
+
+    width 27   respawns 10, 13, 10      flips 13, 14, 14
+    width 40   respawns 10, 10, 16      flips  7,  8, 13
+
+Median respawns: **10 against 10**. There is no respawn improvement in the data. Flips may be
+lower and the evidence is too weak to claim it.
+
+**Where the respawns actually come from.** One 71 s race, respawn positions bucketed by lap
+fraction:
+
+    lapT 0.25   16 respawns   55%   <-- the ramp LANDING (butterJump is at 0.243)
+    lapT 0.05    6            21%
+    lapT 0.70    4            14%
+    lapT 0.10    2             7%
+
+**Over half of every respawn in the race is cars landing badly off one 8.5 u jump.** The side
+wall was real and is fixed; it was not the dominant cause. Keeping the width change — better
+geometry, no regression — and reopening the actual question: an 8.5 u ramp launching a 2.8 u
+tall car, with whatever it lands on.
+
+**Rule reinforced: FIND THE NOISE FLOOR BEFORE BELIEVING A DIFFERENCE.** Two runs is not a
+measurement when consecutive identical runs disagree. Repeat the same condition until it
+reproduces, then interleave the conditions so drift cannot favour one.
