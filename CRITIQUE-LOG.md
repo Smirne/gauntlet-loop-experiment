@@ -235,3 +235,80 @@ before anything is lit at all. That is D13, and it is promoted from "erases the 
 3. Both faults are the same failure as rounds 1-2 and 1-5 before them: **scoring a round on
    evidence the harness could not produce.** Ask what the harness cannot show before the
    round, not after.
+
+## Round 7 — 3.3 to 5.2, every category up, and the tell test still failed
+
+Two judges, not four. The third stalled on the harness watchdog at 600 s and produced nothing;
+its slot is empty rather than filled with a guess. Both reporting judges scored all four frames
+rather than one camera each.
+
+**Category 7 was taken off the sheet before the round started**, for the first time. The HUD is
+DOM and cannot appear in a `MG.capture()` frame; in round 6 all four judges scored it 1 and two
+carried that into the tell test. Both judges this round were told not to score it and did not.
+
+| # | Category | R6 | judge A | judge C | R7 | Δ |
+|---|---|---|---|---|---|---|
+| 1 | Materials & texture | 3.5 | 6 | 5 | 5.5 | +2.0 |
+| 2 | Lighting & shadow | 3.0 | 5 | 5 | 5.0 | +2.0 |
+| 3 | Post & grade | 3.8 | 6 | 4 | 5.0 | +1.2 |
+| 4 | Geometry & silhouette | 3.8 | 6 | 6 | 6.0 | +2.2 |
+| 5 | Effects | 2.0 | 4 | 3 | **3.5** | +1.5 |
+| 6 | Composition & camera | 3.8 | 6 | 6 | 6.0 | +2.2 |
+| 8 | Environment richness | 3.0 | 6 | 5 | 5.5 | +2.5 |
+| 9 | Cohesion | 3.5 | 6 | 4 | 5.0 | +1.5 |
+| | **mean** | **3.3** | **5.6** | **4.75** | **5.19** | **+1.9** |
+
+**Read that gap carefully before enjoying it.** Round 6 ran four judges, one per camera; round 7
+ran two, each scoring all four. A judge holding one frame has nothing to grade on a curve
+against, and is plausibly harsher. Some of +1.9 is the build and some is the protocol, and this
+round cannot separate them. What can be said without a caveat: **no category moved down, and the
+two lowest in round 6 are still the two lowest now.**
+
+**Tell test still fails.** Judge A: 3 of 4 frames spotted, `crit-2` borderline — *"could sit next
+to Art of Rally or Circuit Superstars and survive."* Judge C: 4 of 4. Nothing is at 8. The bar in
+REVIEW.md is every category ≥ 8 and none below 7; the floor is Effects at 3.5.
+
+### What both judges found independently
+
+Neither saw the other's report.
+
+**The room.** A: *"everything the team finished is inside the table outline, and nothing outside
+it was started."* C: *"a good car asset dropped into someone else's blockout."* Measured here by
+hiding every `MG.Room` object and diffing, control capture at 0.000%: **the room is 53.32% of the
+establishing frame.** It is also the material whose shader contains no shadow code at all (D30).
+Over half of the widest shot is the least-finished thing in the project.
+
+**The car floats.** A: the macro tyre contact zone measures luma 65-94 against 67-86 for
+reference wood 400 px away — no darkening. C: the hero's shadow is *"a single featureless oval
+with no wheel separation"* while a die 400 px away casts a correct shadow-mapped parallelogram.
+Verified independently: hiding `MG.ContactShadows` and diffing the macro frame, control 0.000%,
+**the contact shadow system changes 0.05% of the frame at 13 luma.** It is switched on, it is in
+the scene, it has 264 instances, and it does effectively nothing.
+
+**The bokeh is not round.** Both, at 6-8x: out-of-focus highlights resolve to hard axis-aligned
+rectangles and a stair-stepped hexagon with vertical stripe banding. C measured the grain as flat
+across focus (mean |dx| 3.37 in a fully blurred region against 3.43 on a flat wall), which is what
+makes defocus read dirty instead of creamy.
+
+**Effects remain the floor, as in round 6.** Four frames, eight cars at speed on a dusty wooden
+surface. A found one flat alpha smear; C found none at all.
+
+### A theory of mine, tested and wrong
+
+I proposed that `MG.ContactShadows` renders invisibly because `renderOrder: -5` with
+`depthWrite: false` draws it before the opaque ground, which then paints over it. Tested by
+moving it to `renderOrder: 5` and diffing:
+
+    renderOrder -5 (shipped)   0.05% of frame changed
+    renderOrder +5             0.00% — it disappears completely
+
+The negative render order is what makes it visible at all. The symptom the judges reported is
+real and confirmed; my explanation for it was not, and the fix is not a one-line render-order
+change. Cause still open.
+
+### Not yet verified from this round
+
+C reports one prop in `crit-4` at (1402, 850) rendering as a pure unlit silhouette — interior
+mean RGB 37,31,36 against 213,188,166 on the table beside it. If that reproduces it is a bug,
+not a design weakness. A reports a UV seam across the hero's right rear quarter in `crit-3`.
+Neither has been checked here.
