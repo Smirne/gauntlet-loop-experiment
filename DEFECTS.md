@@ -2045,3 +2045,59 @@ resolve it, none taken yet:
 
 Left as a question rather than a change, because it is a look and this project's rule is that a
 look is decided from frames by a human, not from a rationale by me.
+
+## D42 — the contact shadow is drawn, placed and blended correctly, and hidden under the car
+
+Both round-7 judges said the car floats, and the working note said the system "changes 0.05% of
+the macro frame at 13 luma — on, in the scene, 264 instances, doing effectively nothing." That
+number was roughly right. The explanation for it took four wrong theories to reach.
+
+**Ruled out, one at a time:**
+
+- *Buried below the surface.* Against the wheels' own `contactY` — ground truth from the physics
+  rather than a terrain query — the blobs sit 0.05 to 0.35 above the contact patch on seven of
+  eight cars and −0.01 on the eighth. Exactly as designed. (An earlier reading looked like
+  burial only because it compared against `track.surfacePoint`, which is a different quantity.
+  The `CONTACT_SINK_MAX` guard added earlier does work: it was written when 221 of 264 blobs
+  really were under the table.)
+- *The multiply blend not reaching the framebuffer.* Setting `uTint` to pure black — the
+  strongest multiply there is — moved the frame by 12 luma against the normal tint's 11. That
+  looked damning, and it was a red herring; see below.
+- *`aParams` not arriving.* A probe painting the varying showed darkness and core arriving
+  correctly.
+- *The uv varying broken.* A probe painting `uv` showed a clean gradient across every quad.
+
+**What is actually happening.** The blob is a soft ellipse whose density lives inside
+`d < core * 1.15`. `Lighting._autoContactEntry` sizes a car's blob at `length * 1.75` and
+`width * 2.30` with a comment stating that the plateau edge then "lands just outside the tyre
+line on both axes" — a measured pair. But `VehicleVisual._buildContactShadow` registers
+explicitly, an explicit registration SUPPRESSES the automatic one, and it asks for
+`length * 1.28` and `width * 1.68`. **The tuned numbers have never once been used.** At the
+narrower size the dense plateau is entirely underneath the car, occluded by the very object it
+exists to ground, and the only part a camera above can see is the faintest rim of the penumbra.
+That is also why the black-tint probe did nothing: the visible rim has `a` near zero, so `mix(
+white, tint, a )` stays white whatever the tint is.
+
+Measured at the chase pose against blobs-off, film grain zeroed, control 0.000%:
+
+    shipped   length x1.28  width x1.68  lean 0.0    0.185% of frame   mean  5.1 luma   max 17
+    mid       length x1.51  width x1.98  lean 0.3    2.190%            mean 11.5        max 38
+    tuned     length x1.75  width x2.30  lean 0.6    3.903%            mean 16.7        max 69
+
+**Twenty-one times the area and three times the intensity, for a 37% wider quad.** Ladder at
+`shots/contact-ladder-chase.png`. `?contactHalo=N` lerps between the two, default 0, so both
+render from one build at one moment.
+
+Note the ladder moves size and `groundLean` together, because the tuned configuration is a
+package rather than a single number. The size is what does the work: an earlier probe that moved
+only the density profile (`core` 0.50 -> 0.92) took the macro frame from 0.113% to 3.628%
+without touching the quad at all.
+
+**Two instrument notes, both of which cost a wrong conclusion:**
+
+1. A probe material with `transparent: false` rendered NOTHING. A non-transparent material goes
+   in the opaque queue, where `renderOrder: -5` puts it before the ground, which then paints over
+   it. That is exactly the mechanism proposed and "disproved" in round 7 — it is real, it simply
+   does not apply to the shipped material, which is transparent.
+2. Writing directly into `contact.params.array` changed nothing, because `_updateContactShadows`
+   rewrites every param slot from the entries on each update. **Edit the entry, not the buffer.**

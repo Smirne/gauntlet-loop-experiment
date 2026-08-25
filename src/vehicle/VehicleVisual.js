@@ -35,6 +35,31 @@
 
 import * as THREE from 'three';
 import { clamp, saturate, lerp, smoothstep } from '../core/Random.js';
+
+/* ------------------------------------------------------------ contact halo */
+
+/** Plain lerp; the module's own helpers are further down and this runs at load. */
+function lerpNum(a, b, t) { return a + (b - a) * t; }
+
+/**
+ * 0 = the contact-blob size this file has always registered, 1 = the pair
+ * Lighting._autoContactEntry was tuned for and never got to use. See the note
+ * at the registration site in _buildContactShadow.
+ */
+const CONTACT_HALO_DEFAULT = 0;
+
+const CONTACT_HALO = (() => {
+  try {
+    const v = new URLSearchParams(location.search).get('contactHalo');
+    if (v === null || v === '') return CONTACT_HALO_DEFAULT;
+    if (v === 'off') return 0;
+    const n = Number(v);
+    // `Number(null)` and `Number('')` are both 0 and would read as "off"
+    // through a >= 0 guard. Handled above, deliberately: that exact hole
+    // switched the fog off on every normal boot once.
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : CONTACT_HALO_DEFAULT;
+  } catch (_) { return CONTACT_HALO_DEFAULT; }
+})();
 import {
   buildChassis, chassisLivery, wheelTexture, liveryFor, bevelBox, plateTexture,
 } from './CarModels.js';
@@ -739,8 +764,28 @@ export class VehicleVisual {
           vehicle: v || null,
           // The occlusion under a car is wider than the car: it takes in both
           // tyre contact patches and the shadowed air under the sills.
-          length: fp.length * 1.28,
-          width: fp.width * 1.68,
+          //
+          // These two numbers are the whole reason a car reads as floating.
+          // Lighting._autoContactEntry carries a MEASURED pair — 1.75 and 2.30,
+          // with a comment explaining that the plateau edge then "lands just
+          // outside the tyre line on both axes" — but registering explicitly
+          // here SUPPRESSES that automatic entry, so the tuned numbers have
+          // never once been used and these narrower ones win instead.
+          //
+          // The blob is drawn, correctly placed, correctly blended. It is just
+          // that at 1.28 x 1.68 its dense plateau is entirely UNDERNEATH the
+          // car, occluded by the very object it exists to ground, and only the
+          // faintest rim of the penumbra is ever visible from a camera above.
+          // Measured against blobs-off at the chase pose, grain zeroed, control
+          // 0.000%: shipped 0.185% of frame at 5.1 mean luma; the tuned pair
+          // 3.903% at 16.7. Twenty-one times the area for a 37% wider quad.
+          //
+          // `?contactHalo=N` lerps between the two so both can be rendered from
+          // ONE build at ONE moment (D25). Default 0 until a human has judged
+          // the frames.
+          length: fp.length * lerpNum(1.28, 1.75, CONTACT_HALO),
+          width: fp.width * lerpNum(1.68, 2.30, CONTACT_HALO),
+          groundLean: lerpNum(0, 0.6, CONTACT_HALO),
           opacity: 1,
           maxHeight: 9,
           softness: 0.38,
