@@ -393,8 +393,22 @@ const SMOKE_CAL_SHIPPED = {
   heatPowerRef: 5200,
   slipMix: 0.45,
 };
-/** 0 = shipped, 1 = recalibrated. Default 0 until the A/B has been judged. */
-const SMOKE_GAIN_DEFAULT = 0;
+/**
+ * 0 = shipped, 1 = fully recalibrated.
+ *
+ * Shipped at 0.25 after a four-point ladder captured from one build at one
+ * pinned moment (t = 20.008, seed 7; the physics is identical in all four
+ * because smoke is a pure output channel). 0.25 gives plumes that read as tyre
+ * smoke while leaving every car's colour and silhouette intact; 0.50 washes out
+ * the two cars behind the leader and 1.00 buries the field in a fog bank.
+ *
+ * So the answer is NOT 1. A channel finally reaching its authored range is not
+ * the same as the authored range being right: `smokeRate: 46` and an opacity
+ * curve topping out at 1.2 were written for a full-size car, and this is a
+ * miniature seen from two feet up. 0.25 is where the signal clears its floor
+ * without the curves above it overreaching. See D40.
+ */
+const SMOKE_GAIN_DEFAULT = 0.25;
 
 const SMOKE_GAIN = (() => {
   try {
