@@ -267,23 +267,35 @@ export async function captureSet(suffix = '', opts = {}) {
   // 1.45x the track's longest axis at about 32 degrees, chosen so a near table
   // corner and a leg would be in shot. It did that, and the round-7 judges duly
   // scored what it revealed — "the frame that costs the whole set", "a good car
-  // asset dropped into someone else's blockout" — because the room is 53.32% of
-  // it, measured by hiding every MG.Room object and diffing against a 0.000%
-  // control.
+  // asset dropped into someone else's blockout".
+  //
+  // They were right, and righter than the number they were given. That pose is
+  // 82.8% bare room, measured by painting every MG.Room mesh flat magenta and
+  // everything else flat black, letting the depth buffer do the occlusion and
+  // counting magenta (control 0.0%). See shots/oldpose-mask.png.
+  //
+  // The 53.32% quoted here previously came from a worse instrument: hide the
+  // room and diff the frame. That answers "what does the room AFFECT" — its
+  // floor and walls bounce light into the whole scene — not "where is the room
+  // on screen", and it was run with the grain still on, which by itself puts
+  // 33% of pixels in the diff. ZERO THE GRAIN BEFORE A FRAME-DIFF, and mask
+  // rather than toggle when the question is "how much of the frame is this".
   //
   // Then a player asked when that view is shown, and could not reproduce it.
-  // He was right not to be able to. The wide camera exists in exactly one
-  // place: the menu backdrop, in `attract`. It is NOT a race intro — Director
-  // switches to 'race' the moment the state leaves attract — and `?skipmenu=1`
-  // skips it outright. Room share along the orbit a player really gets:
+  // The wide camera exists in exactly one place: the menu backdrop, in
+  // `attract`. It is NOT a race intro — Director switches to 'race' the moment
+  // the state leaves attract — and `?skipmenu=1` skips it outright. Room share
+  // along the orbit a player really gets, by the mask instrument:
   //
-  //     0.0 s  27.8%     1.5 s  8.4%     3.0 s onward  0%      racing  0%
+  //     0.2 s  27.1%     1.4 s  17.5%     2.6 s  3.4%     3.4 s on  0%
+  //     0.6 s  24.9%     1.8 s  12.5%     3.0 s  0.4%     mean      5.3%
   //
-  // ...dimmed, behind menu panels. So the old pose showed twice the room a
-  // player ever sees, at a camera nobody occupies, and three rounds of judging
-  // weighted it as the thing that sank the set. That is the FOURTH time this
-  // project has scored something the harness could produce and the game cannot
-  // show — after a parked race, coin-flip shadows, and a DOM HUD.
+  // ...dimmed, behind menu panels, and gone entirely after three seconds. So
+  // the old pose showed three times the room a player ever sees, at a camera
+  // nobody occupies, and three rounds of judging weighted it as the thing that
+  // sank the set. That is the FIFTH time this project has scored something the
+  // harness could produce and the game cannot show — after a parked race,
+  // coin-flip shadows, a DOM HUD, and now a measurement of the wrong quantity.
   //
   // So ask the Director for the pose instead of writing one.
   //

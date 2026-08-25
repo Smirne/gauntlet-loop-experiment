@@ -1895,36 +1895,55 @@ Three ways to fix it, none taken:
 - move the hairpin's spline control points so the curvature is monotonic through the corner,
   which fixes the cause rather than the symptom and is the only one that also fixes how it drives.
 
-## Instrument note — the establishing frame, twice corrected
+## Instrument note — the establishing frame, and the instrument that measured it
 
-The review's establishing pose put the room at 53.32% of frame, and both round-7 judges named
-it as the thing that cost the set. Two things were claimed here before either was checked
-properly, and both were wrong.
+The review's establishing pose was said to put the room at 53.32% of frame, and both round-7
+judges named it as the thing that cost the set. Everything about that sentence needed checking,
+and three separate things were wrong.
 
-**Wrong claim 1: "the wide view is a 9 s intro orbit that opens every race."** It is not. It is
-the MENU BACKDROP — dimmed, behind panels, and never seen while racing.
+**Wrong 1: "the wide view opens every race."** It does not. It is the MENU BACKDROP — dimmed,
+behind panels — and `?skipmenu=1` skips it outright. A player asked when that view is shown and
+could not reproduce it. He was right not to be able to.
 
-**Wrong claim 2: "the room fades to 0% after about 3 s."** That was one boot's sweep angle read
-as if it were the whole orbit. Sampling the orbit properly:
+**Wrong 2: the room-share instrument counted the wrong pixels.** It hid every `MG.Room` object
+and diffed the frame against itself. But the room is not just something you SEE — its floor and
+walls bounce light into the whole scene, so hiding them shifts pixels the room does not occupy.
+At the close end of the menu orbit, where the image plainly shows no room at all, that method
+reported 50-60%.
 
-    orbit t   1.2 s   1.6 s   2.0 s   2.4 s
-    room      36.9%   35.6%   33.5%   30.3%
+**Wrong 3: the diff was run without zeroing the grain, so its noise floor was 33%.** Captured
+the SAME frame three times with nothing hidden: consecutive captures differ by 32.7% and 32.6%
+of pixels. With `passes.grain.uniforms.uAmount = 0` the same test gives **0.00%**. This project
+already had the rule — ZERO THE GRAIN BEFORE A FRAME-DIFF — and it was broken anyway, which is
+how two full tables of room-share numbers were produced and briefly believed.
 
-Across the full 1.55-radian sweep the room runs roughly 8-37% depending on where the camera
-points. There is no clean fade to nothing.
+The instrument that actually works paints every `MG.Room` mesh flat magenta, everything else
+flat black, renders with the depth buffer doing the occlusion, and counts magenta. It measures
+room a viewer can SEE. Control: 0.0%. Measured with it:
 
-The fix taken was to the harness, not the art: `tools/capture-set.js` shot 4 now asks the
-Director for the real intro-orbit pose at `INTRO_ORBIT_T = 1.2` instead of using a hand-written
-camera, which brought the reviewed frame from 53.32% room to 36.85%. En route, parking the
-capture at `introDuration` — "where the orbit rests" — silently produced a SECOND gameplay frame,
-because the blend term reaches 1 there and the camera lands on the chase pose. The image showed
-that in a second; no measurement would have.
+    the OLD review pose (hand-written, rounds 1-7)       82.8%  room
+    the NEW review pose (Director's orbit at 1.2 s)      33.9%  room
+    the menu backdrop, what a player is actually shown:
+        0.2 s  27.1%    1.4 s  17.5%    2.6 s  3.4%    3.4 s onward  0%
+        0.6 s  24.9%    1.8 s  12.5%    3.0 s  0.4%    mean over orbit  5.3%
 
-**This is the fourth harness fault of the same shape** — after a race that had already stopped
-(rounds 1-2), shadows that were a coin flip (through round 5), and a DOM HUD that cannot appear
-in a capture (round 6). The pattern never varies: the harness can produce a frame the game never
-shows, and rounds of judging then weight it as fact. Before a round, ask what the harness is
-incapable of showing, and ask whether the frame it IS showing is one a player ever sees.
+So the judges were right, and righter than the number they were given: the frame they scored is
+**82.8% bare room**, not 53%. It is a small track on a big table in an empty box with no
+skirting, no furniture and no story — `shots/oldpose-mask.png`. And it is a frame no player has
+ever seen. The reposed review frame is `shots/newpose-mask.png`; the backdrop a player really
+gets is `shots/orbit-strip.png`.
+
+Two lessons, and the second is the expensive one:
+
+1. **Measure what you mean.** "Hide it and diff" answers *what does this object affect*, which
+   is not *where is this object on screen*. A flat-colour mask answers the second question and
+   costs ten lines.
+2. **This is the fifth harness fault of the same shape** — after a race that had already stopped
+   (rounds 1-2), shadows that were a coin flip (through round 5), a DOM HUD that cannot appear
+   in a capture (round 6), and a camera nobody occupies (round 7). The pattern never varies:
+   the harness produces a number or a frame the game never shows, and judging then weights it as
+   fact. Before a round: ask what the harness cannot show, and ask whether the instrument
+   measures the thing its name claims.
 
 ## D40 — tyre smoke is authored against a slip range the car cannot reach
 
