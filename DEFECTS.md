@@ -2101,3 +2101,56 @@ without touching the quad at all.
    does not apply to the shipped material, which is transparent.
 2. Writing directly into `contact.params.array` changed nothing, because `_updateContactShadows`
    rewrites every param slot from the entries on each update. **Edit the entry, not the buffer.**
+
+## D43 — the bokeh was square because the blur was separable, which cannot be round
+
+Round 7, judge A and judge C independently, at 6-8x: "hard axis-aligned rectangles", "a
+stair-stepped hexagon with vertical stripe banding". The player, unprompted and in his own
+words: "you can see blur lines / borders. Maybe the blur should be a gradient."
+
+Three observers, one artefact, and the cause is structural rather than a tuning slip. The
+tilt-shift blur was **separable** — a horizontal pass then a vertical one — and a separable
+blur's 2D kernel is the outer product of its 1D kernel with itself, `k(x) * k(y)`. A flat-top
+1D profile with a hard rim therefore produces a SQUARE with slightly rounded corners. No value
+of any parameter makes that round. The kernel's own comment said it "converges on a squircle
+rather than the pointy Gaussian profile that turns bokeh into mush", which is true, and beside
+the point: a squircle is square enough that every out-of-focus highlight reads as a box.
+
+**Replaced with a real aperture.** A golden-angle spiral over the disc, `r = sqrt((i+0.5)/N)`
+so the taps sample area evenly instead of piling at the centre, rotated by a per-pixel spatial
+hash so the spiral does not settle into fixed arms. Everything else is carried over unchanged:
+the flat-top rim profile (now radial, so it describes the aperture instead of one axis of it),
+the scatter-as-gather CoC guard, and the saturating highlight weighting.
+
+**Gathered at half resolution and composited back by CoC.** Everything the gather produces is
+by definition out of focus, so resolving it at full rate is work thrown away. The composite
+mixes by CoC rather than replacing, so the in-focus band keeps its full-resolution pixels
+exactly, and the mix ramps over the first pixel of radius so the band edge stays a gradient
+rather than a seam.
+
+Sample budget, per tier — separable took `2 * (2T+1)` samples at EVERY pixel; the disc takes
+`3 * (2T+1)` at a quarter of them:
+
+    tier      T     separable          disc         samples per full-res pixel
+    low       5     22 at every px     33 at 1/4     22  ->  8.3
+    medium    8     34                 51            34  -> 12.8
+    high     11     46                 69            46  -> 17.3
+    ultra    13     54                 81            54  -> 20.3
+
+**A cost claim I am NOT making.** This was supposed to be settled with
+`EXT_disjoint_timer_query_webgl2` rather than arithmetic. The first round of measurements gave
+a consistent ordering three times over (square < half-res disc < full-res disc); the second,
+with a DOF-off baseline, drifted so badly under thermal throttling that the baseline came out
+**slower than the square kernel**, and a third of the queries never resolved. CPU-side
+`performance.now()` around `renderFrame` was worse still: five identical blocks read 1.1, 34.7,
+51.5, 59.1 and 58.2 ms. The noise floor exceeded the signal, so the cost statement above rests
+on sample counts and pass structure, which are exactly knowable, and the wall-clock effect
+wants checking on real hardware.
+
+Tap count chosen from frames: `shots/bokeh-4way.png` ladders 40 / 54 / 80 taps against the
+square. Every disc variant is plainly round where the square one is plainly square, and the
+residual spiral speckle falls off sharply between 54 and 80. At the shipping grain setting
+(`shots/bokeh-ship.png`) the speckle is not separable from the film grain, while the square
+highlight is glaring.
+
+`?dofKernel=square|full|half` renders all three from one build. Default `half`.

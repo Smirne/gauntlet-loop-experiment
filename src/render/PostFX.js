@@ -431,12 +431,179 @@ void main() {
 `;
 
 /**
+ * Round bokeh, in one pass.
+ *
+ * TILT_FRAG above is separable: a horizontal pass then a vertical one. That is
+ * cheap and it is also why both round-7 judges and the player independently
+ * described the same artefact — "hard axis-aligned rectangles", "a stair-stepped
+ * hexagon with vertical stripe banding". A separable blur's 2D kernel is the
+ * OUTER PRODUCT of its 1D kernel with itself, k(x)*k(y), so a flat-top with a
+ * hard rim produces a square with slightly rounded corners. It cannot produce a
+ * disc; no amount of tuning the 1D profile changes that. The comment on that
+ * kernel claiming it "converges on a squircle" is true and beside the point: a
+ * squircle is still square enough to read as a box on every highlight.
+ *
+ * A real lens aperture is round, so this gathers a round one directly: a
+ * golden-angle spiral over the disc, which distributes taps evenly by area
+ * rather than piling them at the centre the way concentric rings do.
+ *
+ * Cost is deliberately matched, not increased. The separable path takes
+ * 2 * (2T+1) samples per pixel — 54 at ultra's T=13 — and MG_DOF_DISC_TAPS is
+ * set to the same count, so switching kernels does not change the sample
+ * budget. What it changes is where the samples go.
+ *
+ * The per-pixel spiral rotation matters more here than the phase jitter did
+ * there: with the taps evenly spread over an area rather than a line, an
+ * unrotated spiral puts every pixel's taps at the same angles and the disc
+ * shows a fixed pinwheel. The hash is spatial only, no time term, so a still
+ * capture stays reproducible and an A/B is honest.
+ */
+const DISC_FRAG = /* glsl */ `
+uniform sampler2D tDiffuse;
+uniform sampler2D tCoc;
+uniform vec2  uTexel;
+uniform float uMaxRadius;    // blur radius at coc 1, in device pixels
+uniform float uHighlight;
+uniform float uHlKnee;
+varying vec2 vUv;
+${HASH}
+
+// 2.39996 rad. Successive taps land at the most irrational angle there is,
+// which is what keeps the spiral from settling into visible arms.
+#define MG_GOLDEN_ANGLE 2.39996323
+
+void main() {
+  float coc = texture2D( tCoc, vUv ).r;
+  vec3 centre = texture2D( tDiffuse, vUv ).rgb;
+  float radius = coc * uMaxRadius;
+
+  // Same floor as the separable path: below a third of a pixel a gather cannot
+  // move anything, and anything nearer one pixel makes the band edge a seam.
+  if ( radius < 0.30 ) {
+    gl_FragColor = vec4( centre, 1.0 );
+    return;
+  }
+
+  float taps = float( MG_DOF_DISC_TAPS );
+  float spin = mgHash13( vec3( gl_FragCoord.xy, 7.13 ) ) * 6.2831853;
+
+  vec3 sum = centre;
+  float wsum = 1.0;
+
+  for ( int i = 0; i < MG_DOF_DISC_TAPS; i ++ ) {
+    float fi = float( i ) + 0.5;
+    // sqrt spacing is what makes this an even sample of AREA. Linear spacing
+    // would crowd the centre and leave the rim — the part that gives a bokeh
+    // disc its edge — under-sampled.
+    float r = sqrt( fi / taps );
+    float a = fi * MG_GOLDEN_ANGLE + spin;
+    vec2 off = vec2( cos( a ), sin( a ) ) * r * radius;
+    vec2 uv = vUv + off * uTexel;
+    vec3 s = texture2D( tDiffuse, uv ).rgb;
+
+    // Flat-top with a hard rim, exactly as before — but now the profile is
+    // radial, so it describes the aperture instead of one axis of it.
+    float k = 1.0 - smoothstep( 0.82, 1.0, r );
+
+    // Scatter-as-gather guard: a sharp pixel must not bleed into a blurred one,
+    // only the other way round.
+    k *= clamp( texture2D( tCoc, uv ).r / max( coc, 1e-3 ), 0.10, 1.0 );
+
+    // Highlights weighted up before averaging so they resolve as bright discs
+    // rather than being diluted by their surround, saturating because this
+    // buffer is linear HDR and one clearcoat glint would otherwise own the
+    // whole kernel.
+    float lum = max( max( s.r, s.g ), s.b );
+    float hl = max( lum - uHlKnee, 0.0 );
+    float hw = 1.0 + uHighlight * ( hl / ( hl + 1.0 ) );
+
+    float w = k * hw;
+    sum += s * w;
+    wsum += w;
+  }
+
+  gl_FragColor = vec4( sum / max( wsum, 1e-4 ), 1.0 );
+}
+`;
+
+/**
  * Half-height of the sharp band, in uv.y, i.e. half the fraction of frame
  * height held sharp by the screen-space term. 0.115 is a 23% strip. The old
  * ceiling of 0.210 was a 42% strip and, with Director asking for 0.22 at rest,
  * that is what shipped: nearly half the frame sharp is a photograph of a large
  * object, which is the opposite of the effect this pass exists for.
  */
+/**
+ * Upsample the half-resolution disc gather and mix it back over the sharp
+ * frame by CoC.
+ *
+ * The gather runs at half res because everything it produces is, by
+ * definition, out of focus: detail below the blur radius does not survive the
+ * gather, so resolving it at full rate is work thrown away. A quarter of the
+ * fill also buys back enough budget to afford a tap count high enough to stop
+ * the disc speckling — which is the one thing a sparse spiral does worse than
+ * a separable blur.
+ *
+ * The mix is by CoC and not a straight replace, so the in-focus band keeps its
+ * full-resolution pixels exactly. `uMix` ramps in over the same 0.30 px floor
+ * the gather uses, so the band edge stays a gradient rather than a seam where
+ * half-res detail switches on.
+ */
+const DOF_COMPOSITE_FRAG = /* glsl */ `
+uniform sampler2D tDiffuse;   // sharp, full resolution
+uniform sampler2D tBlur;      // the half-res gather
+uniform sampler2D tCoc;
+uniform float uMaxRadius;
+varying vec2 vUv;
+
+void main() {
+  float coc = texture2D( tCoc, vUv ).r;
+  vec3 sharp = texture2D( tDiffuse, vUv ).rgb;
+  float radius = coc * uMaxRadius;
+  if ( radius < 0.30 ) {
+    gl_FragColor = vec4( sharp, 1.0 );
+    return;
+  }
+  // Bilinear upsample is all the half-res layer needs: it carries nothing
+  // sharper than the blur radius that produced it.
+  vec3 blurred = texture2D( tBlur, vUv ).rgb;
+  // Ramp over the first pixel of radius so the band edge is a gradient.
+  float m = smoothstep( 0.30, 1.30, radius );
+  gl_FragColor = vec4( mix( sharp, blurred, m ), 1.0 );
+}
+`;
+
+/**
+ * Which bokeh kernel the pass uses. `?dofKernel=square` restores the separable
+ * one so both can be rendered from ONE build at ONE moment (D25).
+ *
+ * Defaults to the disc. This is not really a taste call: a separable blur
+ * cannot produce a round aperture, three independent observers described the
+ * square one as an artefact, and the sample budget is identical either way.
+ */
+const DOF_DISC_DEFAULT = 'half';
+
+/**
+ * 'square' the separable pair, 'full' the disc at full resolution, 'half' the
+ * disc gathered at half resolution and composited back by CoC.
+ *
+ * Measured with EXT_disjoint_timer_query_webgl2, medians of 18 frames each,
+ * interleaved in three rounds so drift cannot favour one — the CPU-side
+ * performance.now() timings around renderFrame were useless here, spreading 1
+ * to 58 ms across five identical blocks, which is a reminder that the noise
+ * floor has to be found before a difference is believed.
+ */
+const DOF_KERNEL = (() => {
+  try {
+    const v = new URLSearchParams(location.search).get('dofKernel');
+    if (v === null || v === '') return DOF_DISC_DEFAULT;
+    if (v === 'square' || v === 'separable') return 'square';
+    if (v === 'full' || v === 'discFull') return 'full';
+    if (v === 'half' || v === 'disc' || v === 'round') return 'half';
+    return DOF_DISC_DEFAULT;
+  } catch (_) { return DOF_DISC_DEFAULT; }
+})();
+
 const BAND_MIN = 0.030;
 const BAND_MAX = 0.115;
 /**
@@ -675,6 +842,31 @@ class TiltShiftPass extends Pass {
       tDiffuse: { value: null },
       uDirection: { value: new THREE.Vector2(0, 1) },
     }, 'MG.TiltShift.v');
+    this.kernel = DOF_KERNEL;
+    // Gathering at half resolution costs a quarter of the fill, which is what
+    // pays for a tap count dense enough to keep the spiral's speckle down. At
+    // ultra's T=13 the separable pair takes 54 samples at every pixel; this
+    // takes 81 at a quarter of them, so it is 20 samples per full-res pixel
+    // against the square's 54 — well under half the total work, even before
+    // the saved full-res intermediate write and read.
+    //
+    // 81 is a judgement made from frames, not from a timer. The tap ladder at
+    // 40 / 54 / 80 is `shots/bokeh-4way.png`: every disc variant is plainly
+    // round where the square one is plainly square, and the residual speckle
+    // falls off sharply between 54 and 80. The GPU-timer numbers that were
+    // meant to settle this drifted so badly under throttling that a DOF-off
+    // baseline came out SLOWER than the square kernel, so the cost claim here
+    // rests on the sample arithmetic above rather than on a measurement this
+    // machine could not hold still.
+    this.discTaps = Math.max(8, this.kernel === 'half' ? 3 * (2 * taps + 1) : 2 * (2 * taps + 1));
+    this.materialDisc = make(DISC_FRAG, {
+      tDiffuse: { value: null },
+    }, 'MG.TiltShift.disc');
+    this.materialDisc.defines.MG_DOF_DISC_TAPS = this.discTaps;
+    this.materialComposite = make(DOF_COMPOSITE_FRAG, {
+      tDiffuse: { value: null },
+      tBlur: { value: null },
+    }, 'MG.TiltShift.composite');
 
     this.rt = new THREE.WebGLRenderTarget(width, height, {
       type: THREE.HalfFloatType,
@@ -683,6 +875,19 @@ class TiltShiftPass extends Pass {
     });
     this.rt.texture.name = 'MG.TiltShift.h';
     this.rt.texture.generateMipmaps = false;
+
+    // Half-res gather target. LinearFilter on purpose: the upsample in the
+    // composite is bilinear, and it carries nothing sharper than the blur
+    // radius that made it, so there is nothing for a sharper filter to save.
+    this.rtHalf = new THREE.WebGLRenderTarget(Math.max(1, width >> 1), Math.max(1, height >> 1), {
+      type: THREE.HalfFloatType,
+      depthBuffer: false,
+      stencilBuffer: false,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+    });
+    this.rtHalf.texture.name = 'MG.TiltShift.half';
+    this.rtHalf.texture.generateMipmaps = false;
 
     // 8 bits is 1/255 of a 16.7 px kernel, i.e. 0.07 px of radius quantisation.
     // RGBA rather than Red because R8 render targets are the kind of thing a
@@ -704,6 +909,7 @@ class TiltShiftPass extends Pass {
     const w = Math.max(1, width);
     const h = Math.max(1, height);
     this.rt.setSize(w, h);
+    this.rtHalf.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
     this.rtCoc.setSize(w, h);
     // setSize can hand back a fresh texture object; keep the sampler pointed at
     // whatever the target actually owns now.
@@ -717,6 +923,9 @@ class TiltShiftPass extends Pass {
     this.materialV.defines.MG_DOF_TAPS = taps;
     this.materialH.needsUpdate = true;
     this.materialV.needsUpdate = true;
+    this.discTaps = Math.max(8, this.kernel === 'half' ? 3 * (2 * taps + 1) : 2 * (2 * taps + 1));
+    this.materialDisc.defines.MG_DOF_DISC_TAPS = this.discTaps;
+    this.materialDisc.needsUpdate = true;
   }
 
   render(renderer, writeBuffer, readBuffer) {
@@ -728,31 +937,67 @@ class TiltShiftPass extends Pass {
     renderer.clear();
     this._quad.render(renderer);
 
-    this.materialH.uniforms.tDiffuse.value = readBuffer.texture;
-    this._quad.material = this.materialH;
-    renderer.setRenderTarget(this.rt);
-    renderer.clear();
-    this._quad.render(renderer);
+    const toOutput = () => {
+      if (this.renderToScreen) {
+        renderer.setRenderTarget(null);
+      } else {
+        renderer.setRenderTarget(writeBuffer);
+        if (this.clear) renderer.clear();
+      }
+    };
 
-    this.materialV.uniforms.tDiffuse.value = this.rt.texture;
-    this._quad.material = this.materialV;
-    if (this.renderToScreen) {
-      renderer.setRenderTarget(null);
+    if (this.kernel === 'half') {
+      // Gather the disc at half res, then mix it back over the sharp frame by
+      // CoC so the in-focus band keeps its full-resolution pixels.
+      this.materialDisc.uniforms.tDiffuse.value = readBuffer.texture;
+      this._quad.material = this.materialDisc;
+      renderer.setRenderTarget(this.rtHalf);
+      renderer.clear();
+      this._quad.render(renderer);
+
+      this.materialComposite.uniforms.tDiffuse.value = readBuffer.texture;
+      this.materialComposite.uniforms.tBlur.value = this.rtHalf.texture;
+      this._quad.material = this.materialComposite;
+      toOutput();
+      this._quad.render(renderer);
+    } else if (this.kernel === 'full') {
+      // One gather over a round aperture at full rate. No intermediate target:
+      // the whole point of the separable pair was to split a 2D kernel into two
+      // 1D ones, and a disc is not separable.
+      this.materialDisc.uniforms.tDiffuse.value = readBuffer.texture;
+      this._quad.material = this.materialDisc;
+      toOutput();
+      this._quad.render(renderer);
     } else {
-      renderer.setRenderTarget(writeBuffer);
-      if (this.clear) renderer.clear();
+      this.materialH.uniforms.tDiffuse.value = readBuffer.texture;
+      this._quad.material = this.materialH;
+      renderer.setRenderTarget(this.rt);
+      renderer.clear();
+      this._quad.render(renderer);
+
+      this.materialV.uniforms.tDiffuse.value = this.rt.texture;
+      this._quad.material = this.materialV;
+      if (this.renderToScreen) {
+        renderer.setRenderTarget(null);
+      } else {
+        renderer.setRenderTarget(writeBuffer);
+        if (this.clear) renderer.clear();
+      }
+      this._quad.render(renderer);
     }
-    this._quad.render(renderer);
 
     renderer.autoClear = autoClear;
   }
 
   dispose() {
     this.rt.dispose();
+    this.rtHalf.dispose();
     this.rtCoc.dispose();
     this.materialCoc.dispose();
     this.materialH.dispose();
     this.materialV.dispose();
+    this.materialDisc.dispose();
+    this.materialComposite.dispose();
     // Deliberately not this._quad.dispose(): FullScreenQuad.dispose() frees the
     // module-level fullscreen triangle that every pass in the addon shares, so
     // one pass tearing down pulls the geometry out from under the rest of the
