@@ -45,8 +45,15 @@ function lerpNum(a, b, t) { return a + (b - a) * t; }
  * 0 = the contact-blob size this file has always registered, 1 = the pair
  * Lighting._autoContactEntry was tuned for and never got to use. See the note
  * at the registration site in _buildContactShadow.
+ *
+ * Shipped at 1. This is less a look decision than a repair: the numbers at 1
+ * are the ones the neighbouring module measured, documented and then had
+ * silently overridden. Judged from a four-frame ladder at one chase pose
+ * (`shots/contact-ladder-chase.png`), where "off" and "shipped" are very nearly
+ * the same picture and the tuned pair is the first one where the cars stop
+ * floating without the darkening reading as a puddle on the wood.
  */
-const CONTACT_HALO_DEFAULT = 0;
+const CONTACT_HALO_DEFAULT = 1;
 
 const CONTACT_HALO = (() => {
   try {
