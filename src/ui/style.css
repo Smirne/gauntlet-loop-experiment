@@ -313,6 +313,38 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
 .hud-c--bc { bottom: 0; left: 50%; padding-bottom: var(--s4); transform-origin: 0 100%; transform: scale(var(--mg-s)) translateX(-50%); }
 .hud-c--tc { top: 0; left: 50%; padding-top: var(--s5); transform-origin: 0 0; transform: scale(var(--mg-s)) translateX(-50%); flex-direction: column; align-items: center; gap: var(--s2); width: 720px; }
 
+/* --- grid key legend (D46) -------------------------------------------------
+   Shown only while the player is stationary on the grid, cleared on GO. Sits
+   low and centred, clear of the countdown ring in the middle of the screen and
+   above the bottom-centre cluster. ------------------------------------------ */
+
+.hud-gridkeys {
+  position: absolute; left: 50%; bottom: 19%;
+  transform-origin: 0 100%; transform: scale(var(--mg-s)) translateX(-50%);
+  display: flex; gap: var(--s4); align-items: center;
+  padding: 10px var(--s4);
+  background: rgba(6, 7, 11, .58);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  opacity: 0; visibility: hidden;
+  transition: opacity .28s ease;
+}
+.hud-gridkeys.is-on { opacity: 1; visibility: visible; }
+@media (prefers-reduced-motion: reduce) { .hud-gridkeys { transition: none; } }
+
+.hud-gk { display: flex; align-items: center; gap: 6px; }
+.hud-gk-key {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 24px; height: 21px; padding: 0 6px;
+  background: rgba(255, 255, 255, .13);
+  clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+  font: 800 var(--t1)/1 var(--f-num); color: var(--ink);
+}
+.hud-gk-key + .hud-gk-key { margin-left: -2px; }
+.hud-gk-lab {
+  font: 700 var(--t1)/1 var(--f-ui); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--ink-2); margin-left: 2px;
+}
+
 /* --- position ------------------------------------------------------------- */
 
 .hud-pos { display: flex; align-items: baseline; gap: 6px; }
@@ -719,6 +751,31 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; }
 .mn-stat-row { display: flex; gap: var(--s5); }
 .mn-stat { display: flex; flex-direction: column; gap: 6px; }
 .mn-stat-v { font: 900 var(--t4)/1 var(--f-num); color: var(--ink); text-shadow: var(--tshadow); }
+
+/* --- drive card (D46) -----------------------------------------------------
+   The driving keys on the first screen, because in an itch.io iframe there is
+   no manual and no store page — the canvas is the whole product surface.
+   Reuses .mn-hint / .mn-key from the footer legend so a rebind, a pad glyph and
+   a menu hint all keep the same key cap. -------------------------------------- */
+
+.mn-drive {
+  display: flex; flex-direction: column; gap: 10px;
+  margin-top: var(--s3); padding: var(--s3);
+  /* A ground of its own. The title screen's backdrop is a live render of the
+     circuit, so anything relying on the page behind it for contrast is legible
+     on one track and not on the next — and this is the one block on the screen
+     a first-time player has to be able to read. */
+  background: rgba(6, 7, 11, .62);
+  border-left: 3px solid var(--accent);
+  max-width: 520px;
+}
+.mn-drive .mg-label { color: var(--ink-2); }
+.mn-drive-keys { display: flex; flex-wrap: wrap; gap: 10px var(--s4); }
+/* The steer row holds two caps; keep its pair tight against each other so it
+   reads as one control rather than as two entries that lost their labels. */
+.mn-drive-keys .mn-hint { gap: 6px; color: var(--ink); }
+.mn-drive-keys .mn-key { background: rgba(255, 255, 255, .15); color: var(--ink); }
+.mn-drive-keys .mn-key + .mn-key { margin-left: -2px; }
 
 /* --- footer / hints ------------------------------------------------------- */
 

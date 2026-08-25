@@ -48,7 +48,34 @@ export const POINTS = Object.freeze([10, 8, 6, 5, 4, 3, 2, 1]);
 export const FASTEST_LAP_POINT = 1;
 
 /** Difficulty ramp across the season, not the order they appear on disk. */
-export const CHAMPIONSHIP_TRACKS = Object.freeze(['kitchen', 'pool', 'garden', 'bedroom', 'workbench']);
+/**
+ * The circuits this build actually offers. ONE list, and everything that
+ * enumerates circuits reads it — the menu's carousel, the championship order,
+ * and the guards that clamp restored state back into range.
+ *
+ * There are five track files. Three of them are not shipped, and D45 is why:
+ * every instrument this project ever built was pointed at `kitchen`, so every
+ * fix landed there, and nobody had rendered the other four until the question
+ * "are we ready to publish?" was asked. `bedroom` turned out to be the best
+ * frame in the game. `pool` still has D12 — the table runs to the horizon, no
+ * rim, no cushion — which is marked FIXED above because it was fixed on one
+ * track. `workbench` has a magenta cast, a blown bloom sitting on the racing
+ * line, and a road at the same value as the bench, so you cannot see where you
+ * are allowed to drive. `garden` has the best road surface in the game and an
+ * exposure so low that half the frame is mud, plus two cars that sit stopped on
+ * the grass mid-race.
+ *
+ * They are hidden, not deleted. src/world/tracks/*.js all still build, and
+ * ?track=pool still boots — the loader has never consulted this list, and it
+ * should not, because that is how the next round of work on them gets shot.
+ * What this list controls is what a player is *offered*.
+ *
+ * Put one back by adding its id here, once a frame says it is ready.
+ */
+export const SHIPPED_TRACKS = Object.freeze(['kitchen', 'bedroom']);
+
+/** Season order. A subset of, and always validated against, SHIPPED_TRACKS. */
+export const CHAMPIONSHIP_TRACKS = SHIPPED_TRACKS;
 
 const RECORDS_KEY = 'microgauntlet.records.v1';
 const CHAMPIONSHIP_KEY = 'microgauntlet.championship.v1';
@@ -1394,7 +1421,15 @@ export class Race {
       rounds: [],
     };
     if (raw) {
-      if (Array.isArray(raw.order) && raw.order.length) c.order = raw.order.slice();
+      // A stored order is filtered against the roster, not trusted. Anyone who
+      // played an earlier build has a five-track season sitting in localStorage,
+      // and restoring it verbatim would walk them into a circuit this build
+      // deliberately does not offer — which reads as a bug, not as a cut.
+      // Filtering rather than discarding keeps a season in progress alive.
+      if (Array.isArray(raw.order) && raw.order.length) {
+        const kept = raw.order.filter((id) => SHIPPED_TRACKS.includes(id));
+        c.order = kept.length ? kept : CHAMPIONSHIP_TRACKS.slice();
+      }
       if (Number.isInteger(raw.round)) c.round = clamp(raw.round, 0, c.order.length);
       if (raw.points && typeof raw.points === 'object') {
         for (const k in raw.points) {
@@ -1421,9 +1456,12 @@ export class Race {
 
   /** Begin a fresh season. `order` defaults to the shipped five-track ramp. */
   startChampionship(opts = {}) {
+    // A caller-supplied order is filtered too, and an order that filters to
+    // nothing falls back to the roster rather than opening a zero-round season.
+    const asked = Array.isArray(opts.order) ? opts.order.filter((id) => SHIPPED_TRACKS.includes(id)) : [];
     this.championship = {
       active: true,
-      order: Array.isArray(opts.order) && opts.order.length ? opts.order.slice() : CHAMPIONSHIP_TRACKS.slice(),
+      order: asked.length ? asked : CHAMPIONSHIP_TRACKS.slice(),
       round: 0,
       points: {},
       rounds: [],

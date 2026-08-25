@@ -441,6 +441,47 @@ export class HUD {
   _buildCentre() {
     this.n.centre = el('div', 'hud-cd');
     this.root.appendChild(this.n.centre);
+
+    // D46, second half: the driving keys on the grid.
+    //
+    // The title screen's card is only read by a player who arrives through the
+    // menu, and `?skipmenu=1` — which is how an itch.io embed will most likely
+    // be linked — skips it entirely. The grid is the one moment the player is
+    // stationary, looking at the screen and unable to do anything else, so the
+    // legend costs them nothing and reaches everyone.
+    //
+    // Built once and shown by class, not rebuilt per race: _syncVisibility runs
+    // on every state change and this must not thrash the DOM under it.
+    this.n.gridKeys = el('div', 'hud-gridkeys');
+    this.root.appendChild(this.n.gridKeys);
+    this._fillGridKeys();
+  }
+
+  _fillGridKeys() {
+    const host = this.n.gridKeys;
+    if (!host) return;
+    host.textContent = '';
+    const input = this.ctx?.input;
+    const g = (action, fallback) => {
+      try {
+        const s = input?.glyph?.(action);
+        if (s && s !== '?') return s;
+      } catch (_) { /* stub input, or no bindings for this device */ }
+      return fallback;
+    };
+    const pairs = [
+      [[g('throttle', 'W')], 'Go'],
+      [[g('steerLeft', 'A'), g('steerRight', 'D')], 'Steer'],
+      [[g('boost', 'SHIFT')], 'Boost'],
+      [[g('handbrake', 'SPACE')], 'Drift'],
+      [[g('respawn', 'R')], 'Respawn'],
+    ];
+    for (const [caps, label] of pairs) {
+      const item = el('div', 'hud-gk');
+      for (const cap of caps) item.appendChild(el('span', 'hud-gk-key', cap));
+      item.appendChild(el('span', 'hud-gk-lab', label));
+      host.appendChild(item);
+    }
   }
 
   /* ------------------------------------------------------------------- bus */
@@ -493,6 +534,13 @@ export class HUD {
     this._raceState = to;
     this._syncVisibility();
     if (to === 'grid' || to === 'countdown') this._resetTiming();
+
+    // Re-read the glyphs each time the grid comes up: the player may have
+    // plugged in a pad or rebound a key since the last race, and a legend that
+    // prints SHIFT to someone holding a controller is worse than none.
+    const onGrid = to === 'grid' || to === 'countdown';
+    if (onGrid) this._fillGridKeys();
+    this.n.gridKeys?.classList.toggle('is-on', onGrid);
   }
 
   _onPause(p) {
@@ -515,7 +563,12 @@ export class HUD {
     const value = p?.value ?? 0;
     const label = p?.label || (value > 0 ? String(value) : 'GO');
     this._flashCountdown(label, value === 0);
-    if (value === 0) this.setVisible(true);
+    // Clear the legend on GO rather than waiting for the state change: the
+    // player is about to need the middle of the screen.
+    if (value === 0) {
+      this.setVisible(true);
+      this.n.gridKeys?.classList.remove('is-on');
+    }
   }
 
   _flashCountdown(label, isGo) {

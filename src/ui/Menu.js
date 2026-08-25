@@ -28,6 +28,7 @@
 // the *track* changes, so a garage visit never costs a pointless boot.
 
 import * as THREE from 'three';
+import { SHIPPED_TRACKS } from '../game/Race.js';
 
 const PREFS_KEY = 'microgauntlet.ui.v1';
 const GARAGE_KEY = 'microgauntlet.garage.v1';
@@ -40,7 +41,9 @@ const CAM_HEIGHT = 6.4;
 const CAM_LOOK_Y = 2.1;
 const CAM_SHIFT = 0.30;          // fraction of half-width the car sits left of centre
 
-const TRACK_IDS = ['kitchen', 'pool', 'garden', 'bedroom', 'workbench'];
+/** The circuits this build offers. Owned by Race.js — see SHIPPED_TRACKS there
+ *  for which three are held back and why. Do not re-list them here. */
+const TRACK_IDS = SHIPPED_TRACKS;
 
 /** Garage focus items that survive a car change: prev, next, confirm. */
 const GARAGE_FIXED = 3;
@@ -342,7 +345,14 @@ export class Menu {
     if (!this.sel.carId || !this.models.some((m) => m.id === this.sel.carId)) {
       this.sel.carId = this.ctx?.player?.modelId || this.models[0]?.id || 'muscle';
     }
-    if (!this.sel.trackId) this.sel.trackId = this.ctx?.track?.id || TRACK_IDS[0];
+    // Clamp to the roster. `?track=workbench` still boots the circuit — main.js
+    // reads the URL and the loader has never consulted this list — but the menu
+    // must not come back holding a card it cannot draw, so the carousel falls to
+    // the first shipped circuit instead.
+    if (!this.sel.trackId || !TRACK_IDS.includes(this.sel.trackId)) {
+      const booted = this.ctx?.track?.id;
+      this.sel.trackId = TRACK_IDS.includes(booted) ? booted : TRACK_IDS[0];
+    }
     this.sel.livery = clamp(Math.round(this.sel.livery) || 0, 0, 4);
   }
 
@@ -474,7 +484,10 @@ export class Menu {
     const trackDef = this.trackDefs.get(this.sel.trackId);
     nav.append(
       this._button('Quick race', () => this._startRace(), 'ENTER'),
-      this._button('Championship', () => this._startChampionship(), '5 rounds'),
+      // Count the roster. The literal '5 rounds' outlived the five-track roster
+      // by exactly as long as it took someone to read the title screen.
+      this._button('Championship', () => this._startChampionship(),
+        `${TRACK_IDS.length} round${TRACK_IDS.length === 1 ? '' : 's'}`),
       this._button('Garage', () => this._setPage('garage'), this._carName()),
       this._button('Circuits', () => this._setPage('circuits'), trackDef?.name || this.sel.trackId.toUpperCase()),
       this._button('Options', () => { this.returnPage = 'title'; this._setPage('options'); }, 'O'),
@@ -495,12 +508,62 @@ export class Menu {
       this._stat('Best lap', rec > 0 ? this._time(rec) : '--.---'),
     );
     blurb.appendChild(stats);
+    blurb.appendChild(this._driveCard());
 
     body.append(nav, blurb);
     page.appendChild(body);
     page.appendChild(this._footer([
       ['↑↓', 'Navigate'], ['ENTER', 'Select'], ['ESC', 'Back'],
     ]));
+  }
+
+  /**
+   * How to drive the car, on the first screen the player sees.
+   *
+   * D46. The footer under this card explains the *menu* — arrows, enter, escape
+   * — and until now that was the only key legend anywhere outside Options →
+   * Controls, three screens deep. That is survivable in a desktop build with a
+   * store page next to it and fatal in an itch.io iframe, where the player has a
+   * canvas and nothing else. Someone who never finds SHIFT reports that the cars
+   * feel slow, and that report is about the menu, not the handling.
+   *
+   * Bindings are read back from Input rather than written out here, so a rebind
+   * shows the key the player actually has. `input.glyph()` — not `glyphs()` —
+   * because it follows the *active device*: a player on a pad gets RB, not
+   * "SHIFT / SHIFT". The written-out defaults below are only the fallback for
+   * the first title build, before Input exists.
+   */
+  _driveCard() {
+    const card = el('div', 'mn-drive');
+    card.appendChild(el('div', 'mg-label', 'Drive'));
+    const row = el('div', 'mn-drive-keys');
+    const pairs = [
+      [this._bindLabel('throttle', 'W'), 'Go'],
+      [this._bindLabel('brake', 'S'), 'Brake'],
+      [`${this._bindLabel('steerLeft', 'A')} ${this._bindLabel('steerRight', 'D')}`, 'Steer'],
+      [this._bindLabel('boost', 'SHIFT'), 'Boost'],
+      [this._bindLabel('handbrake', 'SPACE'), 'Drift'],
+      [this._bindLabel('respawn', 'R'), 'Respawn'],
+    ];
+    for (const [k, label] of pairs) {
+      const hint = el('div', 'mn-hint');
+      for (const part of String(k).split(' ')) hint.appendChild(el('span', 'mn-key', part));
+      hint.appendChild(document.createTextNode(label));
+      row.appendChild(hint);
+    }
+    card.appendChild(row);
+    return card;
+  }
+
+  /** The glyph currently bound to an action, or the shipped default. */
+  _bindLabel(action, fallback) {
+    try {
+      const g = this.ctx?.input?.glyph?.(action);
+      // '?' is Input's own "bound to nothing on this device" marker — printing
+      // it on the title screen would be worse than printing the default.
+      if (g && g !== '?') return g;
+    } catch (_) { /* input not up yet during the first title build */ }
+    return fallback;
   }
 
   _masthead(subtitle) {
@@ -807,7 +870,13 @@ export class Menu {
 
   _buildCircuits(page) {
     const head = el('div', 'mn-head');
-    head.append(el('div', 'mn-head-t', 'CIRCUITS'), el('div', 'mn-head-s', 'Five rooms, five circuits'));
+    // Counted, not written. This subtitle said "Five rooms, five circuits" over
+    // a list of two — the same stale literal as the title screen's '5 rounds',
+    // and there is no third place left that hardcodes the roster size.
+    const n = TRACK_IDS.length;
+    const word = ['no', 'one', 'two', 'three', 'four', 'five'][n] || String(n);
+    const sub = n === 1 ? 'One room, one circuit' : `${titleCase(word)} rooms, ${word} circuits`;
+    head.append(el('div', 'mn-head-t', 'CIRCUITS'), el('div', 'mn-head-s', sub));
     page.appendChild(head);
 
     const body = el('div', 'mn-tracks');
