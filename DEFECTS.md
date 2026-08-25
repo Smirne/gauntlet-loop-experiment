@@ -1895,19 +1895,84 @@ Three ways to fix it, none taken:
 - move the hairpin's spline control points so the curvature is monotonic through the corner,
   which fixes the cause rather than the symptom and is the only one that also fixes how it drives.
 
-## Instrument note — the establishing frame overstates the room, measured
+## Instrument note — the establishing frame, twice corrected
 
-The review's establishing pose puts the room at 53.32% of frame, and both round-7 judges named
-it as the thing that costs the set. Before spending art time on it, measured what a PLAYER
-actually sees. The wide view is not review-only: it is a 9 s intro orbit that opens every race,
-pitching 62 to 47 degrees while pushing in from 1.12 track radii to 0.30. Room share along it:
+The review's establishing pose put the room at 53.32% of frame, and both round-7 judges named
+it as the thing that cost the set. Two things were claimed here before either was checked
+properly, and both were wrong.
 
-    0.19 s   55.8%      1.35 s   18.8%      3.60 s   0%
-    0.45 s   26.5%      1.80 s   13.0%      4.96 s   0%
-    0.90 s   23.3%      2.70 s    2.6%      racing   0%
+**Wrong claim 1: "the wide view is a 9 s intro orbit that opens every race."** It is not. It is
+the MENU BACKDROP — dimmed, behind panels, and never seen while racing.
 
-**The room is on screen for about three seconds of a nine-second intro and dominates only the
-first half-second.** It never appears again while racing. So the review frame is representative
-of roughly the first 0.2 s of a session, and the judges' verdict on it — while accurate about
-the room's quality — is weighted far above what it costs a player. Scope the fix to a cheap
-pass, not a rebuild.
+**Wrong claim 2: "the room fades to 0% after about 3 s."** That was one boot's sweep angle read
+as if it were the whole orbit. Sampling the orbit properly:
+
+    orbit t   1.2 s   1.6 s   2.0 s   2.4 s
+    room      36.9%   35.6%   33.5%   30.3%
+
+Across the full 1.55-radian sweep the room runs roughly 8-37% depending on where the camera
+points. There is no clean fade to nothing.
+
+The fix taken was to the harness, not the art: `tools/capture-set.js` shot 4 now asks the
+Director for the real intro-orbit pose at `INTRO_ORBIT_T = 1.2` instead of using a hand-written
+camera, which brought the reviewed frame from 53.32% room to 36.85%. En route, parking the
+capture at `introDuration` — "where the orbit rests" — silently produced a SECOND gameplay frame,
+because the blend term reaches 1 there and the camera lands on the chase pose. The image showed
+that in a second; no measurement would have.
+
+**This is the fourth harness fault of the same shape** — after a race that had already stopped
+(rounds 1-2), shadows that were a coin flip (through round 5), and a DOM HUD that cannot appear
+in a capture (round 6). The pattern never varies: the harness can produce a frame the game never
+shows, and rounds of judging then weight it as fact. Before a round, ask what the harness is
+incapable of showing, and ask whether the frame it IS showing is one a player ever sees.
+
+## D40 — tyre smoke is authored against a slip range the car cannot reach
+
+Effects has been the lowest-scoring category for three rounds (3.5 in round 7). The working
+theory was "a broken emitter — every fx system renders count 1." **That theory was wrong twice
+over,** and the way it was wrong is the finding.
+
+**Not "count 1".** That number was a scene-traversal reading one InstancedMesh per kind, not an
+instance count. `MG.particles.info()` at t = 12 reports 651 live particles across 11 draw calls.
+
+**Not a render bug either.** Forcing 240 particles at the player's contact patches and stepping
+36 frames draws a full, soft, correctly-lit plume (`shots/fx-forced-smoke2.png`). The pipeline
+works. (The first attempt at this test showed nothing and nearly became a third wrong theory:
+particles emitted and captured in the SAME frame have `age = 0`, and `aTime.x` is Float32 while
+`uTime` is Float64, so `uTime - birth` rounds negative and the `u < 0.0` branch discards them.
+A real one-frame flicker on every spawn, and a reminder to let a probe's subject actually exist
+before photographing it.)
+
+**The real cause is a signal that never leaves its floor.** `Tires.js` publishes `w.smoke`, and
+`fx/Particles.js:1669` is its only consumer — where it multiplies FOUR authored curves: emission
+rate (`smokeRate: 46`, commented *"particles/s at full slip"*), sprite scale, opacity and
+lifetime. Measured over 13 241 grounded wheel-samples of ordinary racing (8 cars, kitchen,
+t = 12..25 s):
+
+    w.smoke     p50 0.048   p90 0.126   p99 0.303   max 0.535
+    scrub       56% below 5 u/s, 87% below 15 u/s   vs  smokeStart 13, smokeFull 74
+    slip power  p95 1735, p99 3822                  vs  heatPowerRef 5200
+
+`smokeFull = 74` sits at roughly the 99.7th percentile of scrub — a once-a-race event — and the
+slip pathway is then multiplied by a flat `0.45`, so `w.smoke` is hard-capped below half scale
+no matter what the driver does. At the median of 0.048 all four curves sit on their floor: rate
+2.3/s per wheel against an authored 46, scale 0.75 of a range to 1.34, opacity 0.58 of a range
+to 1.2, life 0.83 s of a range to 1.35 s. That is why a car at the limit lays down single-digit
+particles nobody can see.
+
+**`?smokeGain=N`** lerps the calibration from shipped (0) to one scaled against what the game
+measurably produces (1): `smokeStart 13->11`, `smokeFull 74->34`, `heatPowerRef 5200->1500`,
+slip cap `0.45->1.0`. Four points captured from ONE build at ONE pinned moment (t = 20.008,
+seed 7, identical physics — smoke is a pure output channel, so the cars drive the same line in
+all four):
+
+    gain   smoke p50/p90/p99   tyreSmoke spawned   verdict
+    0.00   0.048 0.126 0.303          558          the shipped bug: a wisp, easy to miss
+    0.25   0.059 0.156 0.426          747          readable plumes, cars still legible
+    0.50   0.075 0.200 0.602        1 032          three cars washed out
+    1.00   0.165 0.429 1.000        2 215          a fog bank; the field disappears
+
+Contact sheet: `shots/smoke-ladder.png`. **Full recalibration is wrong** — the channel reaching
+its authored range means the authored range itself is too strong for a miniature at this camera
+height, and the opacity curve topping out at 1.2 buries the field. Default left at 0 pending a
+human verdict; the dial and the measurement ship, the look does not.

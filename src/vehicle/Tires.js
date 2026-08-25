@@ -355,10 +355,78 @@ export const TIRE_DEFAULTS = {
   markLoad: 0.55,        // fraction of static load below which no mark is laid
 };
 
+/* ---------------------------------------------------------------- smoke gain */
+
+/**
+ * The smoke channel was authored against a slip range this car never reaches.
+ *
+ * Measured over 13 241 grounded wheel-samples of ordinary racing (8 cars,
+ * kitchen, t = 12..25 s): scrub sits below 5 u/s for 56% of samples and below
+ * 15 u/s for 87%, while `smokeFull` is 74 — roughly the 99.7th percentile, a
+ * once-a-race event. Slip power p95 is 1735 and p99 is 3822, against a
+ * `heatPowerRef` of 5200. And the slip term is then multiplied by 0.45, so
+ * `w.smoke` is hard-capped below half scale no matter what the driver does.
+ * Observed maximum across the whole sample: 0.45, reached once.
+ *
+ * That matters because `w.smoke` has exactly one consumer — fx/Particles.js —
+ * and it multiplies FOUR authored curves by it: emission rate (`smokeRate: 46`,
+ * commented "particles/s at full slip"), sprite scale, opacity and lifetime.
+ * At the median smoke of 0.05 all four sit on their floor, which is why a car
+ * at the limit lays down single-digit particles that nobody can see. The
+ * renderer is not at fault: forcing 240 particles at the contact patches draws
+ * a full, soft plume.
+ *
+ * `?smokeGain=N` lerps from the shipped calibration (0) to one scaled against
+ * what the game measurably produces (1), so both can be rendered from ONE build
+ * at ONE moment (D25). This changes a look, so it stays a dial until a human
+ * has seen the frames side by side.
+ */
+const SMOKE_CAL_TUNED = {
+  smokeStart: 11,        // p85 of scrub — a tyre that is genuinely scrubbing
+  smokeFull: 34,         // p97 — a hard, committed slide, not a once-a-race event
+  heatPowerRef: 1500,    // just above p95 slip power, so a big moment saturates
+  slipMix: 1.0,          // was a flat 0.45 cap on the slip pathway
+};
+const SMOKE_CAL_SHIPPED = {
+  smokeStart: 13,
+  smokeFull: 74,
+  heatPowerRef: 5200,
+  slipMix: 0.45,
+};
+/** 0 = shipped, 1 = recalibrated. Default 0 until the A/B has been judged. */
+const SMOKE_GAIN_DEFAULT = 0;
+
+const SMOKE_GAIN = (() => {
+  try {
+    const v = new URLSearchParams(location.search).get('smokeGain');
+    if (v === null || v === '') return SMOKE_GAIN_DEFAULT;
+    if (v === 'off') return 0;
+    const n = Number(v);
+    // `Number(null)` and `Number('')` are both 0 and would read as "off"
+    // through a >= 0 guard. Both are handled above, deliberately: that exact
+    // hole switched the fog off on every normal boot once.
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : SMOKE_GAIN_DEFAULT;
+  } catch (_) { return SMOKE_GAIN_DEFAULT; }
+})();
+
+/** The calibration this session is running, blended by the dial. */
+export const SMOKE_CAL = {
+  smokeStart: lerp(SMOKE_CAL_SHIPPED.smokeStart, SMOKE_CAL_TUNED.smokeStart, SMOKE_GAIN),
+  smokeFull: lerp(SMOKE_CAL_SHIPPED.smokeFull, SMOKE_CAL_TUNED.smokeFull, SMOKE_GAIN),
+  heatPowerRef: lerp(SMOKE_CAL_SHIPPED.heatPowerRef, SMOKE_CAL_TUNED.heatPowerRef, SMOKE_GAIN),
+  slipMix: lerp(SMOKE_CAL_SHIPPED.slipMix, SMOKE_CAL_TUNED.slipMix, SMOKE_GAIN),
+  gain: SMOKE_GAIN,
+};
+
 export class TireModel {
   constructor(cfg = {}) {
     // Flat own numbers: core/Debug.js builds a slider for each of these.
     for (const k in TIRE_DEFAULTS) this[k] = TIRE_DEFAULTS[k];
+    // The smoke channel's calibration is dialled per-session; see SMOKE_CAL.
+    this.smokeStart = SMOKE_CAL.smokeStart;
+    this.smokeFull = SMOKE_CAL.smokeFull;
+    this.heatPowerRef = SMOKE_CAL.heatPowerRef;
+    this.smokeSlipMix = SMOKE_CAL.slipMix;
     for (const k in cfg) if (typeof cfg[k] === 'number' && Number.isFinite(cfg[k])) this[k] = cfg[k];
 
     this._peakLat = 0;
@@ -596,7 +664,7 @@ export class TireModel {
     // A loose surface neither squeals nor blackens — it throws material, which
     // is Particles' job, keyed off w.surface. Hardness gates the rubber cues.
     w.squeal = w.grounded ? squeal * hardness * saturate(w.load / this.loadRef) : 0;
-    w.smoke = w.grounded ? Math.max(smoke * 0.45, w.heat) * lerp(0.35, 1, hardness) : w.smoke * Math.exp(-dt * 2.2);
+    w.smoke = w.grounded ? Math.max(smoke * this.smokeSlipMix, w.heat) * lerp(0.35, 1, hardness) : w.smoke * Math.exp(-dt * 2.2);
     w.markIntensity = w.grounded && w.load > this.loadRef * this.markLoad
       ? squeal * hardness * hardness
       : 0;
