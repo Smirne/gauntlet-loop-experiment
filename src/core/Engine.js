@@ -21,6 +21,7 @@
 // caller owns that.
 
 import { Settings, resolveRenderer } from './Settings.js';
+import { resizeRenderer } from '../render/Renderer.js';
 import { EventBus, Events } from './EventBus.js';
 
 const perfNow = (typeof performance !== 'undefined' && performance.now)
@@ -647,13 +648,31 @@ export class Engine {
     const canvas = this.canvas;
     let w = 0, h = 0;
     if (canvas) {
-      w = canvas.clientWidth || canvas.width || 0;
-      h = canvas.clientHeight || canvas.height || 0;
+      w = canvas.clientWidth || 0;
+      h = canvas.clientHeight || 0;
+      // clientWidth is 0 for a canvas in a hidden or not-yet-laid-out
+      // container. getBoundingClientRect sees a fractional size that
+      // clientWidth rounds away, and it is still CSS pixels.
+      if (!w || !h) {
+        const r = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
+        if (r && r.width > 0 && r.height > 0) { w = r.width; h = r.height; }
+      }
     }
     if (!w || !h) {
       w = (typeof innerWidth !== 'undefined' && innerWidth) || 1600;
       h = (typeof innerHeight !== 'undefined' && innerHeight) || 900;
     }
+    // NEVER fall back to canvas.width. That is the DRAWING BUFFER, already
+    // multiplied by the pixel ratio, and feeding it back in as a CSS size
+    // multiplies by the ratio again on every measure: 1600 -> 3200 -> 6400.
+    // Measured in a hidden browser pane, where clientWidth reads 0, the buffer
+    // had compounded to 7680 x 4320 — 33 megapixels, sixteen times a 1080p
+    // frame — against an "ultra" budget of 4.4 Mpx that was never consulted
+    // because the number never went through computePixelRatio.
+    //
+    // This is not a lab-only case. A browser game on itch.io boots inside an
+    // iframe that is commonly zero-sized or display:none until the player
+    // clicks the splash, which is exactly the state that triggers it.
     this._pendingResize = { w, h };
     this._flushResize();
     return this;
@@ -666,8 +685,12 @@ export class Engine {
     const gl = this.renderer;
     if (gl) {
       try {
-        gl.setPixelRatio(Settings.render.pixelRatio);
-        gl.setSize(p.w, p.h, false);
+        // Through resizeRenderer, not setPixelRatio + setSize, because that is
+        // where the megapixel budget lives. Setting the stored
+        // Settings.render.pixelRatio directly skips computePixelRatio entirely,
+        // so a tier's maxPixels ceiling — 4.4 Mpx at ultra — was advisory on
+        // this path and enforced on the other one.
+        resizeRenderer(gl, p.w, p.h, Settings);
       } catch (err) {
         console.warn('[Engine] renderer resize failed', err);
       }

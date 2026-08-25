@@ -2198,3 +2198,67 @@ residual spiral speckle falls off sharply between 54 and 80. At the shipping gra
 highlight is glaring.
 
 `?dofKernel=square|full|half` renders all three from one build. Default `half`.
+
+## D44 — the drawing buffer compounded to 33 megapixels whenever the canvas measured zero
+
+Found during the itch.io pre-flight, and it is exactly the kind of thing that pre-flight is for.
+
+`Engine.measure()` resolved the canvas size as:
+
+    w = canvas.clientWidth || canvas.width || 0;
+
+`clientWidth` is a CSS measurement. **`canvas.width` is the DRAWING BUFFER**, already multiplied
+by the pixel ratio. Feeding it back in as a CSS size multiplies by the ratio again, every time:
+1600 -> 3200 -> 6400. Measured in a hidden browser pane, where `clientWidth` reads 0, the buffer
+had compounded to **7680 x 4320 — 33.18 megapixels, sixteen times a 1080p frame** — against an
+ultra budget of 4.4 Mpx.
+
+The budget never fired because `_flushResize` set `Settings.render.pixelRatio` straight onto the
+renderer instead of going through `resizeRenderer`, which is where `computePixelRatio` and the
+tier's `maxPixels` ceiling live. So the cap was enforced on one resize path and advisory on the
+other.
+
+**Not a lab-only case.** A browser game on itch.io boots inside an iframe that is commonly
+zero-sized or `display: none` until the player clicks the splash — precisely the state that
+triggers it.
+
+Fixed by falling back to `getBoundingClientRect()` and then `innerWidth`, never to the drawing
+buffer, and by routing `_flushResize` through `resizeRenderer`. After six consecutive
+`measure()` calls at a zero client size:
+
+    before   7680 x 4320   33.18 Mpx   and still growing
+    after    2347 x 1320    3.10 Mpx   exactly the "high" tier budget, stable
+
+**A 10.7x reduction in fill**, and it retroactively explains why the GPU timings taken while
+choosing the bokeh kernel would not hold still: they were measured at 33 megapixels.
+
+Budget verified across every tier and CSS size — low 1.15, medium 2.10, high 3.10, ultra 4.40
+Mpx, each respected. One deliberate exception: `computePixelRatio` floors the ratio at 0.5, so
+`low` at a 4K CSS size lands at 2.07 Mpx rather than 1.15. That floor is intentional; below it
+the image stops being legible.
+
+## itch.io pre-flight
+
+Done, except the parts that are a human's to do.
+
+- **Boots from a plain static file server.** No `server.js`, no build step. 34 modules loaded,
+  0 failed, 0 warnings, straight to the menu. The dev server's only job is the `/__shot`
+  endpoint the capture tools POST to, and nothing in the game touches it.
+- **three.js licence now ships.** r180 is vendored with an SPDX header on the two build files
+  but no licence text, and the `examples/jsm` modules carry no header at all. MIT requires the
+  full text to accompany any redistribution, so `vendor/three/LICENSE` was added at the root of
+  the vendored tree, with `CREDITS.md` explaining what is vendored and why the licence sits
+  where it does.
+- **Everything else is generated at runtime** — textures baked procedurally, car bodies and
+  props built from primitives, audio synthesised, type from the system stack. No imported
+  models, no photographic textures, no sample libraries, no downloaded fonts. One third-party
+  licence to honour, total.
+- **Page furniture**: title, an inline-SVG favicon (no external request, no asset pipeline),
+  description, `theme-color`, OG tags.
+- **The build is 4.8 MB unpacked, 1.24 MB zipped, 122 files, `index.html` at the archive root**
+  — which is what itch's "play in browser" upload expects. Against itch's limits this is
+  nothing.
+
+Left for a human, because publishing is not mine to do: create the page, upload the zip, tick
+"this file will be played in the browser", choose the viewport size, write the description and
+draw a cover image.
