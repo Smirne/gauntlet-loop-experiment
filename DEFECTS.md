@@ -2262,3 +2262,73 @@ Done, except the parts that are a human's to do.
 Left for a human, because publishing is not mine to do: create the page, upload the zip, tick
 "this file will be played in the browser", choose the viewport size, write the description and
 draw a cover image.
+
+
+---
+
+## D45 — Four of the five circuits have never been looked at, and two of them read as broken — MAJOR — OPEN
+
+**Found while answering "are we ready to publish?", which is the only question that
+would have found it.** Every defect in this file above D45 was found by pointing an
+instrument at `kitchen`. Every fix was shipped into `kitchen`. Meanwhile
+`Menu.js:43` reads:
+
+```js
+const TRACK_IDS = ['kitchen', 'pool', 'garden', 'bedroom', 'workbench'];
+```
+
+and the title screen offers a five-round championship across all of them. A player
+who clicks past Quick Race sees four circuits that no critic round has ever scored.
+
+**Line count is not a review.** The first thing I reached for was a count —
+kitchen.js is 423 lines, the rest are 207–228 — and it says nothing, because a track
+file's length does not predict whether the thing renders as a place. Mesh, prop and
+triangle counts are flat across all five (317–340 meshes, 704k–867k tris). The
+circuits are the same *size*. They are not the same *quality*, and only a frame
+shows that. LOOK AT THE FRAME BEFORE BELIEVING AN AGGREGATE, again.
+
+`tools/track-tour.js` shoots one frame per circuit at the same pin (t = 16.01 s),
+through the director's own camera, with the liveness guard from `capture-set.js`
+attached. Verdicts:
+
+| circuit | reviewed | verdict | what the frame shows |
+|---|---|---|---|
+| kitchen | yes, every round | ship | the room, the props, the fixes. Still carries D23. |
+| bedroom | never | ship | best frame in the game. Opaque plank road, convincing carpet. |
+| garden  | never | fixable | best road surface in the game; exposure far too low; two cars stopped on the grass mid-race |
+| pool    | never | hold | flat green to every edge — no rim, no cushion. **This is D12 unfixed on this track.** |
+| workbench | never | hold | magenta cast, blown bloom on the racing line, road invisible against the bench |
+
+**D12 is not fixed. It was fixed on one track.** "There is no room, the table runs
+to the horizon" is marked FIXED above. Pool has exactly that defect today, untouched.
+The same is true of every environment fix in this file — they are kitchen fixes
+wearing a project-wide status.
+
+**Bedroom answers D23 for free.** D23 is "the road does not read as a road", open
+since round 4 and agreed on by four judges. Kitchen's road is a translucent wash: the
+oak grain reads straight through it, so it looks like a stain on the table. Bedroom's
+road is an *opaque plank* laid on the carpet, and it reads as a road immediately.
+Garden's gravel does the same. The fix for D23 is already shipping in two files;
+kitchen is the one that does it differently.
+
+**Not fixed here, deliberately.** Two of these are art passes on circuits nobody has
+scoped, and one of them (workbench) may be a light rig fault rather than an art gap.
+The publishable move is to cut the circuit list, not to open two unreviewed tracks
+under time pressure.
+
+---
+
+## D46 — Nothing tells a new player how to drive — MAJOR — OPEN
+
+The title screen's footer reads `↑↓ Navigate · ENTER Select · ESC Back`. That is how
+to work the *menu*. The driving controls — W/A/S/D, SHIFT boost, SPACE handbrake, R
+respawn — exist only in Options → Controls, three screens deep.
+
+This is a defect specifically *because* of how the game is about to be distributed.
+On a desktop build the player has a manual and a store page. Embedded in an itch.io
+iframe they have a canvas and nothing else. A player who never finds SHIFT reports
+that the cars feel slow, and that report is worthless — it measures the menu, not the
+handling. Every piece of first-play feedback is filtered through this.
+
+Cheapest honest fix: a controls card on the title screen, and the same four keys on
+the grid during the countdown, where the player is already waiting and looking.
