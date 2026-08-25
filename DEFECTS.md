@@ -1995,3 +1995,53 @@ Contact sheet: `shots/smoke-ladder.png`. **Full recalibration is wrong** — the
 its authored range means the authored range itself is too strong for a miniature at this camera
 height, and the opacity curve topping out at 1.2 buries the field. Default left at 0 pending a
 human verdict; the dial and the measurement ship, the look does not.
+
+## D41 — the scale cues are everywhere; the macro camera's focus erases them
+
+Judge C, round 7: the car reads as a **full-size** car, unambiguously. The planned fix was
+"put one household object in the macro frame for scale." Measured before building it, and the
+premise was wrong for the third time this session.
+
+**The objects are already there, and they are everywhere.** The kitchen carries 91 sugar cubes,
+213 cornflakes, 18 coins, 15 bottle caps, 15 egg shells, plus mugs, toast, cutlery, jam jars,
+cereal boxes and pencils. Distance from the racing line to the nearest prop whose real-world
+size a viewer knows on sight, sampled at 200 points around the lap:
+
+    p10 23.7    p25 26.1    p50 29.2    p75 33.0    p90 35.5    max 41.0
+
+The road's half-width is about 15, so **there is a sugar cube, coin or bottle cap within one to
+two car-lengths of the road at every point of the circuit.** 195 of 200 samples have one inside
+40 units. Nothing needs adding.
+
+**What erases them is the depth of field.** Same frame, same instant, one variable at a time:
+
+    shipped (band + depth)        the cube is a grey smudge, the flake an anonymous blob
+    depth term only               still a smudge
+    screen band only              gone into the ramp
+    tilt-shift off entirely       a crisp, faceted SUGAR CUBE with a specular hit,
+                                  a cornflake that reads as cereal, and wood that reads
+                                  as a table rather than as tarmac
+
+`shots/macro-dof-decomp.png`. Both terms contribute and neither alone accounts for it. The
+mechanism is plain in the uniforms: at the macro pose the camera sits 28 units from the car,
+`uFocusDepth` is 28.4 and `uFarSpan` is 45.5, so everything past ~74 units is going soft — and
+the nearest cube is beyond that.
+
+**But this is a macro-camera problem, not a gameplay problem.** At the chase pose `uFocusDepth`
+is 135 with a 52-unit far span, and the A/B (`shots/chase-dof-ab.png`) shows the sugar cubes,
+flakes and bottle caps in the mid-field surviving the blur and reading as what they are. The
+camera a player actually looks at keeps its scale cues; the review's close-up does not.
+
+So the tension is real but narrow: **tilt-shift asserts "miniature" by imitation, while a sugar
+cube proves it by evidence, and at 28 units the imitation eats the evidence.** Three ways to
+resolve it, none taken yet:
+
+- extend the focus rule that now holds the road ahead sharp so it also holds any legible scale
+  prop within reach of the subject — it is the same machinery, and it only widens the band where
+  such a prop exists, so it costs nothing elsewhere;
+- widen `uFarSpan` at close focus distances only;
+- accept it. A real macro photograph of a die-cast car has exactly this shallow focus, and the
+  review set already carries a chase frame and an establishing frame where the scale reads.
+
+Left as a question rather than a change, because it is a look and this project's rule is that a
+look is decided from frames by a human, not from a rationale by me.
