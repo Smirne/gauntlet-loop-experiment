@@ -1867,7 +1867,7 @@ still bunched) and lapT 0.70. Neither has been looked at.
 
 ---
 
-## D39 — the hairpin's banking pumps, because the curvature it is derived from is not smooth
+## D39 — the hairpin's banking pumps, because the curvature it is derived from is not smooth. FIXED.
 
 A player, looking at the walled hairpin: *"right side kerb seems to go down, like there's some
 kind of hole / small change in elevation on the track. Is this on purpose?"*
@@ -1889,11 +1889,55 @@ exactly the same thing, 22 -> 40 -> 77 -> 154 -> 29 -> 21. The hairpin's spline 
 section in its middle, the derived banking follows it faithfully, and the outside kerb visibly
 rises and drops twice through one corner.
 
-Three ways to fix it, none taken:
-- author an explicit `bankingProfile` for the kitchen so this corner stops being derived;
-- smooth the curvature harder before deriving bank (affects every corner on every track);
-- move the hairpin's spline control points so the curvature is monotonic through the corner,
-  which fixes the cause rather than the symptom and is the only one that also fixes how it drives.
+### The corner was never the problem. The ruler was.
+
+The plan was to move the hairpin's control points so its curvature became monotonic. Measured
+first, and the geometry turned out to be innocent. Radius at t = 0.535, by the length of the
+baseline the curvature is measured over:
+
+     4 u baseline     -124   a SIGN FLIP — reads as a right-hander
+    15 u baseline   -14265   effectively straight
+    35 u baseline       67   the real shape: a continuous left
+
+Across the whole corner the 35 u reading runs 33-67 and **never changes sign**. So the double
+apex is genuine, gentle, and exactly what the track header says it is. The R23-to-R153 swing
+only exists at short baselines, and it is resampling ripple: the path's control points are
+integer coordinates 22 u apart, and `curv` is a **1.5 u finite difference**, which at that scale
+sees the rounding rather than the road.
+
+The banking followed the ripple faithfully. Bank through the corner, in degrees:
+
+    t       0.505  0.510  0.515  0.520  0.525  0.530  0.535  0.540  0.545  0.550  0.560  0.570
+    before  -4.24  -9.14  -9.17  -9.17  -9.16  -6.10  +2.37  -2.30  -9.15  -9.17  -9.17  +0.45
+    after   -8.95  -9.17  -9.17  -9.17  -9.00  -6.41  -5.15  -7.39  -9.16  -9.17  -9.17  -5.48
+
+**It hit the -9.17 cap, un-banked through zero to +2.37 — tilted the wrong way, mid-corner —
+and returned to the cap, inside about 18 u of road.** That is the "hole" a player reported.
+
+**Fix: derive banking from a road-scale baseline.** Bank now comes from how far the tangent has
+actually swung over 35 u (one and a half control spacings — long enough to be immune to the
+ripple, short enough that a real R26 chicane still banks), via `atan2(cross, dot)` so it stays
+exact through a hairpin where the two tangents are more than 90 degrees apart. `curv` itself is
+deliberately untouched: TrackBuilder generates kerbs from it and ai/Driver.js picks corner
+speeds from it, and neither wants a smoothed version.
+
+Whole lap, one build, `?bankBaseline=0` against the default:
+
+    mean |bank|          3.70 deg  ->  3.71 deg     the corners bank exactly as much
+    p90 |bank|           9.17     ->  9.17
+    max |bank|           9.17     ->  9.17
+    TOTAL VARIATION    344.9 deg  -> 178.1 deg      the road stops wobbling
+
+Same banking budget, half the wobble. `shots/bank-ab.png` is the fixed-camera pair, and
+`tools/bank-ab.js` reproduces it.
+
+**Two mistakes worth keeping.** The sign was inverted on the first attempt — `atan2(cross, dot)`
+already measures the same quantity `curv` does, and negating it banked every corner on the
+circuit the wrong way, +9.17 where the shipped build reads -9.17: right magnitude, mirrored
+road. And the first A/B images were not comparable, because the camera was built from
+`pos + right * halfWidth` — the road's own **banked** frame — so the camera moved with the very
+thing under test. **If the subject is a transform, do not build the camera out of that
+transform.**
 
 ## Instrument note — the establishing frame, and the instrument that measured it
 

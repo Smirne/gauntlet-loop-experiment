@@ -47,6 +47,26 @@ const DEFAULT_SHOULDER = 9;
 const BANK_GAIN = 0.32;
 const BANK_MAX = 0.16; // ~9.2 degrees
 const BANK_VREF = 82; // u/s — roughly 80% of a fast chassis' top speed
+/**
+ * Baseline, in world units, over which the banking measures how far the road
+ * has turned. Sized against the noise it has to see past, not against a corner:
+ * control points are 22 u apart and quantised to integers, so anything shorter
+ * than about 30 u reports resampling ripple. 35 u is one and a half control
+ * spacings — long enough to be immune, short enough that a real R26 chicane
+ * still banks. `?bankBaseline=N` overrides it, and 0 restores the old 1.5 u
+ * behaviour, so both can be driven from ONE build (D25).
+ */
+const BANK_BASELINE = (() => {
+  const DEFAULT = 35;
+  try {
+    const v = new URLSearchParams(location.search).get('bankBaseline');
+    if (v === null || v === '') return DEFAULT;
+    const n = Number(v);
+    // Number('') and Number(null) are both 0, which here would mean "no
+    // baseline at all"; both are handled above rather than through a >= 0 test.
+    return Number.isFinite(n) && n >= 0 ? n : DEFAULT;
+  } catch (_) { return DEFAULT; }
+})();
 
 const TAU = Math.PI * 2;
 
@@ -611,10 +631,50 @@ export class Track {
     }
     smoothClosed(width, 4);
 
-    // 5. banking, driven by the smoothed curvature and hard-capped.
+    // 5. banking, driven by ROAD-SCALE curvature and hard-capped.
+    //
+    // Not `curv`. That is a 1.5 u finite difference, which on a spline whose
+    // control points are integer coordinates 22 u apart is dominated by
+    // resampling ripple rather than by the corner. Measured on the kitchen's
+    // Toaster hairpin, radius at t = 0.535 by baseline length:
+    //
+    //     4 u baseline    -124   (a SIGN FLIP: reads as a right-hander)
+    //    15 u baseline  -14265   (effectively straight)
+    //    35 u baseline      67   (the real shape: a continuous left)
+    //
+    // Across the whole corner the 35 u reading is 33-67 and never changes sign,
+    // so the double apex is genuine and gentle. The 1.5 u reading swings from
+    // R23 to R153 and back, and the banking followed it: the road went to the
+    // -9.17 degree cap, un-banked all the way to +2.37 (tilted the WRONG WAY,
+    // mid-corner), then returned to the cap, inside about 18 u of road. That
+    // is what a player saw and reported as "some kind of hole".
+    //
+    // A road builder banks a corner as one object, so the bank is derived from
+    // how far the tangent has actually swung over a road-scale baseline. This
+    // deliberately does NOT touch `curv` itself: TrackBuilder generates kerbs
+    // from it and ai/Driver.js picks corner speeds from it, and neither wants a
+    // smoothed version.
     const bankMax = this.maxBank;
+    const bankSpan = Math.max(2, Math.round(BANK_BASELINE / (2 * ds)));
     for (let i = 0; i < count; i++) {
-      const raw = (BANK_GAIN * curv[i] * BANK_VREF * BANK_VREF) / 260;
+      const a = (i - bankSpan + count) % count;
+      const b = (i + bankSpan) % count;
+      // Signed angle swept from the tangent behind to the tangent ahead. atan2
+      // of (cross, dot) rather than an arcsine so it stays exact through a
+      // hairpin, where the two tangents can be more than 90 degrees apart.
+      const cross = tx[a] * tz[b] - tz[a] * tx[b];
+      const dot = tx[a] * tx[b] + tz[a] * tz[b];
+      const swept = Math.atan2(cross, dot);
+      // Same sign convention as `curv`, which for a small step reduces to
+      // tx*dtz - tz*dtx — the same quantity atan2(cross, dot) measures here, so
+      // it is NOT negated. It was on the first attempt, and every corner on the
+      // circuit came out banked the wrong way: +9.17 degrees where the shipped
+      // build reads -9.17. Right magnitude, mirrored road.
+      //
+      // A baseline of 0 banks off the raw per-sample curvature, i.e. exactly
+      // what shipped before, so the A/B is a real one rather than a near-miss.
+      const k = BANK_BASELINE > 0 ? swept / (2 * bankSpan * ds) : curv[i];
+      const raw = (BANK_GAIN * k * BANK_VREF * BANK_VREF) / 260;
       bank[i] = -clamp(raw, -bankMax, bankMax);
     }
     // Definition overrides win over the automatic value.
