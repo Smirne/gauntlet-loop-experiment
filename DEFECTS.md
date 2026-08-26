@@ -2332,3 +2332,119 @@ handling. Every piece of first-play feedback is filtered through this.
 
 Cheapest honest fix: a controls card on the title screen, and the same four keys on
 the grid during the countdown, where the player is already waiting and looking.
+
+---
+
+## D47 — The menu was a hiss generator, running at twice the level of the music — MAJOR — FIXED
+
+Reported as "it's a bit disturbing, lot of white noise in menu". That is a report
+about a *spectrum*, and a spectrum is measurable — so before changing anything I
+built `tools/audio-probe.js`, which taps the real buses with `AnalyserNode`s while
+the master gain is pinned to zero. It refuses to run unless `master.gain.value` is
+0. Every audio session on this project so far has ended with somebody hearing
+something they did not ask for, and an instrument that can make noise is not one
+worth having.
+
+On the menu:
+
+| bus | flatness | centroid | rolloff85 | rms |
+|---|---|---|---|---|
+| ambience | **0.750** | **10 096 Hz** | 16 869 Hz | 3.54e-5 |
+| music | 0.003 | 545 Hz | 879 Hz | 1.81e-5 |
+
+Flatness is the Wiener entropy — the geometric mean of the power spectrum over its
+arithmetic mean. 1.0 is white noise, 0 is a pure tone. **0.75 with its energy centred
+at 10 kHz is hiss**, and it was running at roughly *twice the level of the music it
+was sitting on top of*. The player's word for it was exactly right.
+
+The cause is one line. The ambience `air` layer was a **highpass** on white noise:
+
+```js
+this.ambAirHp.type = 'highpass';   // airHz .. Nyquist
+```
+
+White noise carries equal energy *per hertz*. A highpass at 3.4 kHz therefore hands
+you the 3.4 k–20 k band — about **eight times the bandwidth** of everything below it —
+so the layer intended as "a bit of room air" owned the entire spectrum. The gain
+number in the table looked modest precisely because nobody had asked how much
+bandwidth it was buying.
+
+Fixed three ways: `air` is now a **band** (`AIR_TOP_MULT = 2.5`, about 1.3 octaves)
+rather than a highpass; the gains are cut hard across every theme; and the whole bed
+ducks by `MENU_AMBIENCE_DUCK = 0.45` outside a race, wired through a new
+`Sfx.setMenu()` off the existing `race:state` handler. The menu and the results
+table are where a bed is most exposed — no engines, nothing competing — and they are
+where the player sits reading rather than racing.
+
+Measured after, same instrument, same page:
+
+| bus | flatness | centroid | rolloff85 | rms |
+|---|---|---|---|---|
+| ambience | 0.750 → **0.273** | 10 096 → **3 761 Hz** | 16 869 → 8 016 Hz | 3.54e-5 → **5.25e-6** |
+| music | 0.002 | 520 Hz | 879 Hz | 2.16e-5 |
+
+Ambience went from **2×** the music to **0.24×** it — 16.6 dB down — and the tail that
+owned the spectrum is gone.
+
+**The race keeps its room.** Checked, because a fix that silences the menu by
+gutting the ambience everywhere is not a fix. Unducked during a race at t = 18.8 s:
+engine 1.72e-4, sfx 1.05e-4, music 2.07e-5, ambience 1.87e-5. The ambience is now
+the quietest thing on the track, which is where it belongs.
+
+**An instrument bug found on the way, and fixed.** The probe reported the music bus
+at `flatness: 6420`. A Wiener entropy above 1.0 is not a finding, it is impossible —
+on a near-silent bus the `EPS` floor becomes the whole arithmetic mean and the ratio
+runs away. It now reports `silent: true` instead of a number.
+
+**And a defect I nearly filed and did not.** That silent music bus read as "the music
+does not play during a race". It was my own instrument: I had force-stepped the race
+clock 12 s ahead of the AudioContext clock, so every note was scheduled in the past.
+Stepped in real time instead, the music bus measures 2.07e-5 and plays fine. MEASURE
+WHAT YOU MEAN — and when the measurement accuses the game, check the ruler first.
+
+---
+
+## D48 — The game starts playing at a stranger before they touch it — MAJOR — FIXED
+
+The user has now reported unexpected sound **four times** across two sessions. Each
+time I treated it as a mistake in how I was driving the page. It was a defect in the
+game.
+
+`Audio.unlock()` opened the whole graph whenever it found the AudioContext already
+running:
+
+```js
+if (this.ac.state === 'running') { this._afterUnlock(); return Promise.resolve(true); }
+```
+
+The reasoning was sound and the conclusion was wrong. A running context normally
+*does* mean the browser has satisfied itself that a person is present — the browser's
+autoplay gate was doing this job, and the code was leaning on it without saying so.
+**An itch.io embed carries `allow="autoplay"`.** The context is running from the first
+millisecond, the gate is gone, and the page starts playing at whoever loaded it.
+
+Reproduced directly: a fresh boot with no input of any kind reached `unlocked: true`
+with the ambience bus producing signal.
+
+Fixed by putting the gate where it cannot be removed by an embedder — a `_gestured`
+flag set only from a **trusted** `pointerdown`/`mousedown`/`touchstart`/`keydown`.
+`unlock()` refuses until then. `opts.force` exists for tooling that has already
+pinned master to 0. `isTrusted` matters: a script on the embedding site firing a
+synthetic click is not somebody deciding to play.
+
+Verified both halves on a real boot, muted:
+
+- **No interaction** — `unlocked: false`, `_started` never set, and all four buses
+  measure `silent: true`, despite `ac.state === 'running'`.
+- **One real click** — `gestured: true`, `started: true`, ambience 7.45e-6 and music
+  1.58e-5, both playing.
+
+This is the fix that matters more than D47. Enabling click-to-launch in itch's embed
+options is still worth doing, but the game no longer depends on it: it is now silent
+until invited, wherever it is hosted.
+
+**Also added `?mute=1`** (`src/main.js`), which seeds a muted bus before the audio
+system builds. Every audio measurement in this project now runs behind it. The
+previous approach — seeding a muted setting into `localStorage` — worked right up
+until the page was a third-party iframe, where Chrome's storage partitioning meant
+the seed never reached it. A URL flag travels with the page.

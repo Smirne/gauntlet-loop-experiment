@@ -298,6 +298,9 @@ export class Audio {
     this.ready = false;
     this.unlocked = false;
     this.failed = false;
+    // Has a REAL person touched the page yet? Not the same question as "is the
+    // AudioContext running" — see unlock().
+    this._gestured = false;
     this.theme = 'menu';
     this.dsp = DSP;
 
@@ -528,9 +531,22 @@ export class Audio {
   /**
    * Open the graph. Safe to call any number of times, from any gesture.
    * Returns a promise, but callers are not expected to await it.
+   *
+   * REQUIRES A REAL GESTURE. This used to open the graph whenever it found the
+   * AudioContext already running, on the reasonable-sounding assumption that a
+   * running context means the browser has already been satisfied that a person
+   * is present. That assumption is false in the one place it matters: an
+   * itch.io embed carries allow="autoplay", so the context is running from the
+   * first millisecond and the browser's own gate — the thing that was actually
+   * doing this job — is gone. The result is a page that starts playing at a
+   * stranger the moment it finishes loading.
+   *
+   * So the gate lives here now, where it does not depend on the embedder.
+   * `opts.force` is for tooling that has already pinned the master gain to 0.
    */
-  unlock() {
+  unlock(opts = {}) {
     if (this.failed || !this.ac) return Promise.resolve(false);
+    if (!this._gestured && !opts.force) return Promise.resolve(false);
     this.unlocked = true;
     this._resumeTries = 0;   // every gesture gets a fresh retry window
     if (this.ac.state === 'running') {
@@ -558,7 +574,13 @@ export class Audio {
   _installGesture() {
     if (typeof window === 'undefined') return;
     const types = ['pointerdown', 'mousedown', 'touchstart', 'keydown'];
-    const handler = () => { this.unlock(); };
+    // isTrusted keeps a synthetic event — a tool driving the page, a script on
+    // the embedding site — from counting as somebody deciding to play.
+    const handler = (ev) => {
+      if (ev && ev.isTrusted === false) return;
+      this._gestured = true;
+      this.unlock();
+    };
     for (const t of types) window.addEventListener(t, handler, { capture: true, passive: true });
     this._gestureOff = () => {
       for (const t of types) window.removeEventListener(t, handler, { capture: true });
@@ -952,6 +974,10 @@ export class Audio {
       }
       this._musicState = next;
       this.music?.setState?.(next);
+      // The ambience air band is ducked outside the race. On a menu or a
+      // results table there is no engine to mask it, so the same hiss that
+      // sits under a race reads as a fault in the build.
+      this.sfx?.setMenu?.(next === 'menu' || next === 'results');
     });
 
     on('race:countdown', (p) => {

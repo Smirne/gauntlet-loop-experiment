@@ -91,6 +91,16 @@ async function boot() {
   Settings.load?.();
   if (params.has('quality')) Settings.quality = params.get('quality');
 
+  // ?mute=1 — a bus that cannot make a sound.
+  //
+  // Every audio measurement this project takes runs behind this flag. Seeding
+  // a muted setting into localStorage worked, right up until the page was an
+  // itch.io iframe and Chrome's storage partitioning meant the seed never
+  // reached it. A URL flag travels with the page.
+  if (params.get('mute') === '1') {
+    Settings.audio = { ...(Settings.audio || {}), master: 0, muted: true };
+  }
+
   const Bus = pick(coreBus, 'EventBus', 'Bus');
   const bus = build(Bus, 'EventBus') || {
     on() {}, off() {}, emit() {},

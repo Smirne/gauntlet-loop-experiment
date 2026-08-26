@@ -61,15 +61,48 @@ function surfaceAudio(name) {
 /**
  * Ambient beds. Each circuit gets a two-layer noise floor plus sparse detail —
  * the detail is what stops a static bed reading as tape hiss.
+ *
+ * THE AIR LAYER WAS A HISS GENERATOR, AND THE COMMENT ABOVE WAS WRONG.
+ *
+ * `air` was a HIGHPASS on white noise, so it passed everything from airHz to
+ * Nyquist. White noise carries equal energy per hertz, so a 3.4 kHz highpass
+ * hands you the entire 3.4 k–20 k band — about eight times the bandwidth of
+ * everything below it — and that band dominates. Measured on the menu with the
+ * shipped values, tapping the buses with an analyser at master gain 0:
+ *
+ *     bus        flatness   centroid   85% rolloff   rms
+ *     ambience     0.750     10096 Hz     16869 Hz   3.54e-5
+ *     music        0.003       545 Hz       879 Hz   1.81e-5
+ *
+ * Flatness is the Wiener entropy — 1.0 is white noise, 0 is a pure tone. The
+ * bed measured 0.75 with its energy centred at 10 kHz, running at roughly twice
+ * the level of the music it was sitting on top of. No amount of sparse `detail`
+ * rescues that; the detail fires once every 8–22 s and the hiss is continuous.
+ *
+ * Two changes. `air` is now a BAND (see AIR_TOP_MULT) rather than a highpass,
+ * which removes the 6 k–20 k tail that owned the spectrum, and the gains below
+ * are cut hard. The bed stays: it is the part that reads as a room.
  */
 const AMBIENCE = {
-  kitchen: { bedHz: 250, bedQ: 0.8, bed: 0.055, airHz: 3400, air: 0.024, detail: 'clink', every: [6, 17] },
-  garden: { bedHz: 520, bedQ: 0.6, bed: 0.070, airHz: 5200, air: 0.040, detail: 'bird', every: [3, 9] },
-  workbench: { bedHz: 130, bedQ: 1.0, bed: 0.075, airHz: 2600, air: 0.026, detail: 'clank', every: [7, 19] },
-  pool: { bedHz: 170, bedQ: 0.9, bed: 0.050, airHz: 2100, air: 0.018, detail: 'murmur', every: [6, 16] },
-  bedroom: { bedHz: 95, bedQ: 1.1, bed: 0.045, airHz: 1500, air: 0.014, detail: 'house', every: [9, 24] },
-  menu: { bedHz: 200, bedQ: 0.8, bed: 0.035, airHz: 2800, air: 0.016, detail: 'clink', every: [8, 22] },
+  kitchen: { bedHz: 250, bedQ: 0.8, bed: 0.055, airHz: 3400, air: 0.008, detail: 'clink', every: [6, 17] },
+  garden: { bedHz: 520, bedQ: 0.6, bed: 0.070, airHz: 5200, air: 0.013, detail: 'bird', every: [3, 9] },
+  workbench: { bedHz: 130, bedQ: 1.0, bed: 0.075, airHz: 2600, air: 0.009, detail: 'clank', every: [7, 19] },
+  pool: { bedHz: 170, bedQ: 0.9, bed: 0.050, airHz: 2100, air: 0.006, detail: 'murmur', every: [6, 16] },
+  bedroom: { bedHz: 95, bedQ: 1.1, bed: 0.045, airHz: 1500, air: 0.005, detail: 'house', every: [9, 24] },
+  menu: { bedHz: 200, bedQ: 0.8, bed: 0.026, airHz: 2800, air: 0.004, detail: 'clink', every: [8, 22] },
 };
+
+/** Ceiling of the air band, as a multiple of airHz. About 1.3 octaves. */
+const AIR_TOP_MULT = 2.5;
+
+/**
+ * Extra ducking while the player is in the menu.
+ *
+ * The menu is where a bed is most exposed — no engines, no tyres, nothing else
+ * competing — and it is the first thing anyone hears. It is also where a player
+ * sits reading, rather than racing for ninety seconds.
+ */
+const MENU_AMBIENCE_DUCK = 0.45;
 
 /** Scratch for reading the pooled physics contact event. Never escapes. */
 const _pt = { x: 0, y: 0, z: 0 };
@@ -340,6 +373,9 @@ export class Sfx {
     this.enabled = true;
     this.activeCount = 0;
     this._serial = 0;
+    // Starts true: the game boots into attract, so the very first bed anyone
+    // hears is the ducked one. Race states clear it via setMenu(false).
+    this._inMenu = true;
 
     this.playerTyres = null;
     this.rivalTyres = [];
@@ -411,13 +447,20 @@ export class Sfx {
     this.ambBedLp.connect(this.ambBedGain);
     this.ambBedGain.connect(audio.buses.ambience);
 
+    // Air is a BAND, not a highpass. A highpass on white noise passes airHz to
+    // Nyquist, and that tail is what measured as 0.75 flatness centred at
+    // 10 kHz — see the note on AMBIENCE. The lowpass is the whole fix.
     this.ambAirHp = ac.createBiquadFilter();
     this.ambAirHp.type = 'highpass';
     this.ambAirHp.frequency.value = 3000;
+    this.ambAirLp = ac.createBiquadFilter();
+    this.ambAirLp.type = 'lowpass';
+    this.ambAirLp.frequency.value = 3000 * AIR_TOP_MULT;
     this.ambAirGain = ac.createGain();
-    this.ambAirGain.gain.value = 0.02;
+    this.ambAirGain.gain.value = 0.008;
     this.ambSrc.connect(this.ambAirHp);
-    this.ambAirHp.connect(this.ambAirGain);
+    this.ambAirHp.connect(this.ambAirLp);
+    this.ambAirLp.connect(this.ambAirGain);
     this.ambAirGain.connect(audio.buses.ambience);
 
     // A very slow breathing modulation. Without it the bed reads as tape hiss
@@ -436,12 +479,33 @@ export class Sfx {
     const a = AMBIENCE[this.theme] || AMBIENCE.menu;
     const now = this.audio.now;
     const D = this.audio.dsp;
+    // In the menu nothing else is playing, so the bed is fully exposed and is
+    // the first thing anyone hears. Duck it there.
+    const duck = this._inMenu ? MENU_AMBIENCE_DUCK : 1;
     D.set(this.ambBedLp.frequency, a.bedHz, now, 0.4);
     D.set(this.ambBedLp.Q, a.bedQ, now, 0.4);
-    D.set(this.ambBedGain.gain, a.bed, now, 0.6);
+    D.set(this.ambBedGain.gain, a.bed * duck, now, 0.6);
     D.set(this.ambAirHp.frequency, a.airHz, now, 0.4);
-    D.set(this.ambAirGain.gain, a.air, now, 0.6);
-    D.set(this.ambLfoGain.gain, a.bed * 0.35, now, 0.6);
+    D.set(this.ambAirLp.frequency, a.airHz * AIR_TOP_MULT, now, 0.4);
+    D.set(this.ambAirGain.gain, a.air * duck, now, 0.6);
+    D.set(this.ambLfoGain.gain, a.bed * duck * 0.35, now, 0.6);
+  }
+
+  /**
+   * Menu or not. Drives the duck above.
+   *
+   * Note this does NOT switch to the `menu` bed. AMBIENCE.menu is all but dead
+   * code: `theme` comes from the loaded track, and a track is always loaded, so
+   * the menu has always played the circuit's own bed. That is arguably the
+   * nicer behaviour — you hear the kitchen while looking at the kitchen — so it
+   * stays, and `menu` remains the fallback for a boot with no track.
+   */
+  setMenu(on) {
+    const next = !!on;
+    if (next === this._inMenu) return this;
+    this._inMenu = next;
+    this._applyAmbience();
+    return this;
   }
 
   _startAmbience(now) {
@@ -1145,7 +1209,7 @@ export class Sfx {
       try { n?.stop?.(); } catch (_) { /* ignore */ }
       try { n?.disconnect?.(); } catch (_) { /* ignore */ }
     }
-    for (const n of [this.ambBedLp, this.ambBedGain, this.ambAirHp, this.ambAirGain,
+    for (const n of [this.ambBedLp, this.ambBedGain, this.ambAirHp, this.ambAirLp, this.ambAirGain,
       this.ambLfoGain, this._scrape?.bp, this._scrape?.bp2, this._scrape?.gain, this._scrape?.pan]) {
       try { n?.disconnect?.(); } catch (_) { /* ignore */ }
     }
