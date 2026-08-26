@@ -459,6 +459,27 @@ different ramp profile (a take-off that rotates the car instead of kicking one a
 probably air stabilisation to go with it. That is a feature, not a fix, and it is not being
 started without a decision.
 
+### Decided: 10 u, for the look, knowing the price
+
+Put to Michele on 26 Aug 2026 with the tables above and a pair of frames of the same crossing at
+6.5 and 14. His call: **raise it to 10** — no air, but a wedge with a face and a shadow instead
+of a swell in the wood.
+
+Then a correction, because the table he decided from was one race per shape and one race is a
+noisy sample. Height 10 measured **3, 7 and 8** recoveries at the jump across three races, and
+**7, 13 and 13** flips. The two instruments agree with each other — reshaping the hazard in
+place and baking the mesh through `?hazardGeom` give the same at-jump numbers — so this is
+race-to-race variance rather than an instrument bias, and the earlier "3 and 7" was simply the
+low end of it. Fresh boots, mesh baked, one 60 s eight-car race each:
+
+    height   respawns   at jump   flips   at jump
+      6.5        2         0        0        0
+      8          5         2        6        5
+     10         13         8       14       13
+
+10 ships. 8 is on record as the cheaper half of the same trade if the rolls ever start costing
+races, and the ranking — which is what the sweep is good for — was never in doubt.
+
 ## D20 — The renderer casts no shadows at all — CRITICAL — FIXED (root cause: the capture path, not the renderer)
 `render/Lighting.js`, the CSM chunk patch. Every critic round to date has been scored on
 shadowless frames, which is most of the lighting score.

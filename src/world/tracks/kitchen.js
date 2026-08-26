@@ -123,30 +123,59 @@ export default {
   ],
 
   hazards: [
-    // The jump. 8.5 u of lift over 30 u with an abrupt lip: about 0.26 s of air
-    // and 24 u of carry at 95 u/s, which is two and a half car lengths.
+    // The jump — which is not a jump, and never was.
+    //
     // WIDER THAN THE ROAD, DELIBERATELY. `hazardLateralWeight` holds a hazard at
     // full height out to 72% of its half-width and tapers the rest, so a 27-wide
-    // ramp on a 28.75-wide road put its entire 8.5 u fall INSIDE the drivable
-    // surface: flat to lateral 9.7, on the table by 13.5, a 66 degree side. Cars
-    // shoved wide in the opening laps did not slide off it, they tripped and
+    // ramp on a 28.75-wide road put its entire fall INSIDE the drivable surface:
+    // flat to lateral 9.7, on the table by 13.5, a 66 degree side. Cars shoved
+    // wide in the opening laps did not slide off it, they tripped and
     // barrel-rolled — three inverted cars and four respawns in the first eleven
-    // seconds, every one of them traced to this ramp (D38).
+    // seconds, every one of them traced to this ramp (D38). At 40 the flat top
+    // spans 14.4 either side, which covers the road, and the taper falls away
+    // over the table where nobody is driving. The toast either side of it is
+    // scenery and does not move.
     //
-    // At 40 the flat top spans 14.4 either side, which covers the road, and the
-    // taper falls away over the table where nobody is driving. The toast either
-    // side of it is scenery and does not move.
-    // HEIGHT 6.5, AND 6.5 IS A MEASURED THRESHOLD RATHER THAN A ROUND NUMBER.
-    // Respawns caused at this jump over a 60 s race, interleaved runs so drift
-    // could not favour a value:
+    // HEIGHT 10, AND IT BUYS A SILHOUETTE, NOT A JUMP.
     //
-    //     8.5   7 respawns      7.5   7 and 6      6.5   0 and 0      5.5   0
+    // The air this ramp used to give was D19: the suspension solved against a
+    // tangent plane that had fallen off the lip, and `clamp(d, -2, ...)` handed
+    // the resulting nonsense to the spring as a fully bottomed strut. With the
+    // strut honest it launches nothing, and the height that would launch
+    // something does not exist. Measured, one full eight-car race per shape,
+    // 60 s, seed 771 (`tools/jump-shape.js`, `tools/jump-cost.js`):
     //
-    // Everything at 7.5 and above costs six or seven recoveries a race;
-    // everything at 6.5 and below costs none. So 6.5 is the tallest this can be
-    // and still land — and it should be the tallest, because the jump is the
-    // one moment on this circuit anybody will remember.
-    { type: 'ramp', id: 'butterJump', t: 0.243, length: 30, height: 6.5, width: 40 },
+    //     height   exit    air, one car   respawns at jump   flips at jump
+    //       6.5   10.1deg      none               0                 0
+    //      10     15.3deg      none               3                 7
+    //      12     18.2deg      0.075 s           31                39
+    //      14     20.9deg      0.117 s           30                31
+    //
+    // The cost arrives BEFORE the air does, because the launcher is the ramp's
+    // TOE and not its lip: every apex in the sweep sits about 20 u before the
+    // lip, just past `hazardHeight`'s `smoothstep(0, 0.22, x)`. Exit angle does
+    // not predict it — 12 x 24 is a steeper exit than 12 x 30 and produces
+    // nothing at all.
+    //
+    // ONE RACE IS A NOISY SAMPLE, so those figures rank the shapes and do not
+    // price them. Height 10 measured 3, 7 and 8 recoveries at the jump across
+    // three races, and 7, 13 and 13 flips. Both instruments agree on the spread
+    // — reshaping in place and baking the mesh give the same at-jump numbers —
+    // so it is race-to-race variance, not an instrument bias. Fresh boots with
+    // the mesh baked, one race each:
+    //
+    //     6.5  ->  0 recoveries,  0 flips at the jump
+    //     8    ->  2 recoveries,  5 flips
+    //     10   ->  8 recoveries, 13 flips
+    //
+    // So 10 is a LOOK decision, made deliberately by Michele on 26 Aug 2026: at
+    // 6.5 the ramp reads as a swell in the wood, at 10 it is a wedge with a face
+    // and a shadow, and the price is a handful of recoveries and a dozen rolls a
+    // race that 6.5 does not pay. 8 is the cheaper half of that trade if the
+    // rolls ever start costing races. Anything taller trades the race outright.
+    // A ramp that actually flies needs a different take-off profile — one that
+    // rotates the car instead of kicking one axle — not a bigger number.
+    { type: 'ramp', id: 'butterJump', t: 0.243, length: 30, height: 10, width: 40 },
 
     // The milk. No mesh — world/Decals.js paints the pool, and the surface
     // override is what the tyres feel. Two patches: the main sheet across the
