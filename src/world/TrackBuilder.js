@@ -1461,6 +1461,43 @@ export class TrackBuilder {
   resolveMaterials() {
     const track = this.track;
     this.matCache = new Map();
+
+    // The ground is not allowed to be a draft.
+    //
+    // Every surface in the game arrives as a DRAFT — a 256 bake magnified into
+    // the final texture — and sharpens later on an idle queue. Nothing ever
+    // forced the important ones: `warm()` has no callers, and no code in src/
+    // has ever passed `immediate`. So which surfaces were sharp in any given
+    // frame was decided entirely by the browser's idle scheduler.
+    //
+    // That is D49. A draft frame and a settled frame of the same moment in the
+    // same boot differ by 28.0% of pixels, against a same-session floor of
+    // 0.102% — and on a kitchen table the ground IS the frame. Two captures of
+    // identical code taken on different days differed by 57.85%, which read as
+    // a regression for a whole session.
+    //
+    // The ground and the shoulder are baked here and now, blocking. Measured
+    // cost for kitchen's `oak` at 1024: 292 ms, once, during a load. The road's
+    // own spans stay on the queue — `pine` and `ceramicTile` are 2048s at about
+    // a second each, which is a different trade and not one to make silently —
+    // but they are moved to the front of it.
+    const groundKinds = [track.def?.groundSurface, track.offTrackSurface].filter(Boolean);
+    try {
+      this.ctx?.surfaces?.prioritise?.([
+        ...groundKinds,
+        ...(track.surfaceNames || []),
+      ].filter(Boolean));
+      // ?noPrebake=1 puts the defect back, so it can still be photographed
+      // after being fixed. draft-ab.js needs a build that drafts the ground.
+      let skip = false;
+      try { skip = new URLSearchParams(location.search).get('noPrebake') === '1'; } catch (err) { skip = false; }
+      if (!skip) for (const kind of groundKinds) this.ctx?.surfaces?.ensure?.(kind);
+    } catch (err) {
+      // A blurred ground is bad; no ground at all is worse. The draft path
+      // still produces a usable surface, so this is never fatal.
+      console.warn('[TrackBuilder] ground pre-bake failed', err);
+    }
+
     this.roadMaterials = track.surfaceNames.map((s) => this.surfaceMaterial(s, {
       vertexColors: true,
       texScale: this.metricScaleFor(s, ROAD_TEX_SCALE),

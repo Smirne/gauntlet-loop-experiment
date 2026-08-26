@@ -112,6 +112,25 @@ export function installCapture(engine) {
     const wasPaused = engine.paused;
     if (!wasPaused) engine.pause?.('capture');
 
+    // Settle the texture foundry before reading a pixel.
+    //
+    // Surfaces hands out a *draft* — a 256 bake magnified into the final
+    // texture — and sharpens it later on an idle queue. The capture harness
+    // pins the race clock and force-steps to it, so a capture arrives whenever
+    // it arrives, with the foundry in whatever state the browser's scheduler
+    // has left it. The frame that came back was part game and part scheduler,
+    // and which part was which changed between sessions: two captures of
+    // identical code taken on different days differed by 57.85% of pixels.
+    // Two boots inside one session agreed to 0.102%, which is exactly why it
+    // read as a real regression. Draft against settled, same boot, same moment:
+    // 28.0%.
+    //
+    // This is the fix for that whole class. It is also why `settled` is
+    // reported back: a capture that had to upgrade something is still valid,
+    // but a caller comparing it against an older frame deserves to know the
+    // older one may not have been.
+    const drafts = engine.ctx?.surfaces?.settle?.() ?? [];
+
     // Render the frame at w*ss x h*ss and read it back. Returns the data URL,
     // or null if the drawing buffer could not be had at that size — 3840x2160
     // is 8.3 Mpx and the post chain wants several float targets of it, which a
@@ -239,6 +258,11 @@ export function installCapture(engine) {
     return {
       ...json, w, h, ss, renderW, renderH, downsampled,
       ...(note ? { note } : {}),
+      // What the foundry was doing when this frame was asked for. Empty means
+      // every surface was already sharp; a non-empty list means this capture
+      // had to settle them, and an OLDER frame of the same scene may not have
+      // been settled at all. See the settle call above.
+      ...(drafts.length ? { settledDrafts: drafts } : {}),
       kb: Math.round(payload.length / 1365),
     };
   };

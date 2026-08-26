@@ -557,12 +557,59 @@ function targetSize(kind) {
   return s;
 }
 
+/** Kinds the current track named for itself — its road, its ground, its
+ *  off-track. Set when a track is built; empty before that. */
+let _priority = new Set();
+
+/**
+ * Put the surfaces the player is actually looking at at the front of the queue.
+ *
+ * The queue used to drain in first-requested order, which is the order the
+ * scene graph happened to walk. On a kitchen boot that put `oak` — the table,
+ * which is most of the frame — fourth, behind `paper`, `crumbs` and
+ * `ceramicTile`, and each step costs about two seconds. The table did not
+ * sharpen until 23.7 s.
+ */
+function reprioritise() {
+  if (!_priority.size || _pending.length < 2) return;
+  _pending.sort((a, b) => (_priority.has(b) ? 1 : 0) - (_priority.has(a) ? 1 : 0));
+}
+
 function scheduleIdle() {
   if (_idleHandle || _pending.length === 0) return;
-  const run = () => {
+  const run = (deadline) => {
     _idleHandle = 0;
-    const kind = _pending.shift();
-    if (kind) upgradeNow(kind);
+    reprioritise();
+    // Fill the idle slice rather than taking exactly one kind from it.
+    //
+    // One kind per callback makes the queue advance at the rate the browser
+    // hands out idle callbacks, however slow that is, regardless of how much
+    // time each one offers. Taking as many as fit is strictly better and costs
+    // nothing when the slice is small.
+    //
+    // NOT measured: how long the queue takes to drain for a real player. The
+    // only browser available to this project runs the game in a hidden pane,
+    // where idle callbacks are throttled to roughly the 1200 ms timeout and
+    // `timeRemaining()` is about zero — so every wall-clock number taken here
+    // measures Chrome's background throttle, not this queue. It is quoted
+    // nowhere for that reason. What IS established, and does not depend on the
+    // scheduler: a bake costs about 300 ms at 1024 and about 1 s at 2048, and a
+    // frame with drafts in it differs from the settled frame by 28.0% of pixels
+    // against a same-session floor of 0.102%. That is why the surfaces that
+    // matter no longer come through here at all — see TrackBuilder.
+    //
+    // A bake cannot be interrupted, so the check is BEFORE each one and the
+    // first is always taken: refusing to start would leave the queue stalled.
+    // Without a real deadline object (the setTimeout fallback), one per tick is
+    // the honest budget.
+    const started = performance.now();
+    const canContinue = () => (deadline && typeof deadline.timeRemaining === 'function'
+      ? deadline.timeRemaining() > 4
+      : performance.now() - started < 8);
+    do {
+      const kind = _pending.shift();
+      if (kind) upgradeNow(kind);
+    } while (_pending.length && canContinue());
     if (_pending.length) scheduleIdle();
   };
   if (typeof requestIdleCallback === 'function') {
@@ -600,10 +647,22 @@ function upgradeNow(kind) {
  */
 export function textures(kind, opts = {}) {
   const k = SURFACE_DEFS[kind] ? kind : FALLBACK;
-  const cached = _cache.get(k);
-  if (cached) return cached.set;
-
   const immediate = opts.immediate === true;
+  const cached = _cache.get(k);
+  if (cached) {
+    // `immediate` has to be honoured on a HIT as well as a miss. It used to
+    // return here unconditionally, which made `ensure()` — whose whole job is
+    // "force this one to full resolution right now" — a silent no-op in the
+    // exact case it exists for: a kind that is already cached as a draft. The
+    // caller got a magnified 256 bake and no way to tell.
+    if (immediate && cached.level < 1) {
+      const at = _pending.indexOf(k);
+      if (at >= 0) _pending.splice(at, 1);
+      upgradeNow(k);
+    }
+    return cached.set;
+  }
+
   const size = targetSize(k);
   let set;
   try {
@@ -655,6 +714,38 @@ export async function warm(kinds, o = {}) {
     await new Promise((res) => setTimeout(res, 0));
   }
   return list.length;
+}
+
+/**
+ * Drain the whole idle queue right now, blocking, and report what was still a
+ * draft when asked. For instruments and captures — never for a frame the
+ * player is waiting on, which is what the idle queue is for.
+ *
+ * D49 exists because nothing could do this. Surfaces sharpen on an idle queue,
+ * and a capture is taken whenever the harness gets there — so whether the table
+ * in a frame was a real bake or a 256 draft magnified 4x was decided by the
+ * browser's scheduler rather than by anything in the game. Measured: a draft
+ * frame and a settled frame of the SAME moment in the SAME boot differ by 28.0%
+ * of pixels, against a same-session floor of 0.102%. Across sessions the figure
+ * reached 57.85% on identical code, which read as a regression for a session.
+ *
+ * Returns the kinds it had to upgrade, so a capture can say in its own output
+ * whether it was measuring settled textures or not.
+ */
+export function settleNow() {
+  const upgraded = [];
+  while (_pending.length) {
+    const k = _pending.shift();
+    const e = _cache.get(k);
+    if (e && e.level < 1) { upgradeNow(k); upgraded.push(k); }
+  }
+  // Anything that skipped the queue but is still a draft — a kind whose entry
+  // was created by a path that did not push it. Cheap to check, and a silent
+  // draft is the whole defect.
+  for (const e of _cache.values()) {
+    if (e.level < 1) { upgradeNow(e.kind); upgraded.push(e.kind); }
+  }
+  return upgraded;
 }
 
 /* ================================================================ the system */
@@ -720,8 +811,28 @@ export const Surfaces = {
    *  the idle re-bake reaches it as well as the original. See ProcTex. */
   linkDerived(base, derived) { return PT.linkDerived?.(base, derived) ?? derived; },
 
+  /** Name the surfaces this track is mostly made of, so the idle queue
+   *  sharpens them before the incidentals. See reprioritise. */
+  prioritise(kinds) {
+    _priority = new Set((kinds || []).filter((k) => SURFACE_DEFS[k]));
+    return [..._priority];
+  },
+
   /** Force one surface to full resolution right now (blocking). */
   ensure(kind) { return textures(kind, { immediate: true }); },
+
+  /** Force EVERY cached surface to full resolution right now (blocking), and
+   *  return the kinds that were still drafts. See settleNow — this is what a
+   *  capture must call before it reads a frame, or it is measuring the idle
+   *  scheduler as much as the game. */
+  settle() { return settleNow(); },
+
+  /** True when nothing in the cache is still a magnified draft. */
+  get settled() {
+    if (_pending.length) return false;
+    for (const e of _cache.values()) if (e.level < 1) return false;
+    return true;
+  },
 
   setAnisotropy(v) {
     _anisotropy = clamp(v | 0, 1, 16);

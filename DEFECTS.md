@@ -2536,7 +2536,7 @@ the markings.
 
 ---
 
-## D49 — Frames from different sessions are not comparable, and nobody knew — CRITICAL (method) — OPEN
+## D49 — Frames from different sessions are not comparable, and nobody knew — CRITICAL (method) — **FIXED**
 
 Found while checking that the D23 fix had not regressed bedroom, a circuit it does not touch.
 
@@ -2579,3 +2579,144 @@ suspect** and should be re-derived from same-session captures before being relie
 pixel diff is only valid when both frames come from the same session, and the session's own
 cross-boot floor is measured and quoted alongside it. The D23 numbers above were taken that
 way. Nothing else in this session's work depends on a cross-session diff.
+
+
+### D49 — the answer
+
+**There was no regression. The instrument was measuring itself.**
+
+Cross-boot reproducibility, same build, pinned to the same simulated moment (engine frame
+1921, raceTime 16.0083 s, all 8 cars moving, speeds identical to three decimals across both
+boots — the simulation itself is deterministic):
+
+    two boots, three disciplines applied      0.068% of pixels, mean delta 0.107
+    the number that raised the alarm         57.85% of pixels
+
+Three things had to be true at once, and none of them were:
+
+**1. ZERO THE GRAIN BEFORE A FRAME-DIFF.** This project's oldest instrument rule, written down
+after `room-share.js` learned it, and I ignored it for most of this investigation. Film grain
+reseeds every frame. Measured here: **two captures of a FROZEN scene, engine held paused,
+nothing whatsoever changed, differ by 23.8% of pixels.** That is the real explanation for the
+57.85%. It is not a small effect and it is not subtle once measured — it was simply never
+measured, because the 0.102% "same-session floor" in the table above had been taken under
+different conditions from the 57.85%. *A floor measured one way does not license a diff
+measured another way.* That is the whole defect.
+
+**2. HOLD THE ENGINE ACROSS THE PAIR, not just inside each capture.** `MG.capture` pauses on
+entry and resumes on exit — correct for one frame, useless for two. Between two calls the race
+runs on, the cars move, the camera follows. Measured: **two consecutive captures of the "same"
+moment, 23.7% of pixels apart.** An earlier version of `tools/draft-ab.js` reported 28.0% for
+the thing it was actually testing, and nearly all of that was the race advancing. It was
+one step from being filed.
+
+**3. SETTLE THE TEXTURE FOUNDRY.** See D50. Worth 2.49% of pixels — real, and two orders of
+magnitude smaller than the noise it was hiding behind.
+
+With all three applied, two captures of one held moment are **bit-identical: 0.000% of pixels,
+max channel delta 0.** That is a floor worth having, and it is what makes the 0.068% cross-boot
+figure meaningful.
+
+**Consequences for this file.** The retraction in D49's original entry stands but narrows: it
+is not that cross-session diffs are impossible, it is that **every diff in this file taken with
+film grain live is noise**, whatever session it came from. Conclusions resting on a diff whose
+quoted floor is around a tenth of a percent were measured with grain off and are fine.
+Conclusions resting on a diff in the tens of percent, with no floor quoted, mean nothing.
+
+**What was wrong in my own reasoning, since it is the same mistake twice.** I found a real
+mechanism (D50), measured it at 28.0%, and it matched the shape of the defect closely enough
+that I nearly stopped. It survived only because a floor measurement I took as a formality came
+back at 23.8% and killed my own result. LOOK AT THE FRAME BEFORE BELIEVING AN AGGREGATE has a
+sibling: **measure the floor before believing the difference, in the same run, with the same
+instrument.**
+
+New tools: `tools/pin-shot.js` (a reproducible pinned capture that enforces all three and
+reports the liveness of the field), `tools/frame-diff.js` (a diff that will not report a ratio
+without stating the floor beside it), `tools/draft-ab.js` (the D50 experiment, which now
+measures its own floor as a third frame).
+
+---
+
+## D50 — Nothing in the game ever forced a texture to full resolution — MAJOR — **FIXED**
+
+Found while hunting D49. Not the cause of it, but a real defect underneath.
+
+Every surface in the game is handed out as a **draft**: a 256 bake magnified into the final
+texture, sharpened later on an idle queue. That design is sound. What was missing is that
+**nothing ever opted out of it**:
+
+* `Surfaces.warm()` — "bake a list of surfaces to full resolution" — **has no callers anywhere
+  in `src/`.**
+* No code in `src/` has ever passed `immediate: true`.
+* `Surfaces.ensure(kind)` — documented as "force one surface to full resolution right now
+  (blocking)" — **was a silent no-op in the exact case it exists for.** `textures()` returned
+  the cache entry before it looked at `immediate`, so calling `ensure` on a kind that was
+  already cached as a draft returned the draft, with no way for the caller to tell.
+
+So which surfaces were sharp in any given frame was decided entirely by the browser's idle
+scheduler. On a kitchen boot the table — which *is* the frame on a kitchen table — went through
+the queue like everything else, behind a sheet of paper and some crumbs.
+
+    draft frame vs settled frame, same boot, same held moment, grain zeroed
+      2.492% of pixels, mean delta 1.93, max 54
+      against a floor of 0.000% — the same pair, bit-identical
+
+    concentrated in the top two bands (3.11% and 8.81%), which is the far half of
+    the table, where texel density is highest and magnification shows worst
+
+**Not measured, and not claimed: how long a real player waits.** The only browser available to
+this project runs the game in a hidden pane, where idle callbacks are throttled to roughly
+their timeout. Every wall-clock number taken here measures Chrome's background throttle. An
+earlier draft of this entry quoted 23.7 s and 40.8 s as if they were player-facing; they are
+not, and they have been removed rather than qualified.
+
+**What is established and scheduler-independent:** a bake costs about **292 ms at 1024** and
+about **1 s at 2048** (`oak` 292 ms, `varnishedWood` 1006 ms, `pine` 908 ms, `ceramicTile`
+1261 ms). That is the real reason the draft system exists, and the real cost of opting out.
+
+**Fixed three ways.**
+
+1. `ensure()` now honours `immediate` on a cache hit, which is what it always claimed to do.
+2. `TrackBuilder.resolveMaterials()` bakes the track's **ground and shoulder** surfaces
+   blocking, before asking for any material. Kitchen pays 292 ms once during a load and never
+   shows a magnified table. The road's own spans stay on the queue — `pine` and `ceramicTile`
+   are 2048s at about a second each, and spending two more seconds of boot on them is a
+   different trade, not one to make silently. They are moved to the front of the queue instead,
+   via a new `Surfaces.prioritise()`.
+3. `MG.capture` calls the new `Surfaces.settle()` before reading a pixel, and reports
+   `settledDrafts` in its result so a frame can say whether it was measuring the game or the
+   scheduler. `?noPrebake=1` puts the defect back so it can still be photographed.
+
+An unintended and welcome side effect: with the ground baked first it claims a 2048 while the
+budget is still open, and `ceramicTile` drops to 1024 instead. Total texture memory is
+unchanged at 466.3 MB, and it is now spent on the surface that fills the screen rather than on
+one span of the lap.
+
+---
+
+## D51 — The texture memory budget trims the wrong surfaces, and misses by half — MAJOR — OPEN
+
+    ultra tier budget      320 MB     (Settings.js)
+    actually resident      466.3 MB   (kitchen, measured)
+    overshoot              1.46x
+
+`targetSize()` decides a kind's resolution by reading `_bytes` — **the bytes already spent at
+the moment that kind is first requested.** The set it is about to allocate is not counted, and
+nothing is ever revisited. So the trim cannot prevent an overshoot; it can only punish whatever
+happens to be requested last.
+
+Which is exactly what it does. Before D50's fix, on kitchen:
+
+    ceramicTile   2048   one span of the lap
+    pine          2048   one span of the lap
+    oak           1024   the entire table
+    rubber         512   the tyres, on screen every frame
+
+The three surfaces that got trimmed to 512 are `plasticMatte`, `plasticGloss` and `rubber` —
+not the least important, just the last asked for.
+
+**Not fixed here, because the fix is a policy question rather than a bug.** Making the arithmetic
+correct is easy; deciding *which* surfaces deserve a 2048 when the budget will not cover all of
+them is a judgement about what the frame is made of, and it should be made deliberately rather
+than as a side effect of scene-graph walk order. D50's `prioritise()` gives the ordering hook
+that a real policy would need.
