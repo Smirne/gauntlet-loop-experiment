@@ -1,0 +1,35 @@
+{
+ "variable": "VALIDATION (known: an unmissable difference) — depth of field on vs off",
+ "verdict": "SPLIT",
+ "because": "2 of 2 cells disagree between their two orders",
+ "winner": null,
+ "tasks": {
+  "real": 4,
+  "null": 2,
+  "withPreference": 4
+ },
+ "floor": {
+  "nullPairs": 2,
+  "falseDifferences": 0,
+  "rate": 0,
+  "offenders": []
+ },
+ "position": {
+  "first": 0,
+  "second": 4,
+  "p": 0.125
+ },
+ "variable_": {
+  "tally": {
+   "a": 2,
+   "b": 2
+  },
+  "p": 1
+ },
+ "orders": {
+  "cells": 2,
+  "paired": 2,
+  "agreed": 0,
+  "unpaired": []
+ }
+}

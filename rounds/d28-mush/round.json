@@ -1,0 +1,249 @@
+{
+ "variable": "VALIDATION (known: one side is plainly broken) — full detail vs a 320 px round trip",
+ "settings": {
+  "a": "clean",
+  "b": "mush"
+ },
+ "builtFrom": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/spec-mush.json",
+ "tasks": [
+  {
+   "id": "t01",
+   "kind": "real",
+   "cell": "macro",
+   "first": "b",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/3-macro-mush.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/3-macro-clean.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A night-time racing frame, shot from a low rear-three-quarter angle behind a dark blue toy-scale race car carrying the number 88 on its door. Its headlights throw a wide warm cone forward and to the left, blowing out the pale track surface on that side. The track is a light grey ribbon curving from lower-left to upper-right, edged with a white painted line and, along the top, black-and-white kerb blocks; a stony brown runoff fills the bottom-right corner. In the background a red-and-white striped banner or flag hangs above the barrier, with a bright light flare above it and near-black scenery beyond. The whole frame is soft: every part of it, including the car itself and the number 88, is smeared and low in detail, and the bright areas bleed outward into halos.",
+    "describeSecond": "The same night-time scene, same camera position, same dark blue number-88 car with its headlight cone spilling left across the pale track, same white edge line, same black-and-white kerbs along the top, same stony runoff at bottom right, same striped banner and light flare in the background. Here the image is crisp: the car's body panels, roof seams, spoiler lip, wheel spokes and the outline of the 88 roundel all read clearly, the individual pebbles in the runoff are separately shaded, and the kerb blocks have hard edges. Grime is visible along the car's lower flank behind the front wheel, and a small red tail-light dot sits at the rear.",
+    "differences": [
+     "Overall focus: first.jpg is uniformly soft across the entire frame; second.jpg is sharp across the same frame.",
+     "The 88 on the car's door: a soft smear in first.jpg, a clean numeral with a readable outline in second.jpg.",
+     "The rear wheel at the car's right (around the lower-right of the body): its spokes are an indistinct dark blob in first.jpg, individually separated spokes with a lit rim edge in second.jpg.",
+     "The stony runoff in the bottom-right quadrant: a mottled brown wash in first.jpg, discrete pebbles with their own highlights and shadows in second.jpg.",
+     "The kerb blocks along the upper-right track edge: their black/white segments have blurred, bled boundaries in first.jpg and hard straight boundaries in second.jpg.",
+     "Dirt/grime streaking along the car's lower flank behind the front wheel is visible in second.jpg and not resolvable in first.jpg.",
+     "The bright flare above the banner at top centre: one merged glow blob in first.jpg; in second.jpg it resolves into a core plus several small separate spark points.",
+     "The white painted line along the track edge: a soft gradient in first.jpg, a defined stripe with a crisp inner edge in second.jpg.",
+     "The headlight cone's boundary on the track: diffuse and haloed in first.jpg, with a visible shaped edge and a projected pattern in second.jpg.",
+     "Contrast in the dark areas: first.jpg's shadows are lifted and hazy from the bright areas bleeding into them; second.jpg's darks stay dark right up against the lit track."
+    ],
+    "anyDifference": true,
+    "preferred": "second",
+    "confidence": 0.93,
+    "why": "The second frame is the same shot with the detail intact. The first frame's blur is uniform across near, mid and far parts of the image, and it has no directional streaking, so it does not read as a deliberate depth-of-field or speed effect that would make the subject pop; it just makes the whole picture, subject included, indistinct. Concretely, a player looking at the first frame cannot read the car number, tell where the track edge is except as a gradient, or see the texture of the runoff they are about to drop a wheel into. All three of those are legible in the second, and nothing that the first frame does is lost in the second."
+   }
+  },
+  {
+   "id": "t02",
+   "kind": "real",
+   "cell": "chase",
+   "first": "a",
+   "second": "b",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/2-chase-clean.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/2-chase-mush.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A night-time chase-cam shot of a toy-scale racing game set on a living-room floor. A blue sports car with a black roof stripe and a rear wing sits centre-frame, three-quarters from behind, headlights throwing a hard white cone forward onto the track and casting a sharp car-shaped shadow on the pale grey tarmac ahead. The track sweeps from lower-right up and around to the left; its left edge is a two-tone kerb wall (blue base, cream top) that curves away toward the top of the frame. Between the car and that wall is a wide run-off of gravel, rendered as thousands of individually visible tan pebbles, each with its own highlight and cast shadow. Bottom-right carries a large black-and-white chequer pattern painted on the tarmac, with fine white guide lines and rows of small dark sponsor lettering along the track surface. Upper-right shows a red-and-white chequered kerb section and a white paper ramp. The surrounding room is dark: a warm red-brown carpet, an orange foam block with visible wood-grain moulding at the left edge, a red-and-white crayon lying at lower-left, and small out-of-focus objects (a ball, a black clip, blue bits) in the top-left gloom.",
+    "describeSecond": "The same scene, same car, same night lighting, same headlight cone and shadow, same chequered tarmac at bottom-right and red-and-white kerb at upper-right. The framing is slightly tighter and shifted: the kerb wall's arc sits further right and reads larger, the orange foam block at the left sits higher and is cropped harder, and the car sits marginally higher in the frame. The whole image is noticeably softer and coarser: the gravel run-off is not resolved into pebbles but into a fizzing, speckled noise field; the car has lost its rear wing silhouette, its tail-light bar and exhaust detail are smeared into blobs, and the roof stripe blurs into the body. The chequer squares at bottom-right have stair-stepped, fuzzy edges, the sponsor lettering on the tarmac is an illegible dashed smear, and the thin white guide lines on the track have mostly dissolved. Colour-wise the run-off and carpet read darker and more purple/blue than the warm tan of the equivalent area in the other frame.",
+    "differences": [
+     "Gravel run-off (the whole left and bottom-centre of frame): in first each pebble is a distinct rounded lump with its own highlight and shadow; in second the same area is an unresolved speckled fizz with no individual stones readable.",
+     "The car body, centre-frame: first shows the rear wing standing clear of the deck, the red tail-light bar, the row of small exhaust pips beneath it, and the black-and-blue two-tone stripe; in second the wing has merged into the roofline, the tail-light is a red smudge and the exhaust pips are gone.",
+     "Chequer pattern, bottom-right: in first the black/white square edges are clean straight lines; in second the same edges are stair-stepped and blurred over several pixels.",
+     "Sponsor lettering painted on the tarmac to the right of the car: in first it reads as discrete dashed characters in two rows; in second it is a continuous grey smear.",
+     "Thin white guide lines on the tarmac between the car and the chequer: crisp and continuous in first, largely dissolved into the road surface in second.",
+     "Framing: second is slightly zoomed in and shifted — the kerb wall's arc sits further right, the orange foam block at the left edge sits higher and is cut off more, and less of the dark top-left room clutter (the ball, the black clip) is visible.",
+     "Orange foam block at left edge: first shows moulded wood-grain ribs with soft shading across the face; in second the same block is flatter, with the ribs reduced to plain bands.",
+     "Colour of the run-off and surrounding carpet: warm tan and red-brown in first, distinctly darker and more purple/blue in second.",
+     "Kerb wall on the left: first shows a graded blue-to-cream banding with visible surface shading; in second the banding is flat with a hard, aliased boundary between the blue and cream."
+    ],
+    "anyDifference": true,
+    "preferred": "first",
+    "confidence": 0.9,
+    "why": "First is the better frame on the plain grounds of legibility. Everything a player would actually use to read the scene survives in it and degrades in the second: the gravel reads as gravel rather than as noise, so the run-off is visibly a different, punishing surface from the tarmac; the track's white guide lines are continuous, so the racing line is followable at speed; and the car's rear wing and tail-light bar give the silhouette a clear orientation and a bright anchor point to track. In second those same cues are the first casualties — the run-off boundary softens into the road, the guide lines vanish, and the car becomes a blue blob. The second frame's coarseness also actively hurts: the speckled gravel fizz is the busiest thing in the picture and pulls the eye away from the car and the corner exit, which is the opposite of what this shot wants. The framing difference is minor and I would not decide on it either way. The soft, aliased rendering is not a stylistic choice that pays for itself anywhere in the second frame — nothing there is more readable, more atmospheric, or better composed as a result — so it reads as a straight loss of image quality."
+   }
+  },
+  {
+   "id": "t03",
+   "kind": "null",
+   "cell": "chase",
+   "first": "a",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/2-chase-clean.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/2-chase-clean.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A dusk-lit toy-scale racing scene shot from a low chase camera. A small blue sports car with a rear wing sits just left of centre on a pale grey track that sweeps from lower right up and around a left-hand bend; its headlights throw a bright white bloom onto the track ahead and cast a long dark shadow up-track. The track is bordered by a light kerb wall on the left and runs across a floor of coarse brown pebble-like gravel. A large black-and-white checkerboard flag panel fills the lower right; a red-and-white striped banked curve and blue barrier blocks sit upper right. Household clutter frames the scene: a red crayon lying at lower left, an orange-brown block and blue-and-white objects on a rug at upper left, all thrown out of focus by shallow depth of field. The overall grade is cool blue-purple with warm amber where the headlight and a light source hit the gravel.",
+    "describeSecond": "The same dusk-lit toy-scale racing scene, same low chase camera. The blue sports car with rear wing is in the same spot left of centre, headlight bloom and up-track shadow identical in shape and intensity. Same pale grey track curving left past the same light kerb wall, same coarse brown gravel bed, same checkerboard flag panel filling the lower right, same red-and-white striped banked curve and blue barrier blocks upper right, same red crayon at lower left and same out-of-focus rug clutter at upper left. Same cool blue-purple grade with warm amber highlights, same depth-of-field falloff.",
+    "differences": [],
+    "anyDifference": false,
+    "preferred": "neither",
+    "confidence": 0.9,
+    "why": "I compared the two frames at full size and again on an enlarged crop of the busiest region (car, headlight bloom, track edge, checkerboard) and could not point at a single element that moved, changed colour, changed brightness, or appeared/disappeared. Car pose, bloom shape, shadow, kerb line, gravel speckle pattern, flag squares and the crayon all sit in the same places. With nothing concrete to point at, there is no basis to prefer either frame, so the honest answer is that they read as the same image to a player."
+   }
+  },
+  {
+   "id": "t04",
+   "kind": "real",
+   "cell": "gameplay",
+   "first": "b",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/1-gameplay-mush.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/1-gameplay-clean.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A top-down, tilt-shift-looking night shot of a toy racetrack: a pale ribbon of track curves from the top right down through the bottom of the frame, with a black-and-white checkered start/finish band painted across it near the bottom centre and a red-and-white striped kerb running along the inside of the corner on the right. A small blue toy car sits on the track just above the checkered band, its headlight throwing a bright white cone forward onto the tarmac; a leaf-shaped shadow falls across the track at the upper right. Everything off-track is dark gravel/crumb-textured ground in purple-brown tones, scattered with small red, black and white debris pieces. The whole frame reads soft: the gravel is a fine mush of specks rather than distinct stones, the car is close to a blue blob, the checkered squares have fuzzy edges, and there is a mild milky haze lifting the darks.",
+    "describeSecond": "The same night top-down racetrack scene at the same camera position and same lighting: pale track curving from upper right to bottom, checkered start/finish band across it, red-and-white kerb on the inside of the right-hand corner, the blue toy car just above the checkers with its headlight cone splashing white light ahead, the same leaf shadow on the upper-right track, and the same dark gravel field with red/black/white debris. Here the render is crisp: individual pebbles in the gravel each cast their own little shadow, the car resolves into a body with a roll bar, side window, tyre treads and a pale number decal on the door with a blue-to-teal paint gradient, the checkered squares have hard edges and a visible cloth weave, the kerb's white segments carry faint printed markings, and thin tyre-scuff lines are visible on the track surface.",
+    "differences": [
+     "Gravel field (left half and around the corner): in first it is an undifferentiated speckle; in second each pebble is a separate rounded stone with its own shadow.",
+     "The blue car just above the checkered line: in first it is a smeared blue shape with no readable parts; in second the roll bar, side window opening, black tyres with tread, and a light-coloured number decal on the door are all distinct.",
+     "Car paint: second shows a blue-to-teal gradient along the body and a bright highlight on the rear deck; first reads as one flat dark blue.",
+     "Checkered start/finish band at bottom centre: edges of the squares are soft and stepped in first, hard-edged in second, and second shows fabric weave texture inside the white squares.",
+     "Red-and-white kerb on the right: in second the white segments carry faint printed text/markings and the stripe boundaries are sharp; in first the stripes are blurred bands with no markings.",
+     "Track surface between the car and the checkers: second shows thin dark tyre-scuff lines and a fine surface grain that first does not resolve.",
+     "Debris props (e.g. the red grille-like block on the left, the small black clips): second shows their individual ridges and edges; in first they are soft blobs.",
+     "Overall tonality: first has a milkier, slightly hazier lift over the dark gravel, second holds deeper blacks and warmer brown midtones in the gravel."
+    ],
+    "anyDifference": true,
+    "preferred": "second",
+    "confidence": 0.9,
+    "why": "The two frames are the same composition, camera, and lighting, so the comparison comes down to how much of that scene actually survives to the screen. The second frame resolves the things the shot is built around: the hero car reads as a modelled vehicle with a roll bar, tyres and a door number instead of a blue smear, the gravel reads as individual stones (which is what sells the toy-scale, macro-diorama look), and the kerb and checkered flag hold their edges and their surface texture. The first frame loses all of that to blur and also sits on slightly hazier blacks. Nothing in the first frame is gained in exchange — the bloom around the headlight is present in both — so the second is better on the same terms the first is trying to hit."
+   }
+  },
+  {
+   "id": "t05",
+   "kind": "null",
+   "cell": "macro",
+   "first": "a",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/3-macro-clean.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/3-macro-clean.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A night-time toy-scale racing scene shot with a shallow depth of field. A dark blue rally-style car with the number 88 on its door drives left-to-right across a pale grey paper-like track surface, seen from a low three-quarter rear angle. Its headlights throw a bright warm cone of light forward into the lower-left corner, washing out that part of the frame; a small red tail light glows at the rear. The car's roof and upper body catch a hard specular highlight along its left flank. The right and bottom of the frame is a bed of rounded pebbles acting as run-off; the track edge sweeps through the middle in an S-curve, with black-and-white kerb blocks along the far edge at upper right. In the blurred background sit a red-and-white striped barrier or flag, a couple of bright bokeh lights near the top centre, and dark unlit shapes filling the upper-left third.",
+    "describeSecond": "The same night-time toy-scale racing scene, framed identically: dark blue number-88 car on pale grey track, low three-quarter rear view, warm headlight cone blowing out the lower-left corner, red tail light at the rear, specular highlight along the roofline. Same pebble run-off filling the right and bottom, same S-curve track edge, same black-and-white kerb blocks at upper right, same blurred red-and-white striped barrier, same two bokeh lights top centre, same dark mass in the upper left. Car position, wheel rotation, light spill shape, and background blur all read the same as the first image.",
+    "differences": [],
+    "anyDifference": false,
+    "confidence": 0.75,
+    "preferred": "neither",
+    "why": "Comparing the two frames feature by feature - car position and body highlights, headlight cone shape and where it clips the lower-left corner, tail light, kerb blocks, pebble field, the bokeh lights and striped barrier in the background - I cannot point at a single spot where they differ. They read as the same frame, so there is nothing to prefer. Confidence is moderate rather than high because a very small change (a few pixels of car motion, a slight exposure shift) could sit below what I can resolve by eye at this size."
+   }
+  },
+  {
+   "id": "t06",
+   "kind": "real",
+   "cell": "chase",
+   "first": "b",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/2-chase-mush.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/2-chase-clean.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A night-time toy-scale racing scene shot from behind and above a blue slot-car-style racer that has run wide off a pale grey banked curve into a wide bed of brown gravel. Its headlights throw a big blown-out white cone up the track and cast a hard fan-shaped shadow of the car onto the tarmac ahead. A black-and-white chequer pattern runs down the right edge of the track, a red-and-white kerb strip curls across the upper right, and the surrounding tabletop is dark and out of focus with an orange block and a thin red pencil-like object at the left. The whole frame is soft: the gravel reads as a fine speckled mush, the car's body panels blur into one another, and the darks in the corners look hazy and slightly lifted.",
+    "describeSecond": "The same night-time toy-scale racing scene, same camera angle: the blue racer sits off the pale banked curve in the gravel run-off, headlights blowing out into a white cone with the car's fan-shaped shadow thrown onto the track ahead, chequered pattern down the right side, red-and-white kerb curling top right, orange block and a red-and-white crayon at the left on a dark tabletop. Here the gravel resolves into individual rounded pebbles each with its own lit top and shadowed side, the car reads as a distinct shape with a roof spoiler, panel-line highlights and a red-and-orange tail-light block, faint painted lane markings are visible on the tarmac near the chequers, and the dark areas are deeper and cleaner.",
+    "differences": [
+     "The gravel run-off filling the bottom half of the frame: in the first it is an undifferentiated fine speckle that breaks into blocky mush near the bottom edge; in the second individual pebbles are separable, each with a highlight and a cast shadow.",
+     "The car body: in the first the rear deck, spoiler and rear bumper merge into one blue smear; in the second the roof and spoiler have crisp specular edges and the rear panel is a distinct shape.",
+     "The tail-light on the car's rear: a small indistinct red smudge in the first, a clearly separated red and orange rectangular block in the second.",
+     "The headlight glow: in the first the bloom is a wider, softer wash that swallows the front of the car; in the second the hot core is tighter and the car's silhouette survives in front of it.",
+     "The pencil/crayon lying on the surface at the lower left: a thin faint line in the first, a thicker cylinder with a visible white band and rounded end in the second.",
+     "The track surface right of the car: the faint painted lane lines and markings near the chequered area are barely readable in the first and clearly drawn in the second.",
+     "Overall contrast in the dark regions: the top-left and far-right corners are hazy, lifted purple-grey in the first; blacker and cleaner in the second.",
+     "Framing is fractionally tighter in the second - the kerb, crayon and orange block all sit slightly larger and lower in the frame than in the first."
+    ],
+    "anyDifference": true,
+    "preferred": "second",
+    "confidence": 0.88,
+    "why": "The second frame renders the same shot at a much higher effective level of detail. The two things a player is actually looking at - the car and the gravel it has slid into - are legible there and mushy in the first: the tail-light, spoiler and panel highlights read as objects rather than as a blue blur, and the run-off reads as stones you have gone off into rather than as noise. The first frame's softness is not a stylistic depth-of-field choice either, since it degrades the in-focus subject and the near-camera gravel equally, and its lifted blacks flatten the night lighting that the scene is built around. The only thing the first has going for it is a slightly larger headlight bloom, which is not worth the loss of everything else."
+   }
+  },
+  {
+   "id": "t07",
+   "kind": "real",
+   "cell": "macro",
+   "first": "a",
+   "second": "b",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/3-macro-clean.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/3-macro-mush.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A night-time third-person racing shot of a dark blue rally-style car with the number 88 on its door, seen from behind and slightly to the left as it runs along a pale grey ribbon of track that curves away to the upper right. The car's headlights throw a hard cone of warm light forward and to the left, blowing out the left edge of the frame; a small red tail-light glows on its right rear. The car itself is rendered sharply: the wheel spokes, the panel gaps, the '88' numerals, the brownish dirt smear along the lower door, and the reflective highlights running down the roofline and windows are all crisply resolved. To the right of the track is a field of rounded cobble-like stones with individually readable shapes and shadows. The background falls off into strong bokeh: a red-and-white striped barrier, a blue-and-white kerb, and a bright point-light flare near the top edge are all soft, and there are visible round bokeh specks above the barrier. The depth of field reads as deliberate — sharp subject, blurred distance.",
+    "describeSecond": "The same frame, same camera position, same car, same track curve, same warm headlight cone and red tail-light, same striped barrier and blue kerb in the distance. But nothing in this image is sharp. The blur is applied across the whole picture, not just the background: the '88' on the door is a soft smudge, the wheel spokes fuse into vague pale shapes, the panel lines and window edges have no defined boundary, and the cobblestones on the right lose their individual outlines into a mottled brown texture. Edges that should be hard — the boundary between the pale track and the dark stones, the silhouette of the roof against the background — bleed several pixels wide. The headlight cone's edge is diffuse and the whole frame carries a soft glow. Colours and layout are unchanged; only the resolving of detail is gone.",
+    "differences": [
+     "The car is in focus in the first and out of focus in the second: the '88' on the door is legible with clean numeral edges in the first, and is a soft blob in the second.",
+     "Wheel detail: the front and rear wheel spokes read as distinct metallic spokes in the first; in the second they merge into undifferentiated light shapes.",
+     "The dirt/mud smear along the lower door of the car has visible texture and a defined upper boundary in the first; in the second it is a smooth gradient with no boundary.",
+     "The cobblestones along the right and bottom of the frame have individual shapes and per-stone shadows in the first; in the second they are a mottled surface with no discrete stones.",
+     "The edge between the pale track surface and the stone field is a crisp line in the first and a several-pixel soft transition in the second.",
+     "The first has a clear sharp/blurred separation between the car and the background (a depth-of-field falloff); the second is uniformly soft, so the car does not separate from its background.",
+     "The bright flare near the top of the frame shows discrete round bokeh specks around it in the first; in the second it is one continuous smeared glow.",
+     "The kerb blocks along the track's right edge in the mid-ground are individually defined rectangles in the first and are smeared together in the second.",
+     "The headlight cone has a defined edge where it meets the dark track in the first; in the second that edge is diffuse and the glow spreads further into the surrounding area."
+    ],
+    "anyDifference": true,
+    "preferred": "first",
+    "confidence": 0.9,
+    "why": "The first frame is the better one because it is the only one where the player can actually read the scene. In the first, the car — the thing being controlled — is sharp and separates from a deliberately blurred background, so the eye lands on it immediately, and the track edge against the cobblestones is a crisp line, which is the information a driver needs to know where the drivable surface ends. The second applies blur uniformly to the whole frame, including the subject, which destroys both of those: the car no longer pops out from its surroundings, and the track boundary becomes a soft gradient that gives no clear read on where the surface ends. Everything else — colour, composition, lighting, car position — is the same, so the comparison comes down to that loss of resolved detail, and it is a loss with no compensating gain. A uniform whole-frame blur reads as an out-of-focus render or an over-applied post effect, not as a photographic choice."
+   }
+  },
+  {
+   "id": "t08",
+   "kind": "null",
+   "cell": "gameplay",
+   "first": "a",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/1-gameplay-clean.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/1-gameplay-clean.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A night-time, high-angle shot of a miniature toy-scale race track. A pale off-white track ribbon sweeps in from the left, curls around a hairpin at centre-right and runs off the bottom of the frame. A small blue-teal car with a light-coloured windscreen sits just past the middle of the frame, angled into the turn, throwing a bright white headlight cone onto the track ahead and casting a long dark blob of shadow up onto the raised bank at right. A black-and-white chequered start/finish band crosses the track below the car, and a red-and-white striped kerb runs along the inside of the hairpin. Everything off-track is coarse gravel/pebble ground, lit warm brown near the centre and falling off into a purple-magenta darkness at the edges. Scattered across the gravel are toy props: a red slatted container box at left, several small red and dark rectangular blocks, a pale card-like object upper-left of centre, and orange-red lettering blown far out of focus along the top edge. Strong depth-of-field blur at the top and bottom, heavy vignette.",
+    "describeSecond": "The same night-time high-angle miniature race-track scene: the pale track curving in from the left into a hairpin at right, the blue-teal car in the same spot mid-frame angled into the turn, the same white headlight cone spilling forward and the same ragged shadow thrown onto the bank at right. The chequered start/finish band sits below the car in the same place, the red-and-white kerb lines the inside of the hairpin, and the gravel field carries the same red container box at left, the same scattered red and dark blocks, the same pale card upper-left of centre, and the same out-of-focus orange lettering along the top. Same warm-brown centre falling to purple-magenta corners, same top-and-bottom defocus and vignette.",
+    "differences": [],
+    "anyDifference": false,
+    "preferred": "neither",
+    "confidence": 0.85,
+    "why": "Looking at the two frames side by side I cannot point at a single thing that differs. The car's position and heading, the shape and reach of the headlight cone, the outline of the shadow on the right-hand bank, the placement of the chequered band and the kerb stripes, the positions of every prop on the gravel (container box, small blocks, pale card, blurred lettering), and the colour grade, blur falloff and vignette all read as the same. With no difference to point at, there is nothing to prefer; picking a side here would mean inventing a reason."
+   }
+  },
+  {
+   "id": "t09",
+   "kind": "real",
+   "cell": "gameplay",
+   "first": "a",
+   "second": "b",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/1-gameplay-clean.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/1-gameplay-mush.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A night-time, top-down-ish shot of a toy-scale racing diorama. A small blue-to-teal rally car with a visible roll cage, windshield, four distinct wheels and a pale cream decal along its flank is driving along a pale grey track that curves from the bottom of the frame up and around to the right. Its headlight throws a hard white bloom onto the track ahead. A black-and-white checkered start/finish band crosses the track in the lower centre, with faint dark tyre scuffs streaking across it. To the right the track is edged by a red-and-white kerb whose individual stripes are separately readable and catch a cool blue rim light; a spiky, star-shaped cast shadow sits on the light track surface at upper right. Everything outside the track is a warm brown gravel bed made of individually visible pebbles, going progressively soft toward the upper left as depth of field falls off. Scattered across the gravel are toy props: an orange-red crate at mid-left, several small red bricks and blue blocks, and a red-and-white marker post. The overall palette is warm brown and dusty purple with cool blue-violet in the shadows.",
+    "describeSecond": "The same scene, same camera, same moment: the same blue car at the same point on the same pale curving track, the same checkered band across the lower centre, the same red-and-white kerb at right, the same star-shaped shadow at upper right, the same crate, bricks and marker post on the gravel. But it is rendered at a much lower effective resolution and stretched to fill the frame. The gravel is not pebbles any more, it is a flat field of violet-grey speckle noise with no shading or shape to the individual stones. The car is a roughly twenty-pixel blue smear with no roll cage, no windshield and no separable wheels. The checkered squares and the kerb stripes have soft, stair-stepped edges, and the far-right kerb stripes blur together into a single pinkish band. The headlight bloom is a wide soft flare rather than a defined core. The whole image reads as slightly cooler and more purple, and nothing anywhere in the frame is actually in focus.",
+    "differences": [
+     "Overall sharpness: in first.jpg the gravel bed resolves into individual pebbles with lit tops and shadowed sides; in second.jpg the same gravel is undifferentiated violet speckle noise with no pebble shapes at all.",
+     "The car in the centre: first.jpg shows the roll-cage hoop above the cabin, the windshield, the cream/white side panel and four separate wheels; in second.jpg the car is a blue-and-white blob with the wheels merged into the body and no roll cage visible.",
+     "The checkered band in the lower centre: first.jpg has straight, crisp square edges and visible dark tyre scuff lines running across the white squares; in second.jpg the square edges are blurred and stair-stepped and the scuff marks are barely present.",
+     "The red-and-white kerb along the right side: first.jpg separates each stripe, including the narrow ones at the far right; in second.jpg the far-right stripes bleed together into one continuous pink smear.",
+     "The orange-red crate on the gravel at mid-left: first.jpg shows its vertical slat texture and a distinct darker top face; in second.jpg it is a flat red rectangle with the top face lost.",
+     "Depth of field: first.jpg has a readable focus falloff, sharp near the track and soft toward the upper-left gravel; second.jpg is uniformly soft everywhere, so the falloff is no longer distinguishable.",
+     "The star-shaped cast shadow on the light track at upper right: its spiky lobes and the gap between them are defined in first.jpg and rounded into a soft blob in second.jpg.",
+     "The headlight bloom ahead of the car: in first.jpg it has a bright core with a defined leading edge on the track; in second.jpg it is a broader, softer flare that washes further across the track surface.",
+     "Colour cast: the gravel reads warm brown in first.jpg and cooler, flatter violet-grey in second.jpg."
+    ],
+    "anyDifference": true,
+    "preferred": "first",
+    "confidence": 0.95,
+    "why": "These are the same frame of the same scene, so the comparison is purely about how much of it survives to the screen, and first.jpg keeps far more. The things the scene is built out of - the pebble gravel, the toy car's roll cage and wheels, the slats on the crate, the separate kerb stripes, the tyre scuffs on the checkered band - are all legible in first.jpg and gone in second.jpg. Second.jpg is not stylistically softer in a deliberate way; it has stair-stepped edges on the checkered squares and kerb diagonals and a uniform blur with no in-focus region anywhere, which is the signature of a low-resolution image stretched up rather than a chosen look. It also loses the depth-of-field falloff that gives first.jpg its miniature, tilt-shift read, since a soft background only means anything when something else is sharp. A player would see first.jpg as a detailed toy racing diorama and second.jpg as the same diorama viewed through a smeared lens. My only hesitation is that a frame this soft could in principle be an intentional motion-blur or speed effect, but nothing in it moves in a direction - the blur is even across the static gravel and the moving car alike - so that reading does not hold up."
+   }
+  }
+ ]
+}

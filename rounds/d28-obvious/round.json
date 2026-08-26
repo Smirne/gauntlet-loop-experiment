@@ -1,0 +1,165 @@
+{
+ "variable": "VALIDATION (known: an unmissable difference) — depth of field on vs off",
+ "settings": {
+  "a": "dof on",
+  "b": "dof off"
+ },
+ "builtFrom": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/spec-obvious.json",
+ "tasks": [
+  {
+   "id": "t01",
+   "kind": "real",
+   "cell": "chase",
+   "first": "b",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-nodof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-dof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A near top-down view of a toy race track laid out on a plywood-textured floor, lit warm and orange as if by low sun. White kerb ribbons, some plain and some painted with red-and-white stripes, sweep across the frame in long arcs. Six small cars sit in the lower-left half: a blue and a red car nose-to-tail against the left kerb, a teal open-wheel-ish car alone in the middle, and a green/black, a yellow, and a blue car queued in a diagonal line toward the bottom edge. Scattered props dot the floor - small grey cubes, orange coins or chips, a hollow orange wooden block near the top left, a dark round hole, and a faint dark ring stamped into the wood. The entire image is uniformly sharp from the top edge to the bottom, corner to corner, and brightness is fairly even across the whole frame.",
+    "describeSecond": "The same top-down toy track, same layout, same six cars in the same positions, same props, same warm orange light. What differs in the look of it: only a horizontal band through the middle of the frame - roughly the teal car, the long white kerb arc and the queued cars - is sharp. The top of the frame (the upper wood grain, the striped kerb at top center, the pale kerb sweeping into the top-right corner) is noticeably out of focus, and the very bottom edge softens too. The corners are darkened by a vignette, strongest at top-left, top-right and bottom-left, and the top strip reads slightly duller and more muted than the same area does in the other frame. The overall effect is a tilt-shift / miniature-photograph look.",
+    "differences": [
+     "Focus: second.jpg has a shallow depth-of-field band - the striped kerb at top center and the pale kerb entering the top-right corner are blurred, while in first.jpg both are crisply in focus.",
+     "Focus at the bottom: the blue car at the bottom edge and the striped kerb arc at bottom-left are slightly soft in second.jpg, sharp in first.jpg.",
+     "Wood grain: the plywood grain across the top third of second.jpg is smeared into soft bands; in first.jpg the individual grain lines and the small grey cubes up there are still readable.",
+     "Vignette: the four corners of second.jpg are visibly darkened, most obviously top-left and top-right; first.jpg's corners are as bright as its center.",
+     "Small props at the frame edges - the grey cubes near the top-left kerb and the orange chips along the right edge - lose their edges in second.jpg and keep them in first.jpg.",
+     "Overall tone of the upper half is slightly duller/less contrasty in second.jpg than in first.jpg."
+    ],
+    "anyDifference": true,
+    "preferred": "second",
+    "confidence": 0.55,
+    "why": "The blur-plus-vignette in second.jpg is the thing that sells the scale: real toy cars photographed on a real plywood floor would have exactly this focus falloff, and without it first.jpg reads as a flat CG plane where wood grain fifty centimeters away is as sharp as the paint on the car in the foreground. The vignette also pushes the eye onto the cars and the kerb they are about to meet, which is where the action is. I hold this only moderately, because the effect costs something real: the striped kerb at top center and the pale kerb in the top-right corner are upcoming track, and in second.jpg they are soft enough that a player reading ahead loses detail there. If legibility of the track beyond the car mattered more than the diorama look, first.jpg would be the better frame."
+   }
+  },
+  {
+   "id": "t02",
+   "kind": "null",
+   "cell": "macro",
+   "first": "a",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-dof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-dof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A low chase-cam shot of a toy-scale racing game. A stubby blue-and-teal rally car with a white roundel reading 88 on its door, chrome five-spoke wheels, a white roof scoop and a dark rear wing sits slightly right of centre, angled away from the camera toward the upper right. It drives on rippled reddish-brown sand that fills the lower two thirds of the frame, casting a soft shadow to its left. A red-and-white striped barrier pole runs from behind the car off the right edge. In the blurred background: a big white curved ramp at upper left, a smaller white ramp at top centre, a dull gold/olive vehicle or block at the far left edge, a small grey crate near the base of the left ramp, an orange pebble on the sand at centre right, a dark curved object at the right edge, and a row of red-and-white markers along the top edge. Warm low sunlight, shallow depth of field, everything beyond the car softly out of focus.",
+    "describeSecond": "The same low chase-cam shot of the same toy-scale racing scene. The blue-and-teal 88 car in the same position and pose, same chrome wheels, white roof scoop, dark rear wing and shadow falling to its left. The same rippled red-brown sand, the same red-and-white barrier pole exiting the right edge, the same white curved ramp at upper left and second ramp at top centre, the same gold/olive object at the far left edge, grey crate, orange pebble at centre right, dark curved shape at the right edge, and the same row of red-and-white markers along the top. Same warm lighting, same depth of field and blur falloff.",
+    "differences": [],
+    "anyDifference": false,
+    "preferred": "neither",
+    "confidence": 0.88,
+    "why": "Looking back and forth between the two frames I cannot point at anything that differs: the car's position, angle, livery, wheel spoke rotation and shadow are the same; the barrier pole crosses the right edge at the same height; the ramps, crate, pebble, dark object at the right edge and the marker row along the top all sit in the same places; the sand ripple pattern, exposure, colour temperature and blur falloff match. With no visible difference there is nothing to prefer, so the honest answer is neither."
+   }
+  },
+  {
+   "id": "t03",
+   "kind": "null",
+   "cell": "chase",
+   "first": "a",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-dof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-dof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A tilt-shift-style overhead shot of a toy racing circuit built on a warm, orange-brown plywood surface with visible woodgrain and knots. White foam kerb walls, some plain and some painted with red-and-white candy stripes, curve across the frame: a long striped run along the right, a plain white arc sweeping through the middle, a tight striped hairpin at bottom-left, and short striped segments at top-left and top-right. Scattered around the wood are small grey cube blocks, orange pellets and a few dark round chips, plus a single orange wedge-shaped ramp near the top-left with a strong cast shadow. Six small die-cast-looking cars: a blue and a red one nose-to-tail against the wall at mid-left, a teal/cyan sports car in the centre just inside the white arc, a black car with a green stripe below it, an orange/yellow car below that, and a dark blue car at the bottom edge. Warm low-angle light from the upper right throws long soft shadows to the lower left; corners fall off into a soft vignette and the far top edge is blurred.",
+    "describeSecond": "The same tilt-shift overhead shot of the toy circuit on orange-brown plywood. Identical kerb layout: striped run along the right, plain white arc through the middle, striped hairpin bottom-left, short striped pieces top-left and top-right. Same orange wedge ramp with the same shadow near the top-left, same scatter of grey cubes, orange pellets and dark chips, including the same cluster of pellets and cubes along the right-hand side. Same six cars in the same places and at the same angles: blue and red pair against the left wall, teal car centre, green-striped black car, orange car, dark blue car at the bottom edge. Same warm low light from the upper right, same shadow directions and lengths, same vignette and same blur along the far top edge.",
+    "differences": [],
+    "anyDifference": false,
+    "preferred": "neither",
+    "confidence": 0.82,
+    "why": "Going region by region - the kerb geometry, the ramp and its shadow, every car's position and heading, the debris scatter, the lighting direction, the shadow lengths, the vignette and the depth-of-field falloff at the top - I could not point at a single thing that differs between the two frames. With nothing to point at, there is no basis to prefer one over the other, so the honest answer is neither. The confidence is high but not absolute because a very small change (a pellet a few pixels over, a slight compression difference) could sit below what I can resolve by eye at this size."
+   }
+  },
+  {
+   "id": "t04",
+   "kind": "real",
+   "cell": "chase",
+   "first": "a",
+   "second": "b",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-dof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-nodof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A near-top-down view of a toy-scale racing scene built on a sheet of orange-brown plywood. Six little die-cast-looking cars sit in the lower-left half: a blue and a red one nose-to-tail at far left, a green/black one, a yellow one, a blue one running off the bottom edge, and a teal roadster alone in the middle of the frame. Track edges are made of white and red-and-white striped foam kerbs: one long pale arc sweeping from the left edge down to the bottom right, a striped hairpin arc at bottom left, another striped arc at top left, and a striped run curving off to the right at upper right. Scattered across the wood are small grey blocks, orange coin-like discs, a dark drilled hole, a rusty knot, and a wooden ramp/block near the top left. Warm low sunlight rakes across from the right, throwing long soft shadows. The image has a shallow depth-of-field look: a band through the middle is crisp, while the top of the frame and the bottom edge fall off into visible blur, and the corners are slightly darkened and hazy.",
+    "describeSecond": "The same toy-scale plywood racing scene from the same camera position, with the same six cars in the same places, the same white and red-striped foam kerbs, the same wooden ramp block at top left, and the same scatter of grey cubes, orange discs, drilled hole and knot. The same warm raking sunlight and long shadows. Here the whole frame is in focus edge to edge: the plywood grain, the saw marks and the pale streaks read clearly all the way to the top and bottom of the image, the striped kerbs at the top of the frame and the hairpin at bottom left have hard defined edges, and the blue car leaving the bottom edge is sharp. Contrast is a little snappier and the yellow-green sun patch across the upper middle of the board is more distinct.",
+    "differences": [
+     "Focus at the top of the frame: in first.jpg the red-and-white kerb at top left and the pale barrier in the top-right corner are visibly blurred; in second.jpg both have crisp edges.",
+     "Focus at the bottom of the frame: in first.jpg the blue car exiting the bottom edge and the lower stripes of the bottom-left hairpin are soft; in second.jpg they are sharp.",
+     "Plywood texture: in second.jpg the grain lines, saw marks and pale streaks are legible across the whole board, including the top quarter; in first.jpg that texture dissolves toward the top and bottom edges.",
+     "Corner falloff: first.jpg has a slight dark, hazy vignette in the corners (most visible bottom left and top right); second.jpg's corners stay bright and clear.",
+     "Small props near the edges: the grey cubes at top left and the grey cube at the far right edge are defined little boxes in second.jpg and soft grey smudges in first.jpg.",
+     "Overall contrast: second.jpg reads slightly punchier, with the yellow-green sunlit patch across the upper middle of the board more clearly bounded than in first.jpg.",
+     "The mid-frame band (teal roadster, the long pale arc, the drilled hole) looks essentially identical in both - the differences are concentrated away from that band."
+    ],
+    "anyDifference": true,
+    "preferred": "second",
+    "confidence": 0.55,
+    "why": "The only real difference is a strong tilt-shift style defocus at the top and bottom of first.jpg. That effect is a defensible stylistic choice here - it is exactly the trick used to make real scenes look miniature, and this scene is trying to look like toy cars on a workbench - so this is close. I lean to second.jpg because in a near-top-down racer the top of the frame is the track the player is about to drive into, and in first.jpg that upper band, including a whole striped kerb line, is the softest part of the image; the car leaving the bottom edge is blurred too. Second.jpg keeps every kerb, cube and car readable, and it also shows off the plywood grain, which is the thing selling the toy-scale conceit in the first place. Low confidence because the preference is a judgement about legibility versus style, not a defect on either side."
+   }
+  },
+  {
+   "id": "t05",
+   "kind": "real",
+   "cell": "macro",
+   "first": "a",
+   "second": "b",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-dof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-nodof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A chase-cam frame of a toy-scale blue racing car, number 88 on its door, driving left-to-right across rippled orange-brown sand. The car sits centre-frame, sharply rendered, with a white roof scoop, chrome five-spoke wheels and a soft shadow under it. A red-and-white striped barrier pole runs from behind the car to the right edge. Everything except the car is heavily out of focus: the white curved ramp at upper left is a soft smear, the gold canister at left edge is a blur, the small grey box prop and the tan pebble in the mid-ground are indistinct blobs, and the barrier props along the top edge dissolve into colour. The sand ripples are only legible in a narrow band right around the car and go smooth and hazy toward the horizon. Overall the image is bright and warm with a milky glow in the upper half.",
+    "describeSecond": "The same shot of the same blue number-88 car in the same position, same pose, same lighting on the bodywork, same red-and-white barrier pole trailing off to the right. Here the whole scene is in focus: the white curved ramp at upper left has crisp edges and a visible cast shadow, a second white ramp sits behind it, a grey concrete-block prop is clearly readable in the mid-left, the gold canister at the left edge shows its latch and lid detail, the tan pebble reads as a stone, a dark disc prop sits on the right edge, and the striped barriers plus dark tyre props along the top edge are all distinct. Sand ripples stay sharp all the way to the top of the frame. The image is slightly darker and cooler overall, with the top corners falling off into shadow.",
+    "differences": [
+     "The background is strongly depth-of-field blurred in first; in second everything from the car to the top edge is in focus.",
+     "The white curved ramp at upper left: a soft featureless smear in first, crisp edges with a readable cast shadow in second.",
+     "Second shows a second white ramp behind the first one at top-centre; in first that area is an undifferentiated pale blur.",
+     "The grey block prop in the mid-left (around a third up the frame) is a vague grey blob in first and a clearly faceted concrete cube in second.",
+     "The gold canister at the left edge: featureless in first, showing its lid seam and wire latch in second.",
+     "The dark object on the right edge is a blurred streak in first and a distinct dark disc in second.",
+     "Along the top edge, the red-and-white striped barriers and dark tyre props are colour smears in first and separate, countable objects in second.",
+     "Sand ripple texture: legible only in a band near the car in first, sharp all the way to the top of the frame in second.",
+     "Overall tone: first is brighter with a warm milky haze in the upper half; second is a little darker and cooler with the top corners falling into shadow."
+    ],
+    "anyDifference": true,
+    "preferred": "second",
+    "confidence": 0.6,
+    "why": "The car is rendered identically in both, so the whole choice rides on the background treatment. In first, the blur is so aggressive that the parts of the track the car is about to reach - the ramp, the block, the barrier line - stop being readable objects and become colour. On a low chase camera in a racing game, that upper band of the frame is where the next few seconds of driving live, so blurring it away costs the player information they need. Second keeps that information: the ramp's edge and shadow read as a jump you could aim at, the block reads as an obstacle, the barrier line reads as track edge. Second also has a slightly better-shaped image, with the darker top corners letting the bright car hold the centre without needing blur to do it. I hold this at moderate confidence because first's shallow focus is genuinely the more cinematic still - if these were being judged as a promotional screenshot rather than as a frame a player is steering through, I could see the call going the other way."
+   }
+  },
+  {
+   "id": "t06",
+   "kind": "real",
+   "cell": "macro",
+   "first": "b",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-nodof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-dof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A chase-cam frame of a small teal/blue toy-style rally car with the number 88 on a white roundel, driving on rippled orange-brown sand. The car sits centre-frame, angled away and to the right, casting a soft shadow to its left. A red-and-white striped barrier pole runs from behind the car off to the right edge. Scattered around are white ramps (a long one at upper left, a smaller one at upper centre), a grey concrete block, a rounded tan pebble, a gold/brass crate-like object at the left edge, dark tyre-shaped debris at the top edge and right side, and a run of red-and-white barriers along the top right. Everything from the car to the far horizon is rendered at roughly equal sharpness; the whole image is uniformly lit and readable edge to edge, with no corner darkening.",
+    "describeSecond": "The same scene and the same car, framing and lighting near-identical: teal 88 car centre-frame on rippled sand, red-and-white barrier pole trailing to the right, white ramps at upper left and upper centre, tan pebble, gold crate at left edge, barriers along the top. Here the car and the sand immediately around it are sharp while everything else falls off into blur: the upper third (ramps, barriers, top-edge debris) is strongly defocused, the grey block is a soft smudge, and the sand at the very bottom of the frame is also softened. The corners and edges are visibly darkened by a vignette, and the overall tone reads a touch warmer and deeper than the first.",
+    "differences": [
+     "Depth of field: in second.jpg the white ramp at upper left and the ramp at upper centre are heavily blurred; in first.jpg both have crisp edges and visible surface shading.",
+     "The grey concrete block left of centre-top is a defined cube with readable faces in first.jpg, and a soft grey blob in second.jpg.",
+     "The red-and-white barrier run along the top right is resolved into individual posts in first.jpg; in second.jpg it is a smeared band of red and white.",
+     "The gold crate at the left edge shows its wire/frame detail and speckled texture in first.jpg; in second.jpg it is soft and its details are lost.",
+     "The tan pebble right of centre has a defined outline and a small cast shadow in first.jpg; it is blurred in second.jpg.",
+     "The sand ripples along the very bottom edge are sharp in first.jpg and softened in second.jpg (blur at both near and far distances, not just far).",
+     "Vignette: the four corners of second.jpg are noticeably darker than the frame centre; first.jpg has even brightness into the corners.",
+     "Overall grade: second.jpg is slightly warmer and darker in the sand midtones than first.jpg.",
+     "The car itself, its 88 roundel, wheels and spoiler are equally sharp in both — the blur difference stops at the car."
+    ],
+    "anyDifference": true,
+    "preferred": "second",
+    "confidence": 0.55,
+    "why": "Second.jpg is the more deliberate-looking frame: the depth of field is focused on the car and falls off both nearer and further, which is the tilt-shift cue that reads 'miniature', and that suits a toy-scale car on ripple-textured sand with cardboard-white ramps. The vignette pulls the eye to the car, which is the subject. The cost is real and I am not discounting it: the blur is strong enough that the upper ramps, the barrier run and the grey block lose their shapes, and in a driving game those are exactly the obstacles a player needs to read before reaching them, so first.jpg is the more legible frame as gameplay. I prefer second on the strength of the art direction while acknowledging first wins on readability — hence the low confidence rather than a firm call."
+   }
+  }
+ ]
+}

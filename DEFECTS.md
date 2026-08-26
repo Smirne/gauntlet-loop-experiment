@@ -1389,7 +1389,7 @@ and plank seams running through the boundary unbroken — is what is left, and i
 only candidate standing.
 
 
-## D28 — The blind A/B is position-biased when the difference is subtle — CRITICAL (method) — OPEN
+## D28 — The blind A/B is position-biased when the difference is subtle — CRITICAL (method) — **FIXED** (protocol rebuilt and validated against three known answers)
 The road-wear round is void, and the way it failed is worth more than its answer.
 
 Four judges, one per camera, 1x wear against 2.4x, captured from one build at one pinned race
@@ -1443,6 +1443,66 @@ that **neither setting reads as a road**. Converged list:
     assuming — but the observation was specific and repeated.
 
 `roadWear` stays at its default of 1. Nothing shipped.
+
+
+### Fixed: the protocol was rebuilt, and then shown a known answer three times
+
+An instrument that has never been given a question whose answer is already known is not an
+instrument. The old protocol had never been given one — every round it ever ran was a round
+whose answer nobody knew. So the fix is a harness (`tools/ab-round.js`, scored by
+`tools/ab-score.js`), and the evidence that it works is three rounds where the answer was
+settled before any judge saw a frame. 27 judges, records in `rounds/d28-*`.
+
+| round | known answer | verdict | position | variable | controls called different |
+|---|---|---|---|---|---|
+| every pair is one frame against itself | nothing there | NULL | no preferences | — | **0 / 2** |
+| full detail vs a 320 px round trip | the clean one | **VERDICT** | 3 / 3 | 6-0, p=0.031 | **0 / 3** |
+| depth of field on vs off | genuinely contested | **SPLIT** | **4 / 4** | 2-2 | **0 / 2** |
+
+**Describe-before-choosing works, at detection.** Perfect separation, both ways: none of the
+eleven control judges claimed a difference between a frame and itself — all wrote "neither"
+without being pushed — and all ten real-pair judges named the actual difference in concrete,
+locatable terms before choosing. That was the adopted policy in REVIEW.md and it earns its
+place.
+
+**It does not stop position bias.** On the depth-of-field round every judge chose the second
+image while describing the difference accurately and naming the trade-off in its own words —
+"legibility versus style", said four different ways. Honest, specific, self-aware, and still
+4-0 on the slot.
+
+**The bias has no fixed direction.** The road-wear round above went 4-0 to the FIRST image.
+This one went 4-0 to the SECOND. Whatever the mechanism is, it is judges converging on a
+side rather than preferring a side, so no correction absorbs it and mixed labels only ever
+detect it after the fact.
+
+**And it appears exactly where this file predicted.** D28 argued from memory that position
+bias is a failure mode of the *hard* comparison specifically. Measured: position was 3/3,
+dead level, on the round whose answer was obvious, and 4/4 on the round whose answer was
+contested — same judges, same brief, same session, same controls.
+
+**What actually caught it was the cross-order rule, which REVIEW.md had declined on cost.**
+At four judgements a 4-0 position split is p=0.125 and cannot clear any honest threshold, so
+the position tally could not have condemned that round. Both orders of both cells naming
+opposite settings could, and did. That paragraph in REVIEW.md is now overturned, on its own
+stated revisit condition.
+
+**A fourth rule fell out of the arithmetic, and it indicts every round this project has
+run.** A unanimous split of n judges is p = 2 / 2ⁿ. The four-judge, four-camera round used by
+every round to date bottoms out at **p = 0.125** — it was never capable of producing a
+significant result, and D28's own "four out of four" was not significant even as a position
+split. Six real judgements (three cells, both orders) reach 0.031. The scorer now returns
+NULL and says *underpowered* rather than letting a small round's quiet null read as evidence
+of no difference.
+
+Encoded, so none of it depends on remembering: `ab-round.js` builds both orders and the
+controls or it does not build a round; `ab-score.js` refuses VERDICT to any round without
+controls, voids a round whose controls come back different, and reports the position tally,
+the cross-order agreement and the power next to every verdict. Its `--selftest` scores the
+road-wear round above from its own numbers and must return NULL.
+
+**Not proven:** that the bias is absent from *critic* rounds, which score one frame rather
+than compare two. That has its own control now — see the bedroom round — but it is a
+different measurement and this one says nothing about it.
 
 
 ### D23 implementation plan — costed, with the mechanism located

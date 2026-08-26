@@ -1,0 +1,130 @@
+{
+ "variable": "VALIDATION (known: nothing at all) — every pair is one frame against itself",
+ "settings": {
+  "a": "dof on",
+  "b": "dof on (the same file)"
+ },
+ "builtFrom": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/spec-sham.json",
+ "tasks": [
+  {
+   "id": "t01",
+   "kind": "real",
+   "cell": "chase",
+   "first": "b",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-dof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-dof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A tilt-shift, top-down view of a toy racing circuit laid out on a warm-lit plywood floor; the wood grain, knots and dark streaks read as the track surface. White and red-and-white striped foam kerbs sweep across the frame: a long plain white barrier arcing from the left edge through the middle, a red-striped arc in the bottom-left corner, another red-striped run along the right side, and short striped fragments at the top edge. Six miniature cars: a blue and a red one nose-to-tail against the barrier at upper left, a teal/cyan car in the centre pointing down-right, a green-and-black car below it, an orange car beneath that, and a blue car at the bottom edge, all casting long soft shadows toward the lower left. Small grey cubes and orange coin-like chips are scattered over the wood, with a dark round hole/marker left of centre and a small dark ball near the top middle. The top and bottom of the frame fall out of focus.",
+    "describeSecond": "The same tilt-shift top-down toy circuit on warm-lit plywood: same wood grain and knots, same white barrier arcing from the left edge across the middle, same red-and-white striped kerbs bottom-left, right side and top edge. The same six cars in the same places and orientations - blue and red pair at upper left against the barrier, teal car centre, green-and-black car below, orange car under it, blue car at the bottom edge - with shadows falling the same way. Same scatter of grey cubes and orange chips, same dark round hole left of centre and dark ball near the top middle, same defocus at the top and bottom of the frame.",
+    "differences": [],
+    "anyDifference": false,
+    "preferred": "neither",
+    "confidence": 0.85,
+    "why": "Looking at the two frames side by side I cannot point to anything that differs: every car is in the same position and at the same angle, every kerb segment, grey cube, orange chip, shadow and the wood grain itself line up, and the lighting, colour cast and depth-of-field falloff read the same. With nothing to point at, there is nothing to prefer, so the honest answer is neither."
+   }
+  },
+  {
+   "id": "t02",
+   "kind": "null",
+   "cell": "macro",
+   "first": "a",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-dof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-dof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A low camera angle on a toy-scale racing car crossing packed reddish-brown dirt with fine raked grooves running toward the lower right. The car is a stubby blue hatchback-styled racer, darker blue on the roof and rear, lighter aqua on the doors, with a silver stripe and a white roundel carrying the number 88 on the front door, chrome-lipped five-spoke wheels, a white roof scoop and a black rear wing. It sits slightly left of center and is angled front-left toward the camera, casting a soft shadow to its left. A red-and-white striped guardrail or barrier tube runs diagonally behind it from the mid-right edge toward the car's rear. In the blurred background: a white ramp or jump at upper left, a second larger white ramp at top center, a grey block near the left ramp, a gold or tan vehicle partly cut off at the left edge, a small tan pebble on the dirt at center right, a dark thin object near the right edge, and a row of small red-and-white markers along the top edge. Warm late-day light, shallow depth of field, background heavily defocused.",
+    "describeSecond": "The same low-angle shot of the same toy-scale blue number 88 racer on the same raked reddish dirt surface, same pose and framing: car slightly left of center angled front-left, silver stripe and white 88 roundel on the door, white roof scoop, black rear wing, chrome five-spoke wheels, soft shadow to the left. The same red-and-white striped barrier runs in from the right edge behind the car. Background identical in content and blur: white ramp upper left, larger white ramp top center, grey block, cut-off gold vehicle at the left edge, tan pebble at center right, dark thin object at the right edge, red-and-white markers along the top. Same warm lighting, same exposure and color cast, same depth of field.",
+    "differences": [],
+    "anyDifference": false,
+    "preferred": "neither",
+    "confidence": 0.82,
+    "why": "Going element by element - car pose and livery, wheel spoke angles, shadow shape, the barrier's entry point and stripe positions, the ramps, the pebble, the markers along the top, the groove pattern in the dirt, and the overall exposure and warmth - I cannot point at a single spot where the two frames diverge. With nothing I could actually indicate in the frame, there is no basis to prefer one, so 'neither'. Confidence is high but not absolute: a very small change in a heavily defocused background region, or a sub-pixel difference in compression, could sit below what I can resolve by looking."
+   }
+  },
+  {
+   "id": "t03",
+   "kind": "real",
+   "cell": "chase",
+   "first": "a",
+   "second": "b",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-dof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-dof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A tilted top-down view of a toy-scale race track built on a big sheet of plywood, lit warm orange like late afternoon, with a shallow tilt-shift blur softening the top edge and the very bottom. Foam kerbs define the layout: a plain white arc sweeping across the middle, a red-and-white striped kerb curving in from the right, another striped arc in the lower left, a short striped segment at the upper left, and more track pieces receding into the blurred distance at the top. Six small cars are on the board: a blue and a red car nose-to-tail against the white kerb at the left, a teal/cyan car alone in the middle of the open plywood, a green-and-black car below it, and a yellow car with a blue car behind it running down toward the bottom edge. Scattered across the wood are orange coin-like tokens and small grey cube blocks, plus a tan wooden ramp near the top-left-center and a dark round hole with a rim just left of center. Long soft shadows fall to the lower left from every object.",
+    "describeSecond": "The same tilted top-down view of the plywood race track, same warm orange light, same tilt-shift softening at top and bottom. The same foam kerbs in the same places: white arc across the middle, red-and-white striped curve on the right, striped arc lower left, short striped piece upper left, blurred track pieces at the top. The same six cars in the same spots and orientations: blue and red pair against the white kerb at the left, teal car in the open middle, green-and-black car below it, yellow then blue heading off the bottom. The same orange tokens, the same grey cubes, the same tan ramp near the top-left-center, the same dark rimmed hole left of center, and shadows falling the same direction at the same length.",
+    "differences": [],
+    "anyDifference": false,
+    "preferred": "neither",
+    "confidence": 0.85,
+    "why": "I went over the two frames region by region — kerb shapes and positions, all six car positions and headings, the ramp, the rimmed hole, the layout of coins and grey cubes, the direction and length of the shadows, the placement of the blur band at the top and bottom — and I cannot point at anything that differs. As far as a player looking at these would be concerned, they are the same frame, so there is nothing to prefer. The confidence is not 1.0 only because a very small pixel-level difference could sit below what I can resolve by eye; but no visible element differs."
+   }
+  },
+  {
+   "id": "t04",
+   "kind": "real",
+   "cell": "macro",
+   "first": "a",
+   "second": "b",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-dof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-dof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A low three-quarter-rear chase shot of a toy-scale teal/blue racing car on a ribbed, reddish-brown dirt surface, warm late-day light coming from the left. The car carries a white roundel with the number 88 on its door, a white roof scoop, silver five-spoke wheels and a dark tinted windscreen; its shadow falls to the left. A white-and-red striped track barrier runs from behind the car off to the right edge. Background is heavily depth-of-field blurred: a pale curved ramp or berm upper left, a small grey box on the dirt, a gold/tan vehicle at the far left edge, an orange pebble mid-frame, a dark curved object at the right edge, and out-of-focus red-and-white barriers along the top edge.",
+    "describeSecond": "The same low three-quarter-rear chase shot of the teal/blue number-88 toy racing car on ribbed reddish-brown dirt, same warm side light and left-falling shadow. Same white roof scoop, silver five-spoke wheels, tinted windscreen, same red-and-white barrier sweeping off to the right, and the same blurred background elements in the same places: the pale ramp upper left, the small grey box, the gold vehicle at the left edge, the orange pebble, the dark object at the right edge, and the red-and-white barriers along the top.",
+    "differences": [],
+    "anyDifference": false,
+    "preferred": "neither",
+    "confidence": 0.8,
+    "why": "Going element by element - car position and pose, wheel spoke orientation, the 88 roundel, the shadow shape, the barrier's angle and where it exits the right edge, the pebble, the grey box, the gold vehicle at the left edge, the ramp's blur falloff, and the overall exposure and colour - I could not find a single spot where the two frames disagree. They read as the same frame, so there is nothing to prefer."
+   }
+  },
+  {
+   "id": "t05",
+   "kind": "null",
+   "cell": "chase",
+   "first": "a",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-dof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/chase-dof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A top-down, tilt-shift style shot of a toy racing track built on a warm reddish-brown plywood surface, lit low and golden so the far edge falls off into haze. White foam-like barrier strips, some plain and some painted with red-and-white candy stripes, curve across the frame: a long plain white arc sweeps from the left edge to the bottom right, a striped hairpin loops in at the lower left, another striped run climbs the right side, and more striped and plain pieces sit near the top edge. Six toy cars are on the board: a blue and a red car nose-to-tail at the left middle, a teal/turquoise car in the center, a green-and-black car below and left of it, and a yellow and a blue car stacked at the bottom center. Scattered small grey cube blocks and orange/amber pellets litter the wood, and an orange open-sided box sits near the top left. The wood grain, knots and a dark round burn mark are clearly visible; foreground and background are softly blurred while the middle band is sharp.",
+    "describeSecond": "The same top-down tilt-shift toy racetrack on warm reddish-brown plywood, same low golden light and hazy far edge. Same barrier layout: plain white arc from the left edge down to the bottom right, red-and-white striped hairpin at the lower left, striped run up the right side, striped and plain fragments along the top. Same six cars in the same places and poses: blue and red pair at left middle, teal car center, green-and-black car below it, yellow and blue cars at bottom center. Same scattered grey cubes and amber pellets, same orange open box top left, same knots, grain lines and dark round mark on the wood, same depth-of-field band with blurred foreground and background.",
+    "differences": [],
+    "anyDifference": false,
+    "preferred": "neither",
+    "confidence": 0.85,
+    "why": "I compared the two frames feature by feature — barrier positions and stripe phase, all six car positions and colours, the orange box, the scatter of grey cubes and amber pellets, the wood grain and burn mark, the lighting falloff and the depth-of-field band — and could not point to a single element that sits differently, is coloured differently, or is missing in one frame. As far as a player looking at these two frames is concerned they are the same image, so there is nothing to prefer. Confidence is high but not absolute because a sub-pixel or compression-level difference would not be visible to me by looking, which is the only method allowed here."
+   }
+  },
+  {
+   "id": "t06",
+   "kind": "real",
+   "cell": "macro",
+   "first": "b",
+   "second": "a",
+   "sources": [
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-dof.jpg",
+    "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval/macro-dof.jpg"
+   ],
+   "answer": {
+    "describeFirst": "A low three-quarter-rear chase shot of a toy-scale blue/teal rally car with the number 88 in a white roundel on its door, chrome five-spoke wheels and a white roof scoop, driving right-to-left across hard-packed reddish-brown dirt that is combed with fine parallel rake lines. A red-and-white striped guard rail runs from the car's rear bumper off to the right edge. Upper left has a large out-of-focus white ramp or jump, a small blue drum sits mid-left in the blur, a gold/olive second vehicle is cut off at the left edge, an orange pebble lies in the dirt at center-right, and a dark thin object rests near the right edge. The far background is blurred with red-and-white barriers along the top. Warm low sun, strong soft shadow cast to the left of the car, shallow depth of field with the car sharp.",
+    "describeSecond": "The same low three-quarter-rear chase shot: the identical blue/teal number-88 rally car in the same position and pose on the same raked reddish dirt, same red-and-white rail leaving the rear bumper toward the right edge, same blurred white ramp upper left, same blue drum, same cropped gold vehicle at the left edge, same orange pebble center-right, same dark object at the right edge, same blurred barrier line across the top. Same warm lighting, same shadow direction and softness, same depth of field and framing.",
+    "differences": [],
+    "anyDifference": false,
+    "preferred": "neither",
+    "confidence": 0.82,
+    "why": "Going element by element - car position and rotation, wheel spoke orientation, the 88 roundel, the roof scoop highlight, the rail's angle and where it exits frame, the pebble, the drum, the cropped gold car, the dark object at right, the barrier line at top, shadow shape, and the blur falloff - I cannot point at a single thing that sits differently in one frame than the other. With nothing to point at, there is no basis to prefer either; both are the same frame as far as a player would see."
+   }
+  }
+ ]
+}

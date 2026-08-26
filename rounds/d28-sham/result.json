@@ -1,0 +1,32 @@
+{
+ "variable": "VALIDATION (known: nothing at all) — every pair is one frame against itself",
+ "verdict": "NULL",
+ "because": "no judge expressed a preference",
+ "winner": null,
+ "tasks": {
+  "real": 4,
+  "null": 2,
+  "withPreference": 0
+ },
+ "floor": {
+  "nullPairs": 2,
+  "falseDifferences": 0,
+  "rate": 0,
+  "offenders": []
+ },
+ "position": {
+  "first": 0,
+  "second": 0,
+  "p": null
+ },
+ "variable_": {
+  "tally": {},
+  "p": null
+ },
+ "orders": {
+  "cells": 0,
+  "paired": 0,
+  "agreed": 0,
+  "unpaired": []
+ }
+}

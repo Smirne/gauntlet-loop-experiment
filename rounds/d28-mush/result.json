@@ -1,0 +1,39 @@
+{
+ "variable": "VALIDATION (known: one side is plainly broken) — full detail vs a 320 px round trip",
+ "verdict": "VERDICT",
+ "because": "a wins a 6 (p=0.031), position 3/6 (p=1.000), all cells agree across orders",
+ "winner": "a",
+ "tasks": {
+  "real": 6,
+  "null": 3,
+  "withPreference": 6
+ },
+ "floor": {
+  "nullPairs": 3,
+  "falseDifferences": 0,
+  "rate": 0,
+  "offenders": []
+ },
+ "power": {
+  "judgements": 6,
+  "bestPossibleP": 0.03125,
+  "underpowered": false
+ },
+ "position": {
+  "first": 3,
+  "second": 3,
+  "p": 1
+ },
+ "variable_": {
+  "tally": {
+   "a": 6
+  },
+  "p": 0.03125
+ },
+ "orders": {
+  "cells": 3,
+  "paired": 3,
+  "agreed": 3,
+  "unpaired": []
+ }
+}

@@ -129,12 +129,63 @@ where a wrong verdict is hardest to notice. Three rules follow.
    difference is large enough to be seen, or accept that the change is below the threshold
    that matters and drop it.
 
-**Considered and declined: showing each pair to two judges in opposite orders** and keeping
-the verdict only where they agree. It would make subtle results trustworthy, but it doubles
-the agent cost per round and roughly halves the number of usable verdicts. The judgement was
-that describe-first is worth trying first, and that a human playtest is the better instrument
-for anything this loop cannot resolve. If describe-first only converts position bias into
-more honest nulls — which is a real possibility — revisit this.
+### Revisited, and overturned, by measurement — 26 Aug 2026
+
+The paragraph that used to sit here declined the two-order rule as too expensive and bet on
+describe-first alone, ending "if describe-first only converts position bias into more honest
+nulls — which is a real possibility — revisit this." That is what happened. Three rounds,
+27 judges, all on the fixed brief:
+
+| round | known answer | verdict | position split | controls called different |
+|---|---|---|---|---|
+| a frame against itself, every pair | nothing there | NULL | no preferences at all | **0 / 2** |
+| full detail vs a 320 px round trip | the clean one | **VERDICT**, 6-0, p=0.031 | 3 / 3 | **0 / 3** |
+| depth of field on vs off | genuinely contested | **SPLIT** | **4 / 4 one side** | **0 / 2** |
+
+**Describe-first works, at the job it does.** Detection was perfect and separated cleanly:
+not one of the eleven control judges claimed a difference between a frame and itself, all of
+them wrote "neither" unprompted, and every one of the ten real-pair judges named the actual
+difference in concrete, locatable terms before choosing. The protocol's first rule is sound
+and stays.
+
+**Describe-first does not stop position bias.** On the depth-of-field round all four judges
+chose the second image while describing the difference accurately and acknowledging the
+trade-off in their own words. Honest, specific, self-aware prose, and still 4-0 on the slot.
+
+**The bias is not a left-bias.** The road-wear round went 4-0 to the *first* image. This one
+went 4-0 to the *second*. Direction is not stable, so no correction and no fixed slot order
+can absorb it, and mixing labels only ever detects it after the fact.
+
+**It strikes exactly where D28 said it would.** Position was 3/3 — dead level — on the round
+whose answer was obvious, and 4/4 on the round whose answer was contested. The claim that
+this is a failure mode of the *hard* comparison specifically was made from memory in D28; it
+is now measured, inside one session, against a control.
+
+**So both orders are mandatory**, and they are what actually caught it: at four judgements a
+4-0 position split is p=0.125 and cannot clear any honest threshold, so the position tally
+alone could not have condemned the round. The cross-order disagreement could, and did.
+
+### The protocol, as it now stands
+
+Rounds are built, blinded and scored by `tools/ab-round.js`; it will not let a round skip
+these. Judges are pointed at one task directory each and never see `round.json`.
+
+4. **Every cell goes to two judges in opposite orders.** Keep the verdict only where both
+   name the same setting. Cells that disagree make the round a SPLIT, not an average.
+5. **Every round carries controls — a frame against itself.** A judge that finds a difference
+   there is not measuring the variable, and a round where most controls come back "different"
+   is VOID. This is the oldest rule in the project (measure the floor in the same run, with
+   the same instrument) pointed at the judges instead of at the pixels. **A round with no
+   controls cannot return a verdict at all.**
+6. **Three cells minimum.** A unanimous split of n judges is p = 2 / 2ⁿ, so the four-judge,
+   four-camera round every earlier round used bottoms out at p=0.125 and was never capable of
+   a significant result — D28's "four out of four" was not significant even as a position
+   split. Six real judgements reach 0.031. Below that the scorer returns NULL and says
+   *underpowered* rather than letting a quiet null read as evidence of no difference.
+
+Cost is roughly 3× the old round (three cells, both orders, plus controls). The
+depth-of-field round is what that buys: under the old protocol it would have been written up
+as a win for whichever side the labels happened to favour.
 
 What a null round is still good for: the judges' *descriptions* remain useful even when their
 *verdict* is worthless, because a description does not depend on which frame was which. The
