@@ -2448,3 +2448,134 @@ system builds. Every audio measurement in this project now runs behind it. The
 previous approach — seeding a muted setting into `localStorage` — worked right up
 until the page was a third-party iframe, where Chrome's storage partitioning meant
 the seed never reached it. A URL flag travels with the page.
+
+---
+
+## D23 — The road does not read as a road — MAJOR — FIXED (the road was made of the table)
+
+Open since round 4, agreed on by four independent judges, and survivor of two failed
+attempts. The answer was in the configuration the whole time:
+
+| circuit | road `surface` | `groundSurface` | |
+|---|---|---|---|
+| kitchen | `varnishedWood` | `oak` | both `category: 'wood'` |
+| bedroom | `laminate` | `carpet` | hard on soft |
+
+Kitchen's road is a varnish over oak and its table is oak. Same projection, same kind of
+texture, so the grain, the knots and the plank joints run through the road edge unbroken.
+`TrackBuilder`'s own header says so out loud, as a design intent rather than a defect:
+
+> A world projection is what "the road is a piece of the table" actually means — the grain
+> runs straight and the road crosses the joints instead of carrying them along with it.
+
+The code does exactly what it says. What it says is the defect. And it explains why every
+attempt to close this with *contrast* failed: there is 58 luma of road-vs-table separation at
+the shipping camera (D23 re-measurement) and it is not enough, because the eye is not reading
+brightness here, it is reading whether one surface stops and another begins.
+
+**Measured, with a new instrument.** `tools/grain-probe.js` takes a patch wholly inside the
+road and a patch wholly on the table, builds a gradient-orientation histogram over each, and
+reports the angle between them. 0 deg means the road is made of the table. Six points around
+the kitchen lap, before and after:
+
+    t         0.03    0.05    0.2325   0.55    0.75    0.95      mean*
+    before    0.23    6.26     6.43    3.36    0.68    0.99      2.34 deg
+    after    33.44     --     31.93   36.62   27.62   26.89     31.30 deg
+    * over the five points where both readings are valid
+
+**At t = 0.75 and t = 0.95 the road's grain was within one degree of the table's.** Not
+similar to it. The same board.
+
+**The fix is a rotation, not a reprojection.** `ROAD_GRAIN_DEFAULT` turns the ROAD's world XZ
+projection 35 deg against the ground's. It is still a world planar projection, so everything
+the header defends is intact — the grain runs dead straight, the hairpin cannot drag it round,
+no board bends. It simply stops being the *same* board. Ribbon-space UVs, which is what was
+tried and reverted before, are still ruled out and still for the reason recorded.
+
+**Per track, not global.** `{ kitchen: 35 }`. Bedroom is the best-looking circuit in the game
+and does not have this defect — a plank on a carpet cannot be mistaken for more carpet — so it
+keeps 0 and is left alone. `?roadGrain=N` overrides for capture.
+
+**Verified as a change confined to the road.** Within one session, cross-boot noise floor
+0.102% of pixels / 0.012 mean luma. Kitchen at 0 vs 35 differs by **21.05% / 3.41 mean luma**,
+and the difference image is the road corridor and nothing else. Bedroom moved no more than a
+null-change kitchen did (see D49).
+
+**Two instrument faults found and fixed on the way, both of the same family.**
+
+1. The first run reported the road at concentration 0.17 against the table's 0.62 and called
+   it a 21.6 deg separation. It was measuring the **painted lane markings** — straight, bright,
+   aligned to the circuit. Markings, kerbs, cars and props are separate meshes; only
+   `track:road` and `track:ground` are visible to the probe now.
+2. The table's contrast — which nothing under test can affect — flipped between 11.64 and
+   42.53 depending on what had been rendered before. That was a **prop's shadow** falling
+   across the patch in some runs. Shadows are off for the measurement. A shadow edge is a
+   long straight high-contrast oriented gradient, which is to say it is exactly the thing
+   being measured, arriving from somewhere else.
+
+**And one result refused rather than reported.** At t = 0.05 the 35 deg setting appeared to
+make things *worse* — separation 3.19 against a 6.26 baseline — contradicting every
+neighbouring sample. The road patch there measured concentration **0.13** against 0.42-0.60 at
+t = 0.03 / 0.07 / 0.09, with the highest contrast of the four: something bright and undirected
+sits on that patch, near the start line. An angle taken from a patch with no direction is
+noise with a decimal point on it. The probe now returns `undirected: true` and no angle below
+a concentration of 0.25, and that point is excluded from the mean above rather than argued
+away. Same shape as the audio probe's impossible `flatness: 6420` in D47.
+
+**Not claimed: the grazing-angle case.** `Surfaces.js` warns at length that `varnishedWood` is
+"the most dangerous material in the game" at grazing incidence. Both low-camera pins available
+(`store-shots.js` at 7 s and 18 s) land on the milk spill and the ceramic tile span
+respectively, so neither actually shows varnished wood at a shallow angle. No artefact appeared
+at any rung in any frame taken, and that is a weaker statement than "there is none".
+
+**Still missing from the four-judge brief**, unchanged by this: twin wheel ruts at wheel-track
+spacing, braking smears before corners, scuff arcs, debris swept off the driven line, and a
+corridor edge where kerbs are absent. Those remain the D23 implementation plan's work. This
+fixes the one thing that plan did not identify, because it was in the config rather than in
+the markings.
+
+---
+
+## D49 — Frames from different sessions are not comparable, and nobody knew — CRITICAL (method) — OPEN
+
+Found while checking that the D23 fix had not regressed bedroom, a circuit it does not touch.
+
+    bedroom, yesterday vs today          57.83% of pixels changed, 6.03 mean luma
+    kitchen, yesterday vs today          57.85% of pixels changed, 7.93 mean luma
+      ...with today's kitchen captured at ?roadGrain=0, which is byte-identical behaviour
+    kitchen, today vs today, two boots    0.102% of pixels changed, 0.012 mean luma
+    bedroom, today vs today, two boots    0.104% of pixels changed, 0.015 mean luma
+
+**Within a session the capture is reproducible to a tenth of a percent. Across sessions it
+moves by 58% of the frame.** Both tracks by the same amount, on identical code.
+
+`git log` since the earlier captures: **no commit touched `src/textures/`, `src/world/` or
+`src/render/`.** The rendering code is the same code.
+
+**Where the difference is.** The difference image is unambiguous: the road corridor, the kerbs,
+the cars and every prop are black — bit-identical — and the entire difference is the *table's
+wood grain*, a fine texture-following pattern across the whole slab.
+
+**What is known about the state.** The canvas reports `clientWidth/clientHeight = 0` — D44's
+condition — and the renderer is at `pixelRatio 1.748`, drawing buffer 2796x1573 = 4.40 Mpx.
+That is the ultra tier's budget, so D44's clamp is working; it is simply not landing on the
+same number it landed on before (D44 recorded 2347x1320 = 3.10 Mpx under the same zero-size
+condition). The ground material's map is 1024x1024 at anisotropy 16, max anisotropy 16.
+
+**The cause is NOT identified, and is deliberately not guessed at here.** A capture renders at
+a pinned 3840x2160 regardless of the live drawing buffer, which is exactly what should make
+mip and anisotropy selection reproducible, so "different render resolution" does not on its own
+explain a difference confined to one material. Writing a plausible mechanism into this file is
+how D31's cause got asserted and then retracted.
+
+**Why this is CRITICAL and why it is method rather than art.** This project's entire practice
+is comparing frames. Several conclusions in this file rest on a cross-session before/after —
+including "the reverted build matches the pre-feature capture to the noise floor (0.14%
+against a 0.13% floor)" in D23's first attempt, a number that cannot have been measured the way
+this one was. **Any conclusion in this file that rests on a cross-session pixel diff is now
+suspect** and should be re-derived from same-session captures before being relied on.
+
+**The rule that follows immediately, whatever the cause turns out to be:** a before/after
+pixel diff is only valid when both frames come from the same session, and the session's own
+cross-boot floor is measured and quoted alongside it. The D23 numbers above were taken that
+way. Nothing else in this session's work depends on a cross-session diff.

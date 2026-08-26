@@ -61,6 +61,52 @@ const ROAD_WEAR = (() => {
     return Number.isFinite(v) && v > 0 ? Math.min(4, v) : 1;
   } catch (e) { return 1; }
 })();
+/**
+ * Rotation, in degrees, of the ROAD's world texture projection relative to the
+ * ground's. `?roadGrain=N` overrides it; 0 is what shipped.
+ *
+ * This is D23's lever. The deck and the ground slab are both projected in world
+ * XZ (see the uv callback in the deck sweep for why that is right and why
+ * ribbon space was tried and reverted). The consequence nobody costed is that
+ * the road's grain, its knots and its plank joints line up EXACTLY with the
+ * table's, because they are the same projection of the same kind of texture.
+ * The road then reads as a dark stain on one continuous board, which is what
+ * four independent judges said and what the tour frame shows plainly.
+ *
+ * Contrast is not the missing ingredient — there is 58 luma of it at the
+ * shipping camera and it is not enough. CONTINUITY is. A rotation breaks the
+ * grain across the boundary without giving up the world projection: the boards
+ * still run straight and still refuse to bend round the hairpin, they simply
+ * stop being the SAME boards. That is what a plank laid across a table looks
+ * like.
+ */
+const ROAD_GRAIN_URL = (() => {
+  try {
+    const raw = new URLSearchParams(location.search).get('roadGrain');
+    if (raw === null) return null;
+    const v = Number(raw);
+    return Number.isFinite(v) ? Math.max(-90, Math.min(90, v)) : null;
+  } catch (e) { return null; }
+})();
+
+/**
+ * The angle a given circuit wants, when the URL is not overriding it.
+ *
+ * PER TRACK, not global, because the defect is not global. It appears only
+ * where the road and the ground are the same KIND of thing:
+ *
+ *   kitchen   varnishedWood on oak       both wood      6.4 deg apart  <- D23
+ *   bedroom   laminate on carpet         hard on soft   already broken
+ *
+ * Bedroom is the best-looking circuit in the game and its road already reads as
+ * a road, because a plank on a carpet cannot be mistaken for more carpet. It
+ * gets 0 and is left alone. Measured separation across five points of the
+ * kitchen lap was 6.26 / 6.43 / 3.36 / 0.68 / 0.99 degrees — at two of them the
+ * road's grain is within a degree of the table's, which is to say it IS the
+ * table.
+ */
+const ROAD_GRAIN_DEFAULT = { kitchen: 35 };
+
 const GROUND_TEX_SCALE = 96;
 const KERB_TILE = 11;          // two kerb blocks per repeat
 const WALL_TEX_SCALE = 34;
@@ -2089,6 +2135,17 @@ export class TrackBuilder {
     const roadScale = this.roadMaterials[0]?.userData.texScale ?? ROAD_TEX_SCALE;
     const groundScale = this.offMaterial.userData.texScale;
 
+    // How far the road's grain is turned away from the table's. `?roadGrain=N`
+    // overrides, so the whole ladder can be captured from one build at one
+    // pinned race moment — which is the only way to judge something this
+    // subtle, and the reason the previous road-wear round was a null.
+    const grainDeg = ROAD_GRAIN_URL ?? (
+      Number.isFinite(track.roadGrainDeg) ? track.roadGrainDeg
+        : (ROAD_GRAIN_DEFAULT[track.id] ?? 0)
+    );
+    const grainCos = Math.cos(grainDeg * Math.PI / 180);
+    const grainSin = Math.sin(grainDeg * Math.PI / 180);
+
     // Where the racing line runs at each row — the rubbered-in groove is drawn
     // from this, and it is the single cheapest thing that makes a track look
     // used rather than new.
@@ -2130,6 +2187,17 @@ export class TrackBuilder {
         // genuinely follow the circuit keep ribbon UVs: the racing line, the
         // lane and edge markings, the kerbs, the skid deposits.
         track.surfacePoint(this.rowTAt(i), lat, _pd);
+        if (c.group === 'road' && grainDeg !== 0) {
+          // Rotate the ROAD's projection only (see ROAD_GRAIN_DEFAULT). Still a
+          // world planar projection, so the grain runs dead straight and the
+          // hairpin cannot drag it round; it just no longer continues the
+          // table's own boards through the road edge.
+          _uv.set(
+            (_pd.x * grainCos - _pd.z * grainSin) / roadScale,
+            (_pd.x * grainSin + _pd.z * grainCos) / roadScale,
+          );
+          return _uv;
+        }
         const scale = c.group === 'road' ? roadScale : groundScale;
         _uv.set(_pd.x / scale, _pd.z / scale);
         return _uv;

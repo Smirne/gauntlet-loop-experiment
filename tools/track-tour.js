@@ -68,7 +68,14 @@ function moving(steps = 60) {
   return { moving: b > a, from: +a.toFixed(4), to: +b.toFixed(4) };
 }
 
-export async function tourShot(id) {
+/**
+ * @param {string} id      circuit that must be booted, or falsy for whatever is
+ * @param {{name?: string}} opts  `name` overrides the output file, so a dial
+ *   (see ?roadGrain) can put several rungs side by side without each one
+ *   overwriting the last. The pin, the liveness guard and the camera are
+ *   deliberately NOT parameterised: they are what make the frames comparable.
+ */
+export async function tourShot(id, opts = {}) {
   const s = window.MG?.status;
   if (!s) return { booting: true, msg: document.querySelector('#boot .boot-msg')?.textContent };
 
@@ -85,7 +92,7 @@ export async function tourShot(id) {
              state: window.MG.ctx?.race?.state };
   }
 
-  const shot = await window.MG.capture('tour-' + got, 1920, 1080);
+  const shot = await window.MG.capture(opts.name || ('tour-' + got), 1920, 1080);
 
   // What the frame is made of, so a look and a count can be checked against
   // each other rather than one standing in for the other.
