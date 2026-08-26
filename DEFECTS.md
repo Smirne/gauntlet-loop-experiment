@@ -394,6 +394,71 @@ therefore tests one arrival speed, not five. It is a realistic arrival speed, an
 conclusion "no air at the lip at race pace" stands, but it is not a statement about slow
 crossings.
 
+### And then: what shape WOULD be a jump? Measured, not guessed
+
+The paragraph above says "roughly triple the height". That was arithmetic on the exit slope,
+and the arithmetic is not what happens. Two more instruments were built to find out.
+
+`tools/jump-shape.js` mutates the resolved hazard record in place — height, length, and the t
+span derived from length — so every candidate is measured on ONE boot with nothing else
+different, and drives one car over it at full throttle. The road MESH does not follow a
+reshape, so it is an instrument for numbers only; `?hazardGeom=butterJump:height=14,length=24`
+reshapes before the mesh is built, for looking.
+
+Two things it got wrong first, both worth keeping:
+
+- A fresh page sits in ATTRACT with the whole field held, and a held car does not integrate.
+  Every candidate came back `toeSpeed: null`, `airSeconds: 0`, `worstStepGain: 0` — which
+  reads exactly like "no shape jumps" and was really "the car never moved". A run that does
+  not complete cleanly is now reported `void`, never as a zero.
+- A shape that flips the car DAMAGES it, and a damaged car climbs the next ramp slower. The
+  same 14 x 30 read 54.4 u/s at the toe in one sequence and 51.5 in another. Repaired between
+  candidates the runs agree to three decimals — and 16 x 30, which had "inverted the car",
+  turned out to land upright once it was not driving the previous candidate's wreck.
+
+One car, centreline, no steering, arriving at ~60 u/s, length 30 throughout:
+
+    height  exit    air       apex    lands at    up.y at landing
+      6.5   10.1    0         0       --          1.00
+      8     12.3    0         0       --          1.00
+     10     15.3    0         0       --          1.00
+     12     18.2    0.075 s   3.65    +13.3 u     0.69
+     14     20.9    0.117 s   4.29    +12.1 u     0.62
+     16     23.6    0.125 s   4.77    +10.4 u     0.43
+     18     26.2    inverted, recovered
+     20     28.7    inverted, recovered
+
+**The launcher is the toe, not the lip.** Every apex in that table sits about 20 u BEFORE the
+lip, i.e. just past the smoothstep at the ramp's leading edge (`toe = smoothstep(0, 0.22, x)`
+spans the first 6.6 u of a 30 u ramp). The exit slope does not predict the air at all: 12 x 24
+is a 22.3 degree exit and produces nothing, while 12 x 30 is 18.2 degrees and produces the
+first air in the table. The car is thrown by the kink where the ramp starts, and lands well
+before the drop it was supposed to fly off.
+
+Then the number that actually decides it. `tools/jump-cost.js` runs a full eight-car race at a
+given shape and counts recoveries and flips within 0.02 of a lap of the ramp — the same
+currency the 8.5 -> 6.5 cut was made in. 60 s, kitchen, seed 771, all eight cars, chunked so a
+7200-step race is not indistinguishable from a hang:
+
+    height  exit    respawns  at jump   flips  at jump    air (1 car)
+      6.5   10.1        3        0        2       0       none
+     10     15.3       10        3       10       7       none
+     12     18.2       39       31       43      39       0.075 s
+     14     20.9       41       30       40      31       0.117 s
+
+**There is no height in this profile that produces air without wrecking the race.** The cost
+arrives BEFORE the air does: at 10 u nothing flies and the field is already paying 3 recoveries
+and 7 flips at the jump, and the first height that gives a single car any air at all costs 31
+recoveries — ten times the whole-race total at 6.5. The single-car table understates it because
+it drives the centreline with the wheel straight; a field arrives at an angle, and the toe kink
+rolls it.
+
+So the honest statement is stronger than "the ramp is now a bump". Within this hazard profile,
+at gravity 260, **a jump is not available**. Making one is not a number change: it needs a
+different ramp profile (a take-off that rotates the car instead of kicking one axle), and
+probably air stabilisation to go with it. That is a feature, not a fix, and it is not being
+started without a decision.
+
 ## D20 — The renderer casts no shadows at all — CRITICAL — FIXED (root cause: the capture path, not the renderer)
 `render/Lighting.js`, the CSM chunk patch. Every critic round to date has been scored on
 shadowless frames, which is most of the lighting score.

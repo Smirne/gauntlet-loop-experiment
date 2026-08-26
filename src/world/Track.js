@@ -68,6 +68,41 @@ const BANK_BASELINE = (() => {
   } catch (_) { return DEFAULT; }
 })();
 
+/**
+ * `?hazardGeom=butterJump:height=14,length=24;foldA:height=3` reshapes named
+ * hazards at build time. It exists so a ramp can be re-proportioned and LOOKED
+ * AT — mesh, shadow, silhouette and all — without editing the track file and
+ * without the two builds differing by anything else.
+ *
+ * A flag is not a feature. Nothing in the game sets this; it is for tools
+ * comparing geometries side by side, and an unparseable value is ignored rather
+ * than guessed at, so a typo cannot silently ship a different circuit.
+ *
+ * @type {Map<string, {height?:number, length?:number, width?:number}>|null}
+ */
+const HAZARD_GEOM = (() => {
+  let raw = '';
+  try { raw = new URLSearchParams(location.search).get('hazardGeom') || ''; } catch (_) { return null; }
+  if (!raw) return null;
+  const map = new Map();
+  for (const entry of raw.split(';')) {
+    const c = entry.indexOf(':');
+    if (c < 1) continue;
+    const id = entry.slice(0, c).trim();
+    const over = {};
+    for (const pair of entry.slice(c + 1).split(',')) {
+      const eq = pair.indexOf('=');
+      if (eq < 1) continue;
+      const key = pair.slice(0, eq).trim();
+      const n = Number(pair.slice(eq + 1));
+      if (!Number.isFinite(n) || n <= 0) continue;
+      if (key === 'height' || key === 'length' || key === 'width') over[key] = n;
+    }
+    if (id && Object.keys(over).length) map.set(id, over);
+  }
+  return map.size ? map : null;
+})();
+
 const TAU = Math.PI * 2;
 
 /* --------------------------------------------------------- surface behaviour */
@@ -752,10 +787,14 @@ export class Track {
     const out = [];
     const L = this.length || 1;
     for (let i = 0; i < raw.length; i++) {
-      const h = raw[i];
+      let h = raw[i];
       if (!h || typeof h !== 'object') continue;
       const type = String(h.type || '').toLowerCase();
       if (!type) continue;
+      // Tools only — see HAZARD_GEOM. Copied rather than mutated so the track
+      // definition module stays the source of truth for the next build.
+      const over = HAZARD_GEOM && h.id ? HAZARD_GEOM.get(h.id) : null;
+      if (over) h = { ...h, ...over };
       const tc = wrap01(h.t ?? 0);
       // Longitudinal extent may be given in world units (`length`) or in t (`span`).
       const lenU = h.length != null ? Math.abs(h.length) : (h.span != null ? Math.abs(h.span) * L : defaultHazardLength(type));
