@@ -98,6 +98,32 @@ const RESPAWN_ESCALATE_AFTER = 2;
 /** How far past the obstacle to place it, as a fraction of the lap. */
 const RESPAWN_SKIP_AHEAD = 0.035;
 
+/**
+ * How far the tangent-plane contact may sit from the real surface before the
+ * strut stops believing it, in world units. See _probeWheels.
+ *
+ * Chosen from measurement, not taste: on ordinary track the plane solve is
+ * good to 0.004 u across a sweep of position, pitch, roll and ride height, and
+ * a strut's whole travel is 1.30 u. This is thirty times the noise and under a
+ * tenth of the travel, so it fires at cliffs and nowhere else -- 600 steps of
+ * eight-car racing, 19,200 wheel probes, zero fallbacks.
+ */
+const SUSPENSION_PLANE_TOLERANCE = 0.12;
+
+/**
+ * `?rawSuspension=1` puts the defect back: the strut believes the tangent plane
+ * whatever it says, and a negative intersection is clamped to -2 and handed to
+ * the spring, exactly as before D19 was fixed.
+ *
+ * It exists so the fix can be A/B'd from ONE build rather than from two
+ * checkouts, which is the only way this project has ever managed to compare
+ * anything honestly. A flag is not a feature: nothing but tools should set it.
+ */
+const RAW_SUSPENSION = (() => {
+  try { return new URLSearchParams(location.search).get('rawSuspension') === '1'; }
+  catch (_) { return false; }
+})();
+
 /* ==========================================================================
  * Module scratch. Never allocate inside a physics tick.
  * ========================================================================== */
@@ -1223,13 +1249,22 @@ export class Vehicle {
       let hitDist = this._maxRay + 1;
       let gx = mx;
       let gz = mz;
+      // Set when the tangent plane has disqualified itself and the exact solve
+      // has to take over. See the march below.
+      let needsMarch = false;
       for (let it = 0; it < 2; it++) {
         this._sampleGround(gx, gz, w, it === 0);
         const denom = dx * _ground.nx + dy * _ground.ny + dz * _ground.nz;
         if (denom > -0.12) {
-          // Strut nearly parallel to the surface: fall back to a plumb drop so
-          // an inverted or violently pitched car still finds the floor.
-          hitDist = dy < -0.05 ? (my - _ground.y) / -dy : this._maxRay + 1;
+          // Strut nearly parallel to the sampled surface. That used to plumb to
+          // `_ground.y`, which on the second iteration is the height at the
+          // REFINED sample point rather than under the mount — at a lip, the
+          // floor 6.5 u below. Solve it properly instead.
+          if (RAW_SUSPENSION) {
+            hitDist = dy < -0.05 ? (my - _ground.y) / -dy : this._maxRay + 1;
+            break;
+          }
+          needsMarch = true;
           break;
         }
         // Intersect the strut with the tangent plane through the sampled point:
@@ -1239,7 +1274,16 @@ export class Vehicle {
         const pz = gz - mz;
         const d = (_ground.nx * px + _ground.ny * py + _ground.nz * pz) / denom;
         if (!Number.isFinite(d)) { hitDist = this._maxRay + 1; break; }
-        hitDist = clamp(d, -2, this._maxRay + 4);
+        // A NEGATIVE d puts the contact patch ABOVE the strut mount, which no
+        // wheel can be. It used to be clamped to -2 and handed to the spring
+        // anyway, and clamping it is what made the fiction survive: reach - d
+        // then reads as a fully bottomed strut and the bump stop fires at the
+        // force ceiling — measured at 7.97 u/s of speed per step, per wheel,
+        // against a game whose gravity only manages 2.17.
+        if (d < 0 && !RAW_SUSPENSION) { needsMarch = true; break; }
+        hitDist = RAW_SUSPENSION
+          ? clamp(d, -2, this._maxRay + 4)
+          : Math.min(d, this._maxRay + 4);
         const ngx = mx + dx * hitDist;
         const ngz = mz + dz * hitDist;
         // A second pass only earns its keep when the first moved the sample
@@ -1249,6 +1293,57 @@ export class Vehicle {
         gx = ngx;
         gz = ngz;
         if (moved < 0.2) break;
+      }
+
+      // Does the ground actually pass through the point the strut picked?
+      //
+      // A tangent plane is exact on anything locally planar and a lie at a
+      // cliff, and Track.hazardHeight builds ramps with a cliff ON PURPOSE: the
+      // lip is what launches the car instead of lofting it. Across kitchen's
+      // butterJump that step is 6.5 u, so a sample landing a few units past the
+      // lip describes a plane 6.5 u below the surface the wheel is over, and
+      // nothing here could previously tell.
+      //
+      // Measured (tools/lip-solve.js), sweeping position, pitch, roll and ride
+      // height across the lip and asking the track how high the ground really
+      // is at the contact patch the strut chose: worst disagreement 6.453 u,
+      // eleven configurations past a whole unit, every one of them on a car
+      // pitched 15-25 degrees within about 3 u of the lip. The same grid on
+      // quiet track, same run, same instrument: worst 0.004 u, none past a
+      // tenth. That is the floor this is measured against.
+      //
+      // One extra height query per wheel is the price of not inventing 6 u of
+      // spring travel. `heightAt` is a spline evaluation, not a raycast.
+      const track = RAW_SUSPENSION ? null : this.ctx?.track;
+      if (track && (needsMarch || hitDist < this._maxRay)) {
+        let disagrees = needsMarch;
+        if (!disagrees) {
+          const cy = my + dy * hitDist;
+          let realY = cy;
+          try { realY = track.heightAt(mx + dx * hitDist, mz + dz * hitDist) ?? cy; }
+          catch (_) { realY = cy; }
+          disagrees = Number.isFinite(realY) && Math.abs(cy - realY) > SUSPENSION_PLANE_TOLERANCE;
+        }
+        if (disagrees) {
+          // The plane was wrong here, so stop approximating and solve the real
+          // thing: march down the strut against the height field itself and
+          // bisect the first crossing.
+          //
+          // A plumb drop is NOT an acceptable fallback and trying it first is
+          // what left five configurations still 6 u out. It measures the ground
+          // under the MOUNT and then places the contact at mount + dir * dist,
+          // which for an oblique strut is somewhere else entirely — a different
+          // wrong answer, not a safer one. The march is exact to maxRay/2^6 and
+          // only ever runs where the plane has already been caught lying, which
+          // on ordinary track is nowhere.
+          hitDist = this._marchGround(track, mx, my, mz, dx, dy, dz);
+          // The normal in _ground still belongs to the plane that was just
+          // thrown out. Re-sample it under the corrected contact so the spring
+          // pushes along the surface the wheel is really on.
+          if (hitDist < this._maxRay) {
+            this._sampleGround(mx + dx * hitDist, mz + dz * hitDist, w, false);
+          }
+        }
       }
 
       // Props and track furniture, if a physics world is up. Nearest wins, and
@@ -1292,6 +1387,54 @@ export class Vehicle {
     }
 
     this.isAirborne = !anyContact;
+  }
+
+  /**
+   * First crossing of the height field along the strut, by marching and then
+   * bisecting. Returns a distance along (dx, dy, dz) from the mount, or
+   * _maxRay + 1 if the strut never reaches the ground.
+   *
+   * This is the exact answer the tangent plane approximates, and it is only
+   * called where that approximation has been caught disagreeing with the
+   * surface — see _probeWheels. A coarse march finds the bracket (the field can
+   * step discontinuously at a hazard edge, so nothing smarter is safe), then
+   * six bisections take it to about a hundredth of the ray.
+   */
+  _marchGround(track, mx, my, mz, dx, dy, dz) {
+    const far = this._maxRay + 4;
+    const STEPS = 12;
+    const gap = (s) => {
+      let h;
+      try { h = track.heightAt(mx + dx * s, mz + dz * s); } catch (_) { return NaN; }
+      return Number.isFinite(h) ? (my + dy * s) - h : NaN;
+    };
+
+    const g0 = gap(0);
+    if (!Number.isFinite(g0)) return this._maxRay + 1;
+    if (g0 <= 0) return 0;                 // the mount is already under the surface
+
+    let lo = 0;
+    for (let i = 1; i <= STEPS; i++) {
+      const hi = (i / STEPS) * far;
+      const ghi = gap(hi);
+      if (!Number.isFinite(ghi)) return this._maxRay + 1;
+      if (ghi <= 0) {
+        // Bracketed in (lo, hi]. Bisect; the field may step, so this is a sign
+        // search rather than a smooth root find.
+        let a = lo;
+        let b = hi;
+        for (let k = 0; k < 6; k++) {
+          const mid = (a + b) * 0.5;
+          const gm = gap(mid);
+          if (!Number.isFinite(gm)) break;
+          if (gm <= 0) b = mid;
+          else a = mid;
+        }
+        return b;
+      }
+      lo = hi;
+    }
+    return this._maxRay + 1;               // never reaches the ground
   }
 
   /**

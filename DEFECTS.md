@@ -215,7 +215,7 @@ It is also where the dark navy bands in `shots/diag-live-blur.png` and the first
 table. I first read them as pure-black shadows, then as missing road geometry. They are
 neither — a raycast finds the road present, and they survive with `shadowMap.enabled = false`.
 
-## D19 — A ramp's lip injects energy into whatever is standing on it — MAJOR — OPEN
+## D19 — A ramp's lip injects energy into whatever is standing on it — MAJOR — **FIXED**
 ### Closed false lead: correcting the lip normal makes it worse
 `world/Track.js` `surfaceNormal` central-differences `hazardHeight` over a 2.8 u window, so
 across the lip's step it reports the cliff as the surface and returns a normal lying 71 deg
@@ -273,9 +273,126 @@ Ruled out: penetration recovery in the solver (the injection is horizontal with 
 and `velocityBias` uses a split impulse); car-car contact (two of the original ten flips had
 the nearest car 42 and 52 u away).
 
-Not yet attempted. The candidate fix is to reject a suspension sample whose ground height
-differs from the previous iteration's by more than the strut can span, rather than clamping
-the intersection distance and trusting it.
+### D19 — the answer
+
+The mechanism in the paragraph above was right, and it was still live on 26 Aug 2026 — after
+the ramp was lowered from 8.5 to 6.5, which cut the visible symptom (respawns at the jump
+went 29/55% to 8-12/0%) without touching the cause.
+
+Two things had to be built before anything could be said about it.
+
+The first was a way to ask the question at all. `tools/lip-probe.js` watches a whole race for
+one-step speed gains, and a race is 7200 steps that in a backgrounded pane run at roughly
+eight a second — a quarter of an hour per seed, per side of an A/B. Its first two versions
+were also simply wrong: v1 read `c.t`, which does not exist on a vehicle, so every hit
+reported an identical `distToLip: 465.5` — a constant dressed as a measurement — and every
+row it flagged was a respawn, not an injection. The respawn signal that actually works is
+`_respawnCooldown` going UP; `_lastRespawnAt` is only written when the escalation path runs.
+
+The second was `tools/lip-solve.js`, which answers the useful question in a tenth of a second
+instead: place the car, ask `_probeWheels()` where the ground is, then ask the track how high
+the ground really is AT THE POINT THE STRUT PICKED. Disagreement is spring travel the game
+invented. Two attempts at that were also wrong and were caught by their own guards:
+
+- Respawn HOVERS the car (cgHeight + 0.6, then 0.35 more along up). 3397 of 3600 wheels came
+  back ungrounded, and the handful that were not read a 1.17 u "solver error" that was
+  really the placement burying the chassis in the ramp. Fixed by settling the car onto its
+  springs before measuring, and by throwing out any sample whose mount is under the ground.
+- A car settled flat has its struts nearly normal to the surface, which is the case the
+  tangent plane handles perfectly: 940 samples across the lip, worst error **0.000**. That
+  reading said "no defect" and it was an artefact of the grid. A car AT a lip is pitched,
+  often rolled, often already light on its springs. Sweeping attitude is what found it.
+
+Measured, one build, one instrument, floor taken in the same run on quiet track:
+
+    grid: 81 positions across the lip x pitch [-25..25] x roll [0,12] x lift [0,1,3,6]
+
+                                    at butterJump's lip      quiet track (t = 0.400)
+    worst contact-vs-surface error       6.453 u                    0.004 u
+    samples past 1 u of error               11                         0
+    samples with d clamped to -2             3                         0
+
+6.453 u against a 6.5 u ramp: the strut is finding the floor BEHIND the cliff and calling it
+contact. Every one of the worst rows is a car pitched 15-25 degrees within about 3 u of the
+lip, and each shows `compression: 1.586` — exactly `suspRest * 1.22`, the hard cap — with the
+bump stop at the force ceiling. That is worth **7.97 u/s of speed per step, per wheel**, in a
+game whose gravity manages 2.17 and whose tyres manage 2.8. D19's original observation of
+12-15 u/s sits inside that range with three wheels to spare.
+
+`clamp(d, -2, this._maxRay + 4)` was what made the fiction survive: a negative intersection
+distance puts the contact patch ABOVE the strut mount, which no wheel can be, and clamping it
+turns nonsense into a fully bottomed strut rather than into a rejected sample.
+
+The fix, in `vehicle/Vehicle.js` `_probeWheels`:
+
+- a negative intersection distance is no longer clamped, it disqualifies the plane;
+- the `denom > -0.12` near-parallel branch no longer plumbs to `_ground.y`, which on the
+  second iteration is the height at the REFINED sample point — at a lip, the floor 6.5 u
+  below — it disqualifies the plane too;
+- every surviving candidate is checked against `heightAt` at the contact patch, and anything
+  more than `SUSPENSION_PLANE_TOLERANCE` (0.12 u) out is thrown away;
+- disqualified struts go to `_marchGround`, which solves the real crossing along the strut
+  against the height field: a 12-step march for the bracket (the field steps at a hazard
+  edge, so nothing smarter is safe) then 6 bisections.
+
+A plumb drop is NOT an acceptable fallback and trying it first left five configurations still
+6 u out: it measures the ground under the MOUNT and then puts the contact at mount + dir *
+dist, which for an oblique strut is somewhere else entirely — a different wrong answer, not a
+safer one.
+
+After, same instrument, same grid, same run:
+
+                                    at butterJump's lip      quiet track
+    worst contact-vs-surface error       0.097 u                 0.004 u
+    samples past 0.5 u of error             0                       0
+    samples with d clamped to -2            0                       0
+
+Cost: 32 fallbacks in 28,800 wheel probes over 900 steps of eight-car racing — **0.111%**.
+The tolerance is 30x the 0.004 u the plane solve costs on ordinary track and under a tenth of
+a strut's 1.30 u travel, so it fires at cliffs and nowhere else.
+
+`?rawSuspension=1` puts the defect back, so the A/B is one build and two flags rather than
+two checkouts. Driven, seed 771, kitchen, 25 s, `tools/lip-probe.js`:
+
+                                    rawSuspension=1      fixed
+    one-step gains over 12 u/s             4               0
+    worst one-step gain              16.15 u/s       7.86 u/s
+    flips                                  0               0
+    respawns                               5               6
+
+And `tools/jump-arc.js`, one car, no AI, full throttle over the lip:
+
+    entry 40 u/s                     rawSuspension=1      fixed
+    worst one-step gain              15.65 u/s       0.77 u/s
+    air time                             2.233 s           0 s
+    apex above ground                   5.02 u           0 u
+
+### What the fix also revealed: the jump was the bug
+
+With the strut no longer inventing spring travel, butterJump does not launch the car at all.
+Five entry speeds (30, 45, 60, 75, 90 u/s), full throttle, fixed build: not one leaves the
+ground anywhere near the lip. The only airborne moments in the whole sweep are 32 u before
+and 32 u after it, all with an identical 2.53 u apex, which is other terrain.
+
+That is what the geometry says it should do. The ramp climbs 6.5 u over 30 u of track, and
+`hazardHeight`'s exit slope is `h * 0.82 / length` — about 10 degrees. At a realistic 60 u/s
+that is 10.5 u/s of vertical velocity, which against gravity 260 is 0.08 s of air and a
+0.21 u apex: nothing. The 2.2 s and 5 u apex the old code produced were not the ramp, they
+were the bump stop firing at its force ceiling against a surface 6.5 u below the wheel.
+
+So the ramp has never actually been a jump. It looked like one because it was broken. Whether
+to leave it as a bump or re-cut it so it launches for real is a design decision, not a bug —
+recorded here so it is not silently decided by whoever next reads this file. For scale: at
+60 u/s and gravity 260, a 30-degree exit gives 0.23 s of air and a 1.7 u apex, which needs
+roughly triple the current height over the same length, or the same height over a third of
+it. It was lowered 8.5 to 6.5 on 2026-08-24 specifically to stop the respawns this defect was
+causing, so that constraint is now lifted.
+
+Instrument caveat, recorded so the numbers are not over-read: `jump-arc.js` runs a 90 u
+full-throttle approach, and every entry speed saturates to 59-62 u/s by the lip. The sweep
+therefore tests one arrival speed, not five. It is a realistic arrival speed, and the
+conclusion "no air at the lip at race pace" stands, but it is not a statement about slow
+crossings.
 
 ## D20 — The renderer casts no shadows at all — CRITICAL — FIXED (root cause: the capture path, not the renderer)
 `render/Lighting.js`, the CSM chunk patch. Every critic round to date has been scored on
