@@ -1128,7 +1128,7 @@ its damping), clear the gate on a cut instead of holding it, check for the cut b
     after a capture-style cut           boost 0.00, overlay NOT drawn
 
 
-## D23 — The road does not read as a road — MAJOR — OPEN (original numbers VOID; re-measured at the end)
+## D23 — The road does not read as a road — MAJOR — **FIXED** (bde13b3; original numbers VOID, re-measured at the end)
 Every blind judge in all three A/B rounds said some version of this, having agreed on little
 else. "The track surface is nearly indistinguishable from the surrounding table." "The lane is
 just bare plywood with a few thin white line strokes that break up and float." "A
@@ -2469,7 +2469,7 @@ draw a cover image.
 
 ---
 
-## D45 — Four of the five circuits have never been looked at, and two of them read as broken — MAJOR — OPEN
+## D45 — Four of the five circuits have never been looked at, and two of them read as broken — MAJOR — **MITIGATED, NOT FIXED** (0948409)
 
 **Found while answering "are we ready to publish?", which is the only question that
 would have found it.** Every defect in this file above D45 was found by pointing an
@@ -2519,9 +2519,19 @@ scoped, and one of them (workbench) may be a light rig fault rather than an art 
 The publishable move is to cut the circuit list, not to open two unreviewed tracks
 under time pressure.
 
+**What shipped (0948409), and why this is MITIGATED rather than FIXED.** `SHIPPED_TRACKS`
+in `Race.js` is now the single roster and everything that enumerates circuits reads it.
+Kitchen and bedroom ship; pool, garden and workbench are hidden, not deleted, and
+`?track=pool` still boots so the next round of work on them can be shot.
+
+The defect underneath is untouched, and it is the one sentence in this file most worth
+re-reading: **every fix above is a kitchen fix wearing a project-wide status.** Bedroom
+now ships and has never been through a critic round. Pool still has D12. The roster cut
+bought time; it did not buy a second reviewed circuit.
+
 ---
 
-## D46 — Nothing tells a new player how to drive — MAJOR — OPEN
+## D46 — Nothing tells a new player how to drive — MAJOR — **FIXED** (0948409)
 
 The title screen's footer reads `↑↓ Navigate · ENTER Select · ESC Back`. That is how
 to work the *menu*. The driving controls — W/A/S/D, SHIFT boost, SPACE handbrake, R
@@ -2894,6 +2904,37 @@ An unintended and welcome side effect: with the ground baked first it claims a 2
 budget is still open, and `ceramicTile` drops to 1024 instead. Total texture memory is
 unchanged at 466.3 MB, and it is now spent on the surface that fills the screen rather than on
 one span of the lap.
+
+---
+
+## Audit — does anything in this file rest on a grain-live frame diff? — **NO**
+
+D49 established that film grain reseeds every frame, so two captures of a **frozen** scene
+come back 23.8% of pixels apart, and one measurement of the same thing read 33%. That
+retroactively threatens every percentage-of-pixels conclusion in this file: any claim smaller
+than its own noise floor is not a finding, it is the grain.
+
+Swept on 26 Aug 2026, every frame-diff figure in this document. **All of them survive**, by one
+of two routes:
+
+| conclusion | figure | what saves it |
+|---|---|---|
+| D20 — the slab casts nothing | 13.13% vs **0.00%** | 0.00% is unreachable with grain live, and the control sits in the same run |
+| D22 — shadow intensity does something | 5.004% vs control **0.013%** | floor taken in the same run, same instrument |
+| D25 — the capture set is pinned | 0.02% | measured as the residue *after* pinning, and named as grain (D21) in the text |
+| D23 — the ninth atlas row regressed every marking | 7.8% / 17.9% vs floor **0.03%** | floor quoted beside the claim |
+| D23 — 35 deg road grain | 21.05% vs floor **0.102%** | two-boot floor in the same session |
+| D50 — draft vs settled | 2.492% vs floor **0.000%** | the same pair, bit-identical |
+| D19 / D39 / D44 | — | not frame diffs at all; physics and buffer measurements |
+
+So the rule this project earned the hard way — **zero the grain before a frame-diff, and
+measure the floor in the same run** — was in fact applied everywhere it mattered, including in
+the rounds that predate the rule being written down. The one place it was not, D40's "wrong 3",
+is already recorded as a caught mistake rather than as a finding.
+
+This audit is itself a claim, so its method is stated: `grep` for every percentage-of-pixels
+figure in the document, then read the surrounding paragraph for a control or floor. A figure
+with no floor beside it would have been listed here as void. None were.
 
 ---
 
