@@ -3161,9 +3161,7 @@ critics not at all. The remaining candidates, none of them tested:
 * **The asymmetry against props.** A crisp, correctly-shaped shadow beside a shapeless oval
   reads as a bug even if the oval is objectively darker. This is a *relative* fault, so a
   brighter blob cannot fix it — only a shaped one can.
-* **Cast shadow, unresolved.** Whether a car reaches the cascade shadow maps at all is still
-  unknown. Two instruments failed to answer it and the failures are recorded below, because
-  the next person will otherwise reach for the same two.
+* **Cast shadow — ANSWERED, see below.** The cars cast. The shadow has no silhouette.
 
 ### Instruments that lied, and how they were caught
 
@@ -3184,6 +3182,62 @@ Both were caught by a control, and neither would have been caught without one.
 The working instrument is synchronous: `renderer.render(scene, camera)` and a `drawImage`
 readback inside one JS task, so no RAF can interleave. Its floor is 0.0000 %, exactly — not
 0.102 %, because nothing steps between the two reads.
+
+There was a third, and it is the one that mattered: **`renderer.shadowMap.needsUpdate` is the
+wrong flag.** Every cascade sets `light.shadow.autoUpdate = false` (Lighting.js:961) and
+Lighting drives each map itself by setting that light's own `needsUpdate`. Until the probe did
+the same, no `castShadow` toggle could ever register, because no shadow map was ever
+re-rendered. That single line is why the first pass came back "the car casts nothing" — the
+most plausible-sounding wrong answer available.
+
+### The car casts. The shadow has no silhouette.
+
+Kitchen, morning preset, sun 5.91 at **24° elevation**, contact blobs hidden so only real
+shadows remain, floor **0.0000 %** measured twice:
+
+| | pixels | % of frame | mean Δ |
+|---|---|---|---|
+| positive control — all 37 prop casters off | 6 892 | 0.748 % | 51.4 |
+| **test — all 128 car meshes off** | **7 292** | **0.791 %** | **49.7** |
+
+The cars' cast shadows cover **more of the frame than every prop in the scene combined**, at
+the same darkness. Per car, the shadow's centroid sits 27–57 px from its contact patch with a
+bounding box up to 108 × 152 px — long and correctly offset for a 24° sun. Nothing is missing,
+weak, or mispositioned.
+
+**It is just formless.** The car's shadow is a soft grey wedge with no wheels, no roofline, no
+gap under the chassis. A metal clip lying on the wood a few centimetres away — *smaller than
+the car, and further from the camera in a coarser cascade* — throws a crisp, correctly-shaped
+shadow in the same frame. That is the kitchen critic's sentence, arrived at from the code:
+
+> a shapeless blurred oval standing in for a cast shadow while a nearby eraser throws a crisp,
+> correctly-shaped one
+
+So D53's real subject is not a missing shadow and not blob area. It is that **the car is the
+one object in the scene whose shadow carries no information about its shape**, and eight
+observers read that as "no shadow at all".
+
+### Ruled out, each against the 0.0000 % floor
+
+* **Post-processing.** Raw `renderer.render` with the composer bypassed entirely — no bloom,
+  no DOF, no motion blur, no grade. Unchanged. (The motion blur pass is camera-velocity
+  reprojection anyway, which would smear the crisp clip shadow equally.)
+* **Shadow-map resolution.** Cascade 1 forced from 2048 to 4096. Unchanged. The car already
+  spans **68 texels** at 2048 (cascade 1, 0.134 u/texel), while the clip that reads crisply is
+  further away at 0.903 u/texel. More resolution is not the lever.
+* **PCF kernel.** `PCFShadowMap` instead of `PCFSoftShadowMap`, every material recompiled.
+  Unchanged.
+* **Darkness.** Mean Δ 49.7 for the car against 51.4 for the props. The shadow is not faint.
+
+### Lead for whoever takes this next
+
+Driving `sunDir` to near-vertical and calling `_fitToCamera` moved **cascade 0 only** —
+cascades 1 and 2 held their positions unchanged across the whole sun move. The player car
+lives in cascade 1 (camera distance 131.5; splits are 2 / 105.2 / 200.5 / 1300). Whether that
+is the snap cache correctly refusing a jitter, or a fit that never runs for the far cascades,
+is not known. It is the first thing to check, because a cascade fitted for a stale sun would
+produce exactly this: a shadow that is present, correctly dark, correctly placed, and shaped
+like nothing.
 
 ### Also fixed here
 
