@@ -1,4 +1,28 @@
-# Open defects
+# Defects
+
+Every defect this project has raised, in the order they were found — fixed, open and retracted
+alike. The title used to say *Open defects*, which stopped being true somewhere around D18.
+
+## What is actually open, as of 28 Aug 2026
+
+Audited by reading each entry against the code rather than trusting its header, because nine
+headers carried no status at all and two entries asserted things about the code that had since
+become false. Both corrections are recorded in place.
+
+| | defect | why it is open |
+|---|---|---|
+| **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
+| **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
+| **D52** | the critic score cannot tell a reviewed circuit from an unreviewed one | CRITICAL (method); the `rounds/d28-mush` discriminator decides it |
+| **D53** | the car's shadow carries no shape information | MAJOR; cause narrowed, not found |
+| D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
+| D41 | the macro camera's focus erases the scale cues | **open by design** — left as a question, same reason |
+| D3, D4 | `rubber()` crushes to black; `brushedAluminium` reads blue | status never recorded; needs a look, probably long since fixed |
+
+Everything else is fixed, retracted, or documented as harness behaviour. Two entries share a
+number by accident and are now **D23a** and **D23b**; D30 and D31 each carry a deliberate
+follow-up entry under the same number.
+
 
 ## D18 — Cars interpenetrate to about half a car width — MAJOR — FIXED
 `physics/Collision.js` [A8]. Playtest note ("the collision system seems flawed"), then measured.
@@ -135,17 +159,17 @@ clearcoat highlight both resolve.
 ## D2 — `Materials.plasticToy()` renders invisible — CRITICAL — FIXED
 Same root cause as D1 (shared `peel` path), fixed by the same change. Verified.
 
-## D3 — `Materials.rubber()` crushes to pure black
+## D3 — `Materials.rubber()` crushes to pure black — MINOR — STATUS UNRECORDED
 `render/Materials.js` [A3]. Reads as a void, not a substance. Real tyre rubber has a soft
 broad sheen and sits around 0.05–0.08 albedo, not 0. Needs a specular response so the
 silhouette separates from shadow.
 
-## D4 — `brushedAluminium` reads as matte blue paint, not metal
+## D4 — `brushedAluminium` reads as matte blue paint, not metal — MINOR — STATUS UNRECORDED
 `textures/Surfaces.js` + `ProcTex.js` [A3]. Albedo carries a strong blue tint and the
 roughness map is high enough across the surface that the metal never resolves a specular
 highlight. Should be near-neutral grey with anisotropic streaks and roughness ~0.25–0.40.
 
-## D5 — `oak` has blue-tinted knot artifacts
+## D5 — `oak` has blue-tinted knot artifacts — MINOR — FIXED (no blue knot in any current frame)
 `textures/ProcTex.js` [A3]. Knots and nail holes render as desaturated blue dots. Should be
 dark warm brown. The grain, plank seams and ray fleck are otherwise excellent — this is a
 palette bug in the knot pass only.
@@ -794,14 +818,14 @@ Check the sign of the roll/pitch applied when the visual group is synced to the 
 quaternion, and whether `_placeOnGrid` composes the spawn rotation in the same handedness as
 `Track.spawnPoints`.
 
-## D7 — Livery texture bakes near-black
+## D7 — Livery texture bakes near-black — CRITICAL — FIXED (liveries read in colour in every current frame)
 `vehicle/VehicleVisual.js` [A7]. `makePaintMaterial` deliberately keeps the material colour
 white and carries the livery in `tex.map` — that design is fine. But the baked 1024×512 canvas
 is 22% #080808, 17% #000000, 17% #080810, with only ~19% of a dark orange. The livery record
 itself is correct (`Hemi Orange` base #D85A1C, `Forest Green` #1D5A34), so the fault is in the
 canvas paint pass, not the palette. Cars will read as black even once D6 is fixed.
 
-## D8 — Race finishes instantly
+## D8 — Race finishes instantly — CRITICAL — FIXED (see the fix section below)
 `game/Race.js` [A12]. At `raceTime` 5.4 s with the field only 8% around the lap
 (`t: 0.083`), every entry already reports `lap: 3, cp: 19, finished: true`, so the state
 machine jumps to `finished` and the director drops into results framing. Suspect the
@@ -1128,7 +1152,7 @@ its damping), clear the gate on a cut instead of holding it, check for the cut b
     after a capture-style cut           boost 0.00, overlay NOT drawn
 
 
-## D23 — The road does not read as a road — MAJOR — **FIXED** (bde13b3; original numbers VOID, re-measured at the end)
+## D23a — The road does not read as a road: the first pass — MAJOR — **FIXED** (bde13b3; original numbers VOID, re-measured at the end)
 Every blind judge in all three A/B rounds said some version of this, having agreed on little
 else. "The track surface is nearly indistinguishable from the surrounding table." "The lane is
 just bare plywood with a few thin white line strokes that break up and float." "A
@@ -1905,7 +1929,7 @@ one build at one pinned clock (20.008 s): A today 67.0 px on the nearest rival; 
 5.5 px; C at 1.0, zero — and the sharp strip at 60%, which is what a wide establishing shot is
 allowed, with the miniature read gone. `?dofField=N` renders any point on the dial.
 
-## D33 — `R` is two different actions and the results screen advertises the other one
+## D33 — `R` is two different actions and the results screen advertises the other one — MINOR — FIXED (Results.js:386 no longer advertises `R`)
 
 `Input.js` binds `respawn: ['KeyR']` and `restart: ['Backslash']`. `Results.js` draws the RETRY
 button with the key hint **R**. So during a race `R` puts the car back on track at its last good
@@ -1917,14 +1941,16 @@ the full race again?". It is not intermittent and `Race.start()` is not at fault
 `_placeOnGrid()` on every entry and resets the clock correctly. This is a key collision plus a
 label, nothing more, and it is a real defect because the player cannot tell the two apart.
 
-## D34 — boost has no top end, because the force that was supposed to give it was never wired up
+## D34 — boost has no top end, because the force that was supposed to give it was never wired up — MAJOR — FIXED (`boostForce` is applied at Vehicle.js:1889)
 
 `boostForce: 27` is declared in the tuning table, commented "flat thrust — **this is what raises
 top speed**", and the comment at the application site says "Boost multiplies torque (the punch)
 and adds a flat force later (the top end)".
 
 **`boostForce` has exactly one mention in the entire tree: its own declaration.** Nothing reads
-it. The flat force is never added. Boost multiplies engine torque by `boostTorque` 1.55 and
+it. The flat force is never added. *(No longer true: it is applied at `Vehicle.js:1889` as
+`t.boostForce * BOOST_FORCE_SCALE * this.boostAmount * t.mass`. The paragraph is left as
+written because it is the diagnosis; this note is the correction.)* Boost multiplies engine torque by `boostTorque` 1.55 and
 does nothing else, which is why a player reports "Is the boost doing something apart visual
 effect? Effect on speed is not very evident."
 
@@ -1933,10 +1959,11 @@ neutral, so boost could have been a no-op at the top end for that reason instead
 1400 steps across all eight cars — of 304 samples above 90% of top speed, **0%** had the
 torque zeroed. The engine is pulling up there. The missing force is the whole story.
 
-## D35 — the respawn has a visual hook that nothing has ever read
+## D35 — the respawn has a visual hook that nothing has ever read — MINOR — FIXED (`respawnFlash` drives the blink at VehicleVisual.js:873)
 
 `Vehicle.respawnFlash` is set to 1 in `respawn()` and decayed every frame in `update()`.
-Searched the whole tree: **there are no other references.** No material, no shader, no fx
+Searched the whole tree: **there are no other references.** *(No longer true: `VehicleVisual.js:873`
+reads it to drive the respawn blink. Diagnosis left as written; this note is the correction.)* No material, no shader, no fx
 system and no HUD element consumes it, so a respawn is a hard teleport with no visual event on
 the car at all. The only feedback is a DOM toast in the corner reading RESPAWN.
 
@@ -2013,7 +2040,7 @@ four in one session. Grep for a field's writers before trusting what its neighbo
 
 ---
 
-## D38 — the respawns at the start are real. The blink just made them visible.
+## D38 — the respawns at the start are real. The blink just made them visible. — MAJOR — FIXED (respawns at the jump 55% -> 0%)
 
 Reported as "at the start of the race I often get respawn and other car does, even if no
 accident occurs". There is an accident. It is a fall, it is silent, and until the respawn blink
@@ -2252,7 +2279,7 @@ Two lessons, and the second is the expensive one:
    fact. Before a round: ask what the harness cannot show, and ask whether the instrument
    measures the thing its name claims.
 
-## D40 — tyre smoke is authored against a slip range the car cannot reach
+## D40 — tyre smoke is authored against a slip range the car cannot reach — MINOR — OPEN BY DESIGN (dial ships at 0; the look is a human call)
 
 Effects has been the lowest-scoring category for three rounds (3.5 in round 7). The working
 theory was "a broken emitter — every fx system renders count 1." **That theory was wrong twice
@@ -2303,7 +2330,7 @@ its authored range means the authored range itself is too strong for a miniature
 height, and the opacity curve topping out at 1.2 buries the field. Default left at 0 pending a
 human verdict; the dial and the measurement ship, the look does not.
 
-## D41 — the scale cues are everywhere; the macro camera's focus erases them
+## D41 — the scale cues are everywhere; the macro camera's focus erases them — MINOR — OPEN BY DESIGN (left as a question; the look is a human call)
 
 Judge C, round 7: the car reads as a **full-size** car, unambiguously. The planned fix was
 "put one household object in the macro frame for scale." Measured before building it, and the
@@ -2353,7 +2380,7 @@ resolve it, none taken yet:
 Left as a question rather than a change, because it is a look and this project's rule is that a
 look is decided from frames by a human, not from a rationale by me.
 
-## D42 — the contact shadow is drawn, placed and blended correctly, and hidden under the car
+## D42 — the contact shadow is drawn, placed and blended correctly, and hidden under the car — MAJOR — FIXED (d3d54ef shipped the tuned pair; then see D53)
 
 Both round-7 judges said the car floats, and the working note said the system "changes 0.05% of
 the macro frame at 13 luma — on, in the scene, 264 instances, doing effectively nothing." That
@@ -2409,7 +2436,7 @@ without touching the quad at all.
 2. Writing directly into `contact.params.array` changed nothing, because `_updateContactShadows`
    rewrites every param slot from the entries on each update. **Edit the entry, not the buffer.**
 
-## D43 — the bokeh was square because the blur was separable, which cannot be round
+## D43 — the bokeh was square because the blur was separable, which cannot be round — MAJOR — FIXED (`?dofKernel`, default `half`)
 
 Round 7, judge A and judge C independently, at 6-8x: "hard axis-aligned rectangles", "a
 stair-stepped hexagon with vertical stripe banding". The player, unprompted and in his own
@@ -2462,7 +2489,7 @@ highlight is glaring.
 
 `?dofKernel=square|full|half` renders all three from one build. Default `half`.
 
-## D44 — the drawing buffer compounded to 33 megapixels whenever the canvas measured zero
+## D44 — the drawing buffer compounded to 33 megapixels whenever the canvas measured zero — CRITICAL — FIXED
 
 Found during the itch.io pre-flight, and it is exactly the kind of thing that pre-flight is for.
 
@@ -2727,7 +2754,7 @@ the seed never reached it. A URL flag travels with the page.
 
 ---
 
-## D23 — The road does not read as a road — MAJOR — FIXED (the road was made of the table)
+## D23b — The road does not read as a road: the second pass — MAJOR — FIXED (the road was made of the table)
 
 Open since round 4, agreed on by four independent judges, and survivor of two failed
 attempts. The answer was in the configuration the whole time:
