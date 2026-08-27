@@ -20,8 +20,8 @@ become false. Both corrections are recorded in place.
 | D3, D4 | `rubber()` crushes to black; `brushedAluminium` reads blue | status never recorded; needs a look, probably long since fixed |
 
 Everything else is fixed, retracted, or documented as harness behaviour. Two entries share a
-number by accident and are now **D23a** and **D23b**; D30 and D31 each carry a deliberate
-follow-up entry under the same number.
+number by accident and are now **D23a** and **D23b**. D30 and D31 each carry a deliberate
+follow-up — the diagnosis and then its correction — now **D30a/D30b** and **D31a/D31b**.
 
 
 ## D18 — Cars interpenetrate to about half a car width — MAJOR — FIXED
@@ -1707,7 +1707,7 @@ the next thing to try is scaling the gap with laps remaining — generous early,
 toward the flag — rather than moving the single number again.
 
 
-## D30 — The room is outside the shadow system, so the table casts nothing on the floor — MAJOR — PARTIALLY FIXED (flags corrected; the visible result is still missing)
+## D30a — The room is outside the shadow system, so the table casts nothing on the floor — MAJOR — PARTIALLY FIXED (flags corrected; the visible result is still missing)
 Found by the round-6 establishing judge, which called it "a shadow-cascade/receiver bug
 visible from across a room": a 3 cm milk carton on the tabletop throws a crisp shadow three
 times its own length, while the largest object in frame — the table — puts nothing on the
@@ -1776,7 +1776,7 @@ later fix. Do not raise `shadowFar` again without a measured gain to justify the
 
 ---
 
-## D31 — the paint never reaches the screen: a clearcoat reflecting a beige kitchen eats about half of every livery's chroma
+## D31a — the paint never reaches the screen: a clearcoat reflecting a beige kitchen eats about half of every livery's chroma — MAJOR — SYMPTOM REAL, CAUSE RETRACTED (see D31b)
 
 **Status: OPEN.** Found while shooting the before/after for the livery change, which is the
 only reason it was found at all — nothing else in the project had ever photographed all eight
@@ -1824,7 +1824,7 @@ then read the number off it.
 
 ---
 
-## D31 — RETRACTED CAUSE. The symptom is real and measured; the explanation I committed was wrong.
+## D31b — RETRACTED CAUSE. The symptom is real and measured; the explanation I committed was wrong.
 
 **What I claimed, one commit ago:** that `car:paint`'s `clearcoat: 1` at `envMapIntensity:
 1.35` lays a full-strength mirror of a warm kitchen over every panel, and that this is what
@@ -1864,7 +1864,7 @@ the same state twice and requiring the diff to be 0.000% — before any of it is
 
 ---
 
-## D30 — SOLVED. The room cannot receive a shadow: it is a ShaderMaterial with no shadow code in it.
+## D30b — SOLVED. The room cannot receive a shadow: it is a ShaderMaterial with no shadow code in it.
 
 Two rounds of this defect went looking for the missing shadow in the shadow system. It was
 never there. **`MG.Room` is a raw `ShaderMaterial` with `lights: false`**, and its 29 KB
