@@ -1,0 +1,781 @@
+{
+ "test": "bedroom",
+ "control": "kitchen (24 reviewed rounds)",
+ "builtFrom": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/spec-crit.json",
+ "tasks": [
+  {
+   "id": "c01",
+   "side": "test",
+   "circuit": "bedroom",
+   "cell": "macro",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/bed/3-macro-hi.jpg",
+   "answer": {
+    "describe": "A near-ground night shot of a blue die-cast rally SUV, number 88 on a white roundel on the door, chunky black off-road tyres on five-spoke silver rims, a black roof rack/light bar and a small red tail lamp. It is three-quarter rear left, travelling left, straddling the edge of a white paper/card track: front wheels on the track surface, rear wheel out on a field of brown rounded pebbles that fills the bottom-right of the frame. Black-and-white kerb blocks run along the track edge into the distance. Its headlights throw a warm orange pool across the track to the left, clipping to pure white at the frame edge. Behind, heavily defocused, are a red-and-white striped ramp, two star-shaped headlight bokeh blobs and a smaller sparkle, a blue-grey banked surface at upper right, and a large featureless black mass filling the upper left. Strong tilt-shift blur top and bottom; a cool blue-violet grade against the warm tungsten key.",
+    "scores": {
+     "1": 5,
+     "2": 4,
+     "3": 6,
+     "4": 7,
+     "5": 2,
+     "6": 6,
+     "8": 3,
+     "9": 4
+    },
+    "tell": "Two things pick it out in under a second. First, the headlight pool on the track ahead of the car is not light, it is geometry: you can see two thin bright-outlined rectangles lying on the paper just left of the front wheel, the borders of the light-cookie/shaft quads. Second, the pebble field is a normal map on a flat plane, and it proves it where the paper track's edge crosses it beside the rear wheel: the boundary is a perfectly straight ruled line and not one stone breaks the profile. Add the pure-white clipped headlight core eating the car's nose and the left sixth of the frame, and the rear tyre sitting on loose gravel at speed with no dust, no scattered stones and no contact shadow, and a stranger would call it the hobby project immediately. The car asset itself would not give it away.",
+    "defects": [
+     {
+      "category": 2,
+      "severity": "critical",
+      "what": "Two thin, bright-outlined hollow rectangles are drawn on the track surface between the light pool and the front wheel (roughly the middle-left band of the frame at the car's hub height). These are the borders of the headlight cookie/light-shaft quads rendering their own edges; real light has no rectangular outline on the ground.",
+      "fix": "Fade the projector/shaft quad to zero opacity at its UV border, or move the headlight pool to a real spot light with an IES-style falloff instead of a projected card."
+     },
+     {
+      "category": 3,
+      "severity": "critical",
+      "what": "The headlight core clips to featureless pure white across roughly the left sixth of the frame and the bloom bleeds back over the car itself, blowing out the bonnet, the A-pillar and the top edge of the roof rack, surfaces the forward-facing headlights cannot illuminate.",
+      "fix": "Bring the emissive down two or three stops so the core keeps detail, apply a filmic highlight rolloff before bloom, and mask bloom to the emitter and speculars rather than letting it wrap onto backfacing panels."
+     },
+     {
+      "category": 5,
+      "severity": "critical",
+      "what": "The rear wheel is off the track and on loose gravel, yet there is no dust plume, no displaced or tumbling stones, no spray on the bodywork behind the arch, no skid or dirt-drag mark on the paper the front wheels just left, and no motion blur anywhere. Nothing in the frame says the car is moving.",
+      "fix": "Spawn a surface-typed particle emitter at each contact patch (dust puff plus a few rigid stones on gravel), lay a decal trail of dragged dirt from the gravel back onto the paper, and add per-object motion blur or at minimum wheel rotation blur."
+     },
+     {
+      "category": 4,
+      "severity": "major",
+      "what": "The pebble bed is a flat plane with a normal/bump map. Its silhouette gives it away: where the white track's edge crosses in front of it beside the rear wheel the boundary is a dead-straight line, and along the whole gravel expanse no stone ever breaks a profile or occludes another.",
+      "fix": "Scatter actual low-poly stone instances along the track boundary and in the near foreground so the edge silhouette is broken, and keep the bump map only for the mid-distance filler."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The pebbles are a single dome repeated: identical diameter, identical orientation, identical single specular dot on every one, laid out on a visible regular lattice that reads clearly in the lower-right quadrant. No size distribution, no flat or angular stones, no wet/dry roughness variation, no dust or fines packed between them.",
+      "fix": "Randomise per-instance scale, rotation and hue, mix in three or four distinct stone shapes, break the grid with a jittered or Poisson scatter, and add a darker fines layer in the gaps."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "There is no contact shadow where the rear tyre meets the gravel: the stones read at full brightness right up to and under the tread. The under-car shadow that does exist is a single soft blob with no tight dark core at either tyre's contact patch.",
+      "fix": "Enable shadow casting from the car onto the scatter/gravel surface and add a short-range AO or contact-shadow pass so the darkness tightens to near-black in the last few millimetres at each contact patch."
+     },
+     {
+      "category": 8,
+      "severity": "major",
+      "what": "The premise is a track built across an ordinary house, but nothing in the frame is a house. The upper-left third is a featureless black mass with no readable object in it, and the only props are a blurred striped ramp and an anonymous grey-blue bank. No skirting board, furniture leg, carpet pile, power socket, dropped toy or any domestic object gives the scale a reference.",
+      "fix": "Put one unmistakable household object in the mid-ground catching the headlights, a chair leg, a book stack, a plug socket, and lift the black region with a weak practical so it reads as a room rather than a void."
+     },
+     {
+      "category": 9,
+      "severity": "major",
+      "what": "The car is at a clearly higher fidelity than everything it sits on. It has bevelled shoulder lines, clearcoat highlights, a modelled roof rack, spoked rims and a tail lamp; the track it stands on is an untextured flat sheet with painted zero-thickness kerb blocks, and the ground beside it is a bumped plane. The two do not look authored by the same hand.",
+      "fix": "Spend a pass on the environment to match the car: paper fibre and print grain on the track, real geometry and edge wear on the kerbs, and modelled stone instances at the boundary."
+     },
+     {
+      "category": 1,
+      "severity": "minor",
+      "what": "The dirt on the driver's door is uniform salt-and-pepper noise spread evenly over the whole panel at a constant density. At die-cast scale each speck reads as roughly a centimetre of mud, and there is no directional spray fanning back from the wheel arch, no heavier build-up at the rocker, no clean run under the door handle.",
+      "fix": "Drive the dirt mask from a wheel-arch-outward gradient with streak flow, shrink the grain by an order of magnitude, and add a second thin film layer so the density varies across the panel."
+     },
+     {
+      "category": 3,
+      "severity": "minor",
+      "what": "The two out-of-focus headlights in the background render as spiky snowflake stars rather than an aperture-shaped bokeh disc, which reads as a DOF kernel artefact rather than a lens.",
+      "fix": "Swap the bokeh kernel for a hexagonal or circular aperture shape with a slight edge weighting."
+     }
+    ],
+    "worst": "The headlight lighting. It is simultaneously broken and overcooked: the projected light-shaft quads show their own rectangular outlines on the track ahead of the front wheel, and the same lamp's core clips to detail-free white across the left of the frame while its bloom wraps back and dissolves the car's own nose and roof rack. The single most desirable asset in the shot is being destroyed by the light that is supposed to show it off."
+   }
+  },
+  {
+   "id": "c02",
+   "side": "control",
+   "circuit": "kitchen (24 reviewed rounds)",
+   "cell": "establishing",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/kit/4-establishing.jpg",
+   "answer": {
+    "describe": "A wide, slightly elevated establishing shot (1280x720) of a whole dining table seen from above and to the left, filling the middle band of the frame. The tabletop is warm orange wood covered in a layer of dirt/dust, and a complete rally circuit is laid out across it: dirt corners and lighter pale straights, bordered by white extruded kerb-walls, red/white kerb strips and black/white checkered strips. A rough figure-of-eight with a large right-hand loop occupies the upper right, a tighter hairpin loop the upper left, and a long pale straight runs diagonally down to the lower centre. Six or seven die-cast cars, each only ~20px, are scattered around the circuit in one loose pack at centre-frame; one reads red, the rest as dark smudges. Household objects act as scenery: a row of four cereal/food cartons upper left, more single cartons scattered, three milk cartons (white with a blue band), a red crate, a red picnic basket or lunchbox with its lid open showing a blue-grey inner panel, a frying pan with cereal in it, several mugs and dark tins, a small bowl of cereal, and pens/pencils lying flat. A large white spill (milk from a toppled carton lying on its side at lower centre) forms one long pale track section and pools into a lobed puddle. A single black box prop stands in the empty lower-right foreground, throwing a long shadow to the right. Behind the table stands a large flat grey counter or cabinet block running the width of the frame, and behind that a pale whitewashed brick wall. A dark wood plank floor is visible in the lower-left corner along with one tapered grey table leg. The grade is warm and orange overall; a strong tilt-shift blur softens the top and bottom bands, and the upper third is further washed out by a pale haze.",
+    "scores": {
+     "1": 4,
+     "2": 4,
+     "3": 6,
+     "4": 3,
+     "5": 2,
+     "6": 4,
+     "8": 4,
+     "9": 3
+    },
+    "tell": "Yes, in well under two seconds, and two things do it. First, the grey slab behind the table: it is an untextured blockout box with faint seam lines, no worktop material, no doors, no handles, no toe-kick, no skirting where it meets the floor. Nothing else in the grid of reference games would ship a placeholder primitive across the full width of the background plate. Second, the shadow bookkeeping does not add up: a cereal box on the tabletop throws a crisp, hard shadow half its own length again to the right, but the table itself throws no shadow onto the floor at all and the floor carries no ambient occlusion under it. The tabletop is lit by a hard directional sun and the room is lit by flat ambient, so the diorama sits on top of the room instead of in it. After those, the giveaway is that the actual subject of a racing game - the cars - are 20-pixel dark blobs with no dust, no motion blur and no trailing skid, on a dirt surface.",
+    "defects": [
+     {
+      "category": 9,
+      "severity": "critical",
+      "what": "The background counter block (roughly x190-1160, y75-320) is grey untextured geometry: flat panels, faint vertical seam lines, no material response, no cabinet detail, no edge profile on the worktop, and no skirting or toe-kick at the floor line. It sits in the same frame as a tabletop that has a modelled frying pan, an opened lunchbox with a visible interior and individually printed cartons. The two halves of the frame come from different stages of production.",
+      "fix": "Either finish it as real furniture - worktop slab with a distinct material and a bevelled front edge, door and drawer splits, handles, a toe-kick, dirt in the corners - or remove it and let the wall and a couple of dressed props carry the background, so nothing in frame is unfinished."
+     },
+     {
+      "category": 2,
+      "severity": "critical",
+      "what": "The table casts no shadow on the floor. The key is clearly camera-left and low: the black box at lower right (x925-975, y525-635) throws a hard shadow running right to x~1090, and every carton on the table throws a matching long right-going shadow. A table lit by that key must lay a large hard shadow across the floor and darken everything beneath it. The floor in the lower-left corner is instead a uniform soft gradient with no table shadow and no contact darkening at the leg, so the table reads as an object floating over a floor image.",
+      "fix": "Put the room and the tabletop on one light rig so the same key that shadows the cartons also shadows the table, the leg and the counter. Add the table's cast shadow and a strong AO gradient under the tabletop, and darken the floor plane in the table's occlusion footprint."
+     },
+     {
+      "category": 5,
+      "severity": "critical",
+      "what": "Cars are driving on loose dirt at speed and generate no effects whatsoever. The pack around x630-760, y370-395 sits on the dirt with no dust plume, no rooster tail off the rear wheels, no motion blur on wheel or body, and no fresh skid or drift trail leading back to any car's own contact point. The curved tyre grooves baked into the dirt at the big right-hand loop are a static texture that connects to nothing on track - there is no car at the head of any of them.",
+      "fix": "Drive dust emitters from wheel contact on dirt surfaces, with depth-faded, soft-lit puffs that lift and drift; add a short stretched motion streak per car at speed; and write skid/dust decals from the actual wheel contact path so the trail always terminates at a car."
+     },
+     {
+      "category": 4,
+      "severity": "major",
+      "what": "The props are unbevelled primitives. The cereal box at x925-975 has razor-sharp vertical corners with no bevel highlight anywhere along them, no flap seams, no crease at the top gable. The milk cartons are plain rectangular boxes with a flat blue rectangle for a label and no gable-top fold, no cap, no seam. The mugs and tins are untapered cylinders. Nothing on the table catches a specular edge, which is the single thing that makes a die-cast or a printed carton read as a solid object.",
+      "fix": "Bevel every hard edge by 1-2mm at scale so it catches a highlight, and add the identifying silhouette detail to each prop family: gable fold and screw cap on the cartons, flap seams and a slight bow to the box faces, a taper and a rolled rim on the mugs."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The four cartons in the upper-left row (x260-420, y250-330) are the same asset four times, distinguished only by a hue shift - the same rounded-top slab silhouette and the same illegible dark blob 'text' block in the same place on each face. The same repeat shows again on the single cartons at x330-360/y215-250 and x385-415/y250-290. Their front labels are muddy brown smears with no legible printing, no logo shape, no barcode, no colour blocking.",
+      "fix": "Give the carton family three or four genuinely different silhouettes and real label art with distinct colour blocking and a readable logo shape, and vary the texel density so labels hold up at this camera distance."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "There is an unmotivated warm orange glow blob on the dirt at roughly x640-700, y310-330, just below and right of the open red lunchbox. Nothing in frame emits it: no fire, no headlight, no spark, no glowing prop, and it does not sit on any surface feature. It reads as a stray point light or a bloom leak sitting on the tabletop.",
+      "fix": "Find the stray emitter or bloom source and remove it, or motivate it - if it is meant to be a hazard or a fire, model the source."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The milk spill (x480-830, y420-530) is a flat matte white shape with no liquid behaviour: no edge meniscus or raised bead, no specular sheen or environment reflection, no thickness variation, no darkening of the wood at the wet perimeter, and no reflection of the toppled carton that is lying right at its lip. It reads as a paper cutout or spilled emulsion paint, not milk, which undercuts the frame's best idea.",
+      "fix": "Give it a low-roughness, slightly translucent shader with a specular highlight tracking the key, a thicker refractive rim bead at the edge, and a damp-darkening decal on the wood just outside the pool."
+     },
+     {
+      "category": 6,
+      "severity": "major",
+      "what": "The frame is pointed rather than composed. The table's long axis runs parallel to the frame bottom and the table is centred, giving a flat, catalogue-like presentation. The upper 30% of the frame is empty grey counter and blank wall carrying no information, and the lower-right sixth is bare wood with one box in it. The cars - the subject - occupy well under 1% of the frame and are illegible at this distance, so there is no read on who is racing whom or where the action is.",
+      "fix": "Either commit to the diorama establishing shot by dressing the dead upper and lower bands with real scenery and light, or bring the camera down and in so a corner and a pack of cars fill the frame. Skew the table's axis off the frame edge and use the counter line to lead into the action rather than cutting across it."
+     },
+     {
+      "category": 1,
+      "severity": "minor",
+      "what": "The dirt layer over the wood is a uniform fine speckle at a single scale, spread at almost constant density across the entire tabletop from the hairpin to the empty lower-right corner. There is no clustering into drifts, no clean swept areas, no build-up against the kerb walls or against the base of the cartons, so it reads as procedural noise laid over the wood rather than dust that got there by anything happening.",
+      "fix": "Vary the dust with a low-frequency mask: heavier accumulation in corners and against vertical props, swept-clean patches on the racing line and where objects have been dragged, and mix in a second larger grit scale so it is not one uniform frequency."
+     },
+     {
+      "category": 3,
+      "severity": "minor",
+      "what": "A pale haze lifts the blacks across the whole upper half of the frame, flattening the counter and wall into a near-white field with no shadow value - the counter's own vertical faces sit within a few values of the wall behind them. Combined with the near-monochrome orange grade, the frame has almost no dark end and no cool note anywhere to give the warm key something to read against.",
+      "fix": "Pull the haze back so the room retains a real shadow value and the counter separates from the wall, and introduce a cool ambient or bounce in the shadows so the warm key reads as a direction rather than as an overall tint."
+     }
+    ],
+    "worst": "The frame is two different products stitched at the table edge. Everything on the tabletop is art-directed and lit by a hard, consistent, camera-left key; everything off it - the counter, the wall, the floor, the table leg - is untextured grey primitive geometry lit by flat ambient with no shadow from the table at all. That single split is what a stranger would spot in the grid, and it also destroys the premise: the whole point of racing die-cast cars across an ordinary house is that the house is real and the miniature is the toy, and here the house is the placeholder."
+   }
+  },
+  {
+   "id": "c03",
+   "side": "test",
+   "circuit": "bedroom",
+   "cell": "establishing",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/bed/4-establishing-hi.jpg",
+   "answer": {
+    "describe": "A near-top-down aerial night shot of an entire toy circuit laid out on a brown carpet in a dark room. The layout is a long horizontal loop: a hairpin at the far left, a wide S-chicane through the middle, and a second hairpin bottom-right, with a short straight running back along the top. The track is a pale grey ribbon edged by chains of red-and-white kerb cubes, with black-and-white chequered patches at several points, and a continuous white tube barrier following the outside of both hairpins. A warm amber pool of light sits over the centre of the layout and falls off to near-black at every frame edge; the whole right-hand third of the circuit is unlit and readable only as a thin blue-lit line of barrier tracing the curve. Two or three tiny dark cars run near the bottom-right hairpin, each throwing a hard white headlight fan forward onto the track. The carpet around the circuit is dressed with household clutter: a blocky-patterned rug or runner crossing the lower-left diagonally, a crumpled orange-and-blue fabric (scarf or jacket) upper-centre, patches of wood floor visible top-left and centre-left, several flat black rectangular slabs, dozens of small identical dark blobs, and scattered light bricks and thin coloured sticks. Faint dark skid marks curve across the chicane. Heavy tilt-shift blur mushes the top and bottom thirds of the frame; grade is warm amber in the lit centre against deep blue-purple shadow, with a strong vignette.",
+    "scores": {
+     "1": 4,
+     "2": 4,
+     "3": 6,
+     "4": 4,
+     "5": 4,
+     "6": 5,
+     "8": 4,
+     "9": 5
+    },
+    "tell": "Two things pick it out instantly. First, nothing is grounded: the cars at the bottom-right hairpin sit on a brightly lit track surface with no contact shadow and no darkening underneath, the white barrier tube lays no shadow strip onto the carpet beside it, and the black slab props on the carpet have no directional shadow either, so the whole circuit reads as a decal printed on the carpet rather than plastic sitting on it. Second, the falloff does the framing instead of the lighting: the right-hand hairpin is crushed to black and the layout simply stops existing there, while the top-left barrier arcs float as disconnected glowing blue curves in a void. A commercial title would light the whole playfield and let composition, not clipped blacks, decide what you see.",
+    "defects": [
+     {
+      "category": 2,
+      "severity": "critical",
+      "what": "No contact shadow or AO anywhere. Clearest at the bottom-right hairpin: the blue car sits inside its own bright headlight pool on a pale track surface and casts nothing - no core shadow, no soft ambient occlusion at the tyre contacts. The same holds for the white barrier tube around that hairpin (no shadow band on the carpet to its right) and for the black slab prop just inside the same hairpin.",
+      "fix": "Add a cheap grounding pass: per-car blob/capsule shadow plus screen-space AO on the ground, and let the barrier tube and the larger carpet props cast into the shadow map. Even a soft darkening ellipse under each car would fix the floating."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "The headlight beams are painted wedges, not lights. On the bottom-right car the fan is a hard-edged triangle of blown white on the track with a straight terminating edge; it does not spill onto the red/white kerb cubes immediately beside it, does not touch the barrier tube it points at, and does not illuminate the front of the car emitting it - the car body is darker than the ground it is supposedly lighting.",
+      "fix": "Make the headlight an actual spot light with proper cone falloff so it lights the kerbs, the barrier and the car's own front bodywork, and soften the beam's far edge instead of ending it on a straight line."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "The white barrier tube carries an identical continuous specular highlight along its entire length, including the stretch around the far-right hairpin that is otherwise in total darkness. A round tube under a single warm key should break its highlight as the surface normal turns away; here it reads as an emissive neon strip rather than a lit plastic rail.",
+      "fix": "Drop the barrier's emissive/rim term and let the highlight come from the key so it breaks and dims as the tube curves out of the light pool."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The rug/runner crossing the lower-left is an extremely low-resolution blocky pattern - roughly 8-to-10-pixel squares magnified to occupy about a fifth of the frame width, with visibly nearest-neighbour hard square edges and no weave, no pile, no fringe. It is the single lowest-fidelity surface in the shot and sits directly in the sharpest focus band.",
+      "fix": "Replace with a real woven texture at usable resolution plus a normal map for pile, or if the blockiness is deliberate, model it as an actual pile weave so the squares read as tufts rather than as texel magnification."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The carpet is one uniform high-frequency grain at a single scale across the whole floor - identical density under the far hairpin and in the sharp foreground band, with no pile direction, no vacuum tracks, no crushing or matting where the track ribbon rests on it, and no larger-scale tonal variation. It reads as sandpaper or asphalt aggregate rather than carpet, and it sparkles slightly in the lit centre.",
+      "fix": "Add low-frequency blotch and pile-direction variation to break the uniform noise, scale the grain with distance, and darken/flatten a thin band of carpet where the track and barrier press into it."
+     },
+     {
+      "category": 4,
+      "severity": "major",
+      "what": "The track ribbon is a low-tessellation extruded strip. On the bottom-right hairpin the outer edge resolves into straight polygon segments rather than a curve, and the ribbon width visibly pulses along the chicane. The surface itself is flat pale grey with no bevel, no thickness at the edge, and no material - it does not read as card, plastic or tape.",
+      "fix": "Increase spline tessellation on tight-radius sections, give the ribbon a visible edge thickness with a small bevel to catch the key, and add a surface material so it reads as a specific substance."
+     },
+     {
+      "category": 4,
+      "severity": "minor",
+      "what": "The kerbs are chains of separate red and white cubes with visible gaps between them and no base rail underneath, and the same identical black rounded blob prop is instanced dozens of times across the carpet at identical size and value - most visible in the band above the left hairpin, where six or seven of them sit in a loose arc.",
+      "fix": "Join the kerb cubes onto a continuous low base strip so they read as one kerb, and add two or three silhouette and colour variants to the scattered debris prop so the repetition stops being countable."
+     },
+     {
+      "category": 5,
+      "severity": "major",
+      "what": "There are no particles at all. Three cars are running a night race and there is no dust lifted off the carpet, no tyre haze at the hairpin exits, no volumetric cone in the headlight beams, and no light bloom shape around the blown-white beam cores - just a clipped white patch on the track. The skid marks across the chicane are the only effect present.",
+      "fix": "Add a small carpet-dust emitter at the rear tyres, a light volumetric on the headlight cones so the beams exist in air, and shape the bloom around the beam cores instead of letting them clip flat."
+     },
+     {
+      "category": 3,
+      "severity": "major",
+      "what": "The tilt-shift is overcooked and mis-oriented. The blur is a horizontal band gradient rather than aligned to the ground plane, so the far-left hairpin and the whole bottom edge are unreadable mush while the sharp band is a narrow horizontal strip. Combined with the vignette, roughly half the layout is either blurred or crushed to black.",
+      "fix": "Widen the in-focus band, cut the maximum blur radius by about half, and tilt the focal plane to follow the carpet so sharpness falls off with actual depth rather than with screen height."
+     },
+     {
+      "category": 8,
+      "severity": "major",
+      "what": "The room is entirely absent. The lit ellipse of carpet fades to pure black on all four sides with no wall, no skirting board, no furniture leg, no ceiling bounce and no visible light source - the circuit floats in an unbounded void, and the wood-floor patches at the left simply end mid-frame with no explanation of where the carpet edge is.",
+      "fix": "Bring at least one piece of real room geometry into frame - a sofa foot, a skirting board, a table leg with the practical light above it - so the layout is somewhere rather than nowhere, and lift the black floor to a readable ambient instead of clipping it."
+     },
+     {
+      "category": 6,
+      "severity": "minor",
+      "what": "The cars are the subject and they are tiny, dark and pushed to the bottom-right corner of the lit area, while the geometric centre of the frame is empty carpet. The layout is also near-symmetrical left-to-right, so the eye has no entry point and no path through the shot.",
+      "fix": "Push the camera lower and closer to the bottom-right hairpin so the cars occupy real screen area, or break the symmetry by rotating the camera so one hairpin leads and the other recedes."
+     },
+     {
+      "category": 9,
+      "severity": "minor",
+      "what": "Fidelity is inconsistent across surfaces in the same focus band: the finely-grained carpet and the crisply modelled barrier tube sit directly against the giant-texel rug and against untextured pure-black slab props that have no surface detail at all.",
+      "fix": "Bring the rug and the slab props up to the carpet's texel density and give the slabs an actual material so the whole floor dressing reads as one art pass."
+     }
+    ],
+    "worst": "Nothing in the frame is grounded. Cars, barriers, kerbs and carpet props all sit without a single contact shadow or any ambient occlusion, so the entire circuit reads as a flat decal printed onto the carpet rather than physical objects resting on it. This is the one fault that would still be visible at thumbnail size, and it undoes the miniature illusion that the tilt-shift and the warm key are working hard to build."
+   }
+  },
+  {
+   "id": "c04",
+   "side": "control",
+   "circuit": "kitchen (24 reviewed rounds)",
+   "cell": "chase",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/kit/2-chase.jpg",
+   "answer": {
+    "describe": "A tilt-shifted three-quarter chase view, camera about 45 degrees down, of two small die-cast cars mid-corner on a track laid directly onto a wooden floor. The racing surface is warm oak grain; a pale, lighter oval of wood forms the infield at left, ringed by a red-and-white striped kerb tube that sweeps from the lower-left corner up and around to the right. Two thin white lane lines run around the corner across the darker outer wood. A plain white barrier tube arcs down the right third of the frame, and a second one runs across the blurred background at top. The lead car, lower-centre-left, is dark blue with red-white-blue stripes running front to back over roof and rear deck, small chrome-white wheels and red tail lights, and is angled slightly left. Behind and to its right sits a lime-green car with a black-topped greenhouse, a black rear wing, dark rims with white detail rings, and a livery decal on the rear flank. A grey-brown dust smudge trails behind and left of the green car, and dark tyre streaks curve down the wood to the right of both. Scattered across the pale infield are small orange coin-like discs lying flat, and several small untextured grey cubes sit at the kerb edge on the left and right. The whole image is graded warm amber-orange with a soft vignette and visible film grain; the top quarter and bottom edge fall away into heavy defocus, with a small red marker and blurred white shapes in the far background.",
+    "scores": {
+     "1": 5,
+     "2": 4,
+     "3": 6,
+     "4": 4,
+     "5": 3,
+     "6": 6,
+     "8": 2,
+     "9": 4
+    },
+    "tell": "Under two seconds, yes. Three things do it together. First, the hero blue car at frame centre has no contact shadow at all: the wood grain and its specular sheen run at full brightness right up to and under the sill, so the car reads as a sprite pasted onto the floor rather than an object resting on it. Second, the thin white lane lines break into stair-stepped dashes wherever they cross the mid-ground, and the wood grain behind the green car collapses into a dashed moire checkerboard, so the frame is visibly undersampled. Third, plain untextured grey cubes are sitting in the scene next to a carefully-grained floor, which reads as unfinished blockout left in the shot. A commercial title would have none of these.",
+    "defects": [
+     {
+      "category": 2,
+      "severity": "critical",
+      "what": "The blue hero car, lower-centre-left, casts no contact shadow and has no ambient occlusion at any wheel or under the chassis. The bright anisotropic grain highlights on the wood pass unbroken beneath the body and out the far side; only a faint general darkening exists at the left sill. The green car has a weak darkening but still no defined cast shadow.",
+      "fix": "Add a real cast shadow from the key (which reads as low and upper-right) plus a tight capsule-shaped AO decal per wheel and under the floorpan, and darken the grain specular under the body footprint so the car occludes the floor's highlight."
+     },
+     {
+      "category": 8,
+      "severity": "critical",
+      "what": "Nothing in the frame says house. From edge to edge there is only wood grain, kerb, barrier and a few grey cubes; the background at top blurs into an undifferentiated amber gradient with no skirting board, wall, furniture leg, rug edge, cable, or any domestic object. The premise is invisible and the track floats in an orange wood void.",
+      "fix": "Put at least one unambiguous domestic anchor in the frame at the correct miniature scale - a skirting board and wall meeting the floor along the far edge, a chair or table leg, a power socket, the fringe of a rug - and let it break the horizon so the world has a ceiling and a boundary."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The wood grain arcs are concentric with the corner: they bend around the apex following the kerb and the racing line, compressing on the inner radius and stretching on the outer. Real plank flooring has straight parallel grain that ignores the track. The texture is clearly UV-mapped to the track ribbon.",
+      "fix": "Drive the floor material from world-space triplanar or planar UVs aligned to a plank direction, with plank seams and butt joints crossing the track independently of its shape."
+     },
+     {
+      "category": 3,
+      "severity": "major",
+      "what": "Texture aliasing. The wood grain in the mid-ground right of the green car breaks into a dashed interference checkerboard, and the white lane lines shatter into stair-stepped, ghosted dashes with chunks missing where they cross behind the blue car. The lines are thinner than a pixel at that distance and are not being filtered.",
+      "fix": "Enable anisotropic filtering and correct mip bias on the floor detail map, and render the lane lines as widening geometry or a mip-aware SDF decal with a minimum screen-space width so they stay solid instead of dissolving."
+     },
+     {
+      "category": 4,
+      "severity": "major",
+      "what": "The blue car does not read as a car. From this rear three-quarter it is an accordion of three near-identical rectangular slabs (roof, rear deck, boot) each carrying the same flat stripe, with no wheel arches, no shoulder line, and no rear wing. Its rear wheels are two small chrome-white nubs with no tyre, sidewall or rim, so it reads as a stack of blocks on castors.",
+      "fix": "Rebuild the rear volume with a single tapering deck, a defined shoulder crease and wheel arches, and give it the same modelled wheel treatment the green car has - black tyre, distinct rim face, visible sidewall."
+     },
+     {
+      "category": 5,
+      "severity": "major",
+      "what": "The dust behind the green car is a flat, low-frequency grey-brown splotch lying on the ground plane. It has no vertical extent, no internal structure or lit and shadowed sides, and it stays cold grey while the entire scene is graded warm amber, so it does not take the key light at all. It reads as a dirt stain on the floor, not as a puff of dust.",
+      "fix": "Give the particles real volume with lifetime-driven scale and rotation, light them off the same warm key so the top edges catch it, add a soft depth fade at the ground contact, and raise them off the plane so they occlude part of the car."
+     },
+     {
+      "category": 5,
+      "severity": "major",
+      "what": "The skid marks do not belong to these cars. The trail right of the green car is one wide soft smear plus one thin line, at a width that matches neither the car's track width nor its two rear tyres, and it does not connect to either rear wheel; its opacity is uniform end to end with no fade at the old end.",
+      "fix": "Spawn skid decals per wheel at the actual contact points with the correct tyre width, and fade opacity over the decal's lifetime so the freshest section under the car is darkest."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "The pale oval infield at left is a hard-edged brightness jump on flat floor with no geometric or lighting cause - same plane, same height, no object to catch light differently, and its boundary runs parallel to the kerb at a varying offset. It reads as a lightmap seam or an untextured decal patch rather than a surface.",
+      "fix": "Either justify it as a real material change with a modelled edge, a lip and its own AO line, or blend the transition with a dirt and wear mask so it is not a clean geometric arc floating on the floor."
+     },
+     {
+      "category": 4,
+      "severity": "minor",
+      "what": "Several small grey cubes at the kerb line - one clearly visible at the left infield edge and another at right by the white barrier - are untextured flat-grey primitives with a single softened corner and a stray thin grey plane protruding from one. They are blockout placeholders sitting in a finished shot.",
+      "fix": "Model or replace them with real props at this scale (a die-cast pit block, a domino, a sugar cube, a battery) with proper material, bevels and grounded AO, or remove them from camera."
+     },
+     {
+      "category": 9,
+      "severity": "major",
+      "what": "The two hero cars come from different quality bars. The green car has modelled rims, a rear wing with endplates, a shaped greenhouse and a livery decal; the blue car has slab geometry, no wing, flat projected stripe decals that terminate in hard rectangles without wrapping the form, and undetailed white wheel nubs. Side by side they look like assets from two different projects.",
+      "fix": "Bring the blue car up to the green car's spec - same wheel construction, same bevel and panel-line language, same decal projection quality - and set a single car build standard for the fleet."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "No surface in the frame reads as die-cast. Both cars' paint is a flat diffuse gradient with only thin blown-white slivers along the top edges and no environment reflection sweeping the flanks; the green car's windscreen is a clipped pure-white blob with no shape, frame or reflection. The white barrier tubes are uniform untextured white with no scuffs, seams or roughness variation.",
+      "fix": "Give the bodies a clearcoat metallic with a real reflection probe so the room and the warm key sweep across the flanks, model and shade the glass with a tinted reflective layer instead of a white decal, and break the barriers up with roughness variation, dirt in the crevices and scuff marks where cars hit them."
+     },
+     {
+      "category": 3,
+      "severity": "minor",
+      "what": "The film grain is applied uniformly at full strength over the completely out-of-focus areas - the blurred background at top is visibly noisy - and the small red marker near the top-centre barrier stays crisp-edged while everything at its depth is heavily blurred. The blacks are also lifted: the darkest value in the frame is a mid-brown, so nothing anchors the contrast and a global veiling haze sits over the image.",
+      "fix": "Scale grain by local blur amount so bokeh stays smooth, fix the DOF circle-of-confusion on small decal-type objects so the marker blurs with its neighbours, and pull the toe of the curve down so at least the shadow under the kerbs reaches a true black."
+     },
+     {
+      "category": 6,
+      "severity": "minor",
+      "what": "The right third of the frame is dead: roughly 35 percent of the image is empty orange wood with only a soft skid smear and one barrier arc, while both cars are crowded into the left-of-centre band and sit almost exactly on the horizontal centreline. The camera is at a generic default chase height pointed down the track rather than framed for this overtake.",
+      "fix": "Tighten in and drop the camera so the cars fill more of the frame, push the pair off the centreline, and either rotate to put an environment anchor in the right third or use the barrier arc to lead the eye back into the action instead of out of frame."
+     }
+    ],
+    "worst": "The blue hero car - the subject of the frame - fails on contact and on form at the same time: it casts no shadow and gets no AO, so the wood's specular runs unbroken underneath it and it floats as a pasted-on sprite, and its geometry is a stack of three identical striped slabs on chrome nubs that does not read as a car at all. The eye lands on it first and it is the least finished object in the shot."
+   }
+  },
+  {
+   "id": "c05",
+   "side": "control",
+   "circuit": "kitchen (24 reviewed rounds)",
+   "cell": "macro",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/kit/3-macro.jpg",
+   "answer": {
+    "describe": "A low rear-three-quarter chase shot of two die-cast racers running side by side away from camera on a wooden floor that has been painted as a racetrack with white lane lines. The near car is a dark navy coupe with a red-and-silver stripe over the roof, a large white racing numeral on the driver's-side flank, white five-spoke rims, a flat red rear wing, chrome quad exhaust tips, a chrome-look splitter bar and a small 'MG 07' number plate on a speckled tan rear valance. Slightly ahead and to the right is a lime-green GT with a black hood scoop and vents, a white roundel carrying the number 12, a black plank rear wing on a raised pylon and black dished wheels. A red-and-white rumble strip runs diagonally across the bottom-left foreground, heavily blurred. The upper 40 percent of the frame is a strongly defocused warm brown field containing a second stretch of track, a checkered strip, a pale barrier and a handful of small pale and orange blobs. The grade is warm golden-hour; the whole image carries a fine uniform grain and a soft vignette.",
+    "scores": {
+     "1": 4,
+     "2": 3,
+     "3": 5,
+     "4": 5,
+     "5": 2,
+     "6": 5,
+     "8": 2,
+     "9": 4
+    },
+    "tell": "Picked out in well under two seconds, and the giveaway is that nothing in the frame casts a shadow. There is a clear warm low key light — it puts a hot highlight along the blue car's left flank and a bright edge on the kerb — yet neither car, nor the rumble strip, drops any shadow onto the wooden floor. Boosting the exposure confirms it: the wood grain runs unbroken and at full brightness straight under the blue car's rocker and under the green car's rear bumper, and the white lane line stays bright where it passes beneath the green car. Both cars therefore read as stickers pasted onto a floor photo rather than objects sitting on it. Second giveaway: the floor is a single corrugated ridge pattern at one frequency with no board joints and no variation between planks, so it reads as corduroy, not as wood.",
+    "defects": [
+     {
+      "category": 2,
+      "severity": "critical",
+      "what": "No cast shadows anywhere in the frame. With the sun low and warm from the front-left (see the blown highlight on the blue car's driver's flank), both cars should throw long shadows to the right across the wood; there are none. The floor to the right of the green car and the floor between the blue car's front and rear wheels are exactly as bright as the open track.",
+      "fix": "Get the cars into the shadow-casting set — this looks like the cars falling outside the shadow cascade or having cast-shadows disabled on the vehicle layer. Add a directional shadow from the key with a cascade tight enough to resolve toy-scale geometry."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "No contact shadow or AO at the ground contacts. The blue car's black splitter bar and chrome exhaust tips sit against fully lit floor; the green car's rear valance has a light-grey plate almost touching the wood with no darkening at all. The tyre patches show only a token darkening that does not spread.",
+      "fix": "Add a per-vehicle contact-shadow blob or capsule shadow anchored at the wheel contact points, plus screen-space AO on the underbody so the rocker-to-floor gap goes dark."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "Light leak along the base of the rumble strip in the lower left. Where the kerb meets the wood there is a thin bright tan/gold line — the crevice that should be the darkest part of the join is the brightest.",
+      "fix": "Kill the bright seam: either the kerb mesh is floating a fraction above the floor letting ambient through, or the base edge has an unintended emissive/rim contribution. Seat the mesh and let AO darken the join."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The wooden floor is a uniform corrugation, not wood. Across the whole visible track the grain is a single-frequency ridge pattern of identical spacing and identical depth, with no plank butt joints, no per-board colour or tone variation, and the same ridge amplitude near the camera and far away. At the bottom of the frame it reads as corduroy or corrugated card.",
+      "fix": "Break it into discrete boards with visible joints and random per-board hue/value offsets; add a low-frequency blotch/wear layer over the grain so the frequency is not uniform, and reduce the normal-map strength so the grain reads as grain rather than ribs."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The blue car's rear valance — dead centre of the frame and the sharpest thing in it — is a fine tan-and-white speckle with dark crack marks running through it. It reads as sandstone, gravel or glitter card, not as any part of a car. It sits directly against glossy painted blue and chrome, which makes the mismatch obvious.",
+      "fix": "Replace it with a plausible rear panel material — matte black textured plastic or brushed metal diffuser with vertical strakes. If the speckle is a carbon/mesh texture at the wrong UV scale, scale it down hard; the crack decal belongs to a different asset and should be removed."
+     },
+     {
+      "category": 1,
+      "severity": "minor",
+      "what": "The blue car's canopy is a flat opaque grey tint with no variation across it — no environment reflection, no gradient from sky to floor, no hint of a cockpit. Real die-cast glazing at this angle would carry a bright sky reflection down the windscreen rake.",
+      "fix": "Give the glass a low-roughness specular with an environment reflection so the windscreen picks up the warm sky and the roofline reads."
+     },
+     {
+      "category": 3,
+      "severity": "major",
+      "what": "The driver's side of the blue car is clipped. The door, sill, roundel and part of the roof have fused into one flat featureless white mass; the racing numeral is only a faint ghost inside it and the door shut line disappears. This is on the hero car, in focus, at the centre of attention.",
+      "fix": "Pull exposure or add a filmic highlight rolloff so the white decal and its specular do not clip together; the bloom threshold is also low enough to be smearing the decal — raise it so bloom only fires on true speculars like the chrome tips."
+     },
+     {
+      "category": 3,
+      "severity": "minor",
+      "what": "The depth of field is overcooked. Everything above roughly the top third dissolves into an unreadable brown smear — the second track section, the checkered strip and the props are reduced to shapeless blobs, so nearly half the frame carries no information.",
+      "fix": "Widen the focal plane or move the blur ramp further back so the mid-ground props stay identifiable as objects. The miniature read is already carried by the near-field kerb blur."
+     },
+     {
+      "category": 4,
+      "severity": "major",
+      "what": "The green car is blocked out, not modelled, and sits right next to a finished one. Its rear bumper is a stack of unbevelled slabs, the taillight is a flat red rectangle on a protruding grey box, the quarter panel shows visible polygon facets and a hard shading terminator, and a plain light-grey untextured L-plate juts out below the rear valance — it looks like an unfinished undertray or collision proxy left visible.",
+      "fix": "Bevel every hard edge on the green car so it catches a highlight the way the blue car's arches do, smooth or subdivide the rear fender to kill the faceting, and either texture or hide the grey undertray plate."
+     },
+     {
+      "category": 4,
+      "severity": "minor",
+      "what": "The blue car's rear wing is a flat matte red plank with square edges and no bevel, mounted on a glossy clear-coated body. It reads as a different, cheaper part bolted onto a finished model.",
+      "fix": "Bevel the wing's leading and trailing edges and give it the same clear-coat gloss as the body, or deliberately make it a matte carbon part with visible endplates rather than a plain slab."
+     },
+     {
+      "category": 5,
+      "severity": "major",
+      "what": "There are no effects at all. Two cars are racing wheel-to-wheel and there is no dust off the wood, no tyre mark behind either car, no rotational blur on the wheels — the blue car's five spokes and the green car's twelve wheel holes are pin sharp and static — and nothing at the tyre contact patches. Nothing in the frame says the cars are moving.",
+      "fix": "Add rotational blur on the wheels tied to speed, a faint dust or scuff puff at the driven contact patches, and a decaying tyre scuff decal following the contact path behind each car."
+     },
+     {
+      "category": 6,
+      "severity": "minor",
+      "what": "The side-by-side battle does not read as a battle. The blue car occludes the green car's entire front half, so the green car is only a rear quarter and a wing; there is no visible gap, overlap or line difference between them to say who is winning or what is about to happen.",
+      "fix": "Shift the camera left or lower it so the green car's nose separates from the blue car's tail, giving a readable gap and a clear leader."
+     },
+     {
+      "category": 8,
+      "severity": "major",
+      "what": "Nothing in the frame identifies this as a house. Beyond the painted track there is a featureless brown field, a pale barrier, a checkered strip and four or five unresolvable pale cubes. There is no skirting board, furniture leg, carpet edge, power socket, book, mug or any other domestic object at any distance — no object of known real-world size to sell the toy scale or to give the place a story.",
+      "fix": "Put at least one recognisable household object in the readable middle distance — a chair leg, a book stack, a table edge, a discarded shoe — sharp enough to identify. That single object does more for scale than the DOF does."
+     },
+     {
+      "category": 9,
+      "severity": "major",
+      "what": "Two clearly different fidelity tiers share the frame: the navy car has bevelled arches, panel lines, clear-coat gloss, chrome exhausts and a number plate, while the green car it is racing has faceted panels, square unbevelled edges and flat untextured green. The kerb compounds it — it is completely matte with soft rounded corners and painted-on scuff strokes, so it reads as felt or foam next to hard glossy plastic cars on a hard wooden floor.",
+      "fix": "Bring the green car up to the blue car's bevel and material spec, and give the kerb a hard painted-plastic specular and a crisper top edge so all three read as the same product."
+     }
+    ],
+    "worst": "Nothing in the frame casts a shadow. Both cars sit on a fully lit floor with no cast shadow and effectively no contact occlusion — the wood grain runs unbroken and at full brightness under the blue car's rocker, and the white lane line stays bright where it passes beneath the green car's rear bumper. Every other fault here is cosmetic by comparison; this one unglues the cars from the world and is the reason the frame reads as a composite rather than a render."
+   }
+  },
+  {
+   "id": "c06",
+   "side": "control",
+   "circuit": "kitchen (24 reviewed rounds)",
+   "cell": "gameplay",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/kit/1-gameplay.jpg",
+   "answer": {
+    "describe": "A near-overhead, slightly tilted shot of a hairpin built on a varnished wood floor. A blue die-cast rally/muscle car with white and red stripes, a red hood panel and a rear wing sits just left of centre, nose pointing up-frame, running between a thin white boundary line marked with regular perpendicular tick marks. Ahead of it at the top of the frame, a green rival car is reduced to an unreadable smear by defocus. The inside of the corner is a raised plateau of paler wood edged with a red-and-white striped soft tube kerb that sweeps an arc down the left half; the outside is bounded by a plain white tube barrier arcing from top-centre to bottom-centre-right. Scattered on the plateau and floor as scale props: several copper coins, a grey eraser, a blue-and-white pencil, a small blue-and-white block, and a blank cream box at bottom-right. A black-and-white checkered start/finish band sits in the heavily blurred top-left corner. The grade is warm amber throughout, with fine film grain, a vignette, and strong tilt-shift blur across the top, left and bottom edges.",
+    "scores": {
+     "1": 5,
+     "2": 4,
+     "3": 6,
+     "4": 6,
+     "5": 2,
+     "6": 5,
+     "8": 5,
+     "9": 5
+    },
+    "tell": "Two seconds, and it is the hero car. It sits on the wood with no contact shadow and no ambient occlusion at the tyres, while its cast shadow is a formless oval blur about 2.5x its own footprint offset to the right, with none of the car's silhouette in it, no wheel gaps, no wing. Meanwhile the grey eraser twenty centimetres away throws a hard-edged, dark, correctly-shaped shadow. Same light, two incompatible shadow models, and the car ends up looking pasted onto a photo of a floor rather than resting on it. The plain white outer barrier seals it: a perfectly uniform, clipped-white ribbon with no texture, no scuffs and almost no shading gradient across its cylindrical cross-section, sitting in the same frame as a beautifully scuffed striped kerb. Add zero effects of any kind on two cars mid-corner and the miniature conceit collapses.",
+    "defects": [
+     {
+      "category": 2,
+      "severity": "critical",
+      "what": "The blue car has no contact shadow or AO. The wood immediately under and to the left of its front and rear wheels is at full lit value, and the cast shadow starts only to the right of the body with a gap. The shadow itself is a uniform soft oval carrying none of the car's silhouette.",
+      "fix": "Add a tight, dark contact shadow/AO term at the tyre patches and under the sills, and let the cast shadow harden near the contact point and soften with distance so the roof, wing and wheel gaps read in it."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "Penumbra width is inconsistent between objects on the same surface. The grey eraser on the plateau (mid-left, beside the kerb) casts a crisp-edged parallelogram shadow, while the car of comparable size a few centimetres away casts a shadow whose edge is blurred over most of its own body length. One key light cannot produce both.",
+      "fix": "Drive every shadow from the same source size. If the eraser's hard shadow is correct, tighten the car's; if the soft one is correct, soften the prop shadows to match."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The wood grain on the track band bends concentrically to follow the racing line. The dark grain streaks around the blue car arc parallel to the white boundary line and to the kerb, then continue curving around the hairpin. Real plank grain runs straight regardless of what is painted on it. The track surface is clearly a swept mesh with the wood texture mapped in spline UV space rather than in floor space.",
+      "fix": "Project the floor material triplanar or in world space so grain direction is continuous across the track mesh and the surrounding floor, and mask the track only through decals, not through a re-UV'd surface."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "Visible texture tiling on the raised plateau. The same oval knot-loop motif repeats at regular vertical intervals along the left of the white barrier, and the field of short dashed vertical striations behind the coins repeats in identical blocks. There is also no specular response anywhere on the wood, so it reads as matte cardboard rather than a varnished floor.",
+      "fix": "Break the repeat with a large-scale variation mask or stochastic/hex-tile sampling, and add a low-roughness varnish lobe with roughness breakup so the boards pick up a sheen and the grain has anisotropic direction."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The white outer barrier has no material. Along its whole visible arc from top-centre to bottom it is a flat, near-clipped white with almost no shading gradient across its round cross-section and zero surface detail, next to a striped kerb that carries convincing scuffs and dirt.",
+      "fix": "Give it the same treatment as the striped kerb: albedo below clipping, a proper terminator around the tube, paper or foam fibre detail, and scuff/rubber marks where cars have clipped it."
+     },
+     {
+      "category": 5,
+      "severity": "critical",
+      "what": "Nothing at all is happening. Two cars are mid-corner on a hairpin and there is no dust, no tyre smoke, no wheel motion blur, no skid or rubber trace behind either car, no particles, no sparks. The blue car's wheels are frozen crisp discs and the wood behind it is untouched.",
+      "fix": "At minimum add rolling wheel blur, a persistent rubber/dust decal trail along the driven line, and a low, depth-faded dust puff off the inside rear tyre through the corner."
+     },
+     {
+      "category": 6,
+      "severity": "major",
+      "what": "The action does not read. The green rival, the only other actor and the thing the frame is nominally about, is a green and white smear at top-centre so heavily defocused you cannot tell it is a car. The finish-line checker in the top-left is equally unreadable. Meanwhile the right third and the entire bottom band are featureless blurred plank.",
+      "fix": "Pull the aperture back so the rival stays identifiable, or reframe so both cars sit inside the sharp band; and either fill or crop the dead right third rather than spending 30 percent of the frame on empty defocused floor."
+     },
+     {
+      "category": 4,
+      "severity": "major",
+      "what": "The scale props are blocked-out primitives. The cream box at bottom-right is a bare bevelled cuboid with no label, print or edge wear; the eraser is a flat grey block; the pencil is a plain blue cylinder with a white band and no ferrule, tip or branding; the coins are smooth lozenges with no relief on either face.",
+      "fix": "Model and texture the household props to the same standard as the car: print and page edges on the box, a chamfered worn eraser with a paper sleeve, a real pencil tip and ferrule, and struck relief plus edge milling on the coins."
+     },
+     {
+      "category": 9,
+      "severity": "major",
+      "what": "The track furniture comes from two different levels of finish. The white boundary line and its regular perpendicular tick marks are zero-thickness flat white cards with no shading and no shadow onto the wood, so they read as a debug spline overlay dropped over an otherwise physical scene that contains a fully shaded striped kerb.",
+      "fix": "Make the boundary a real object with thickness that catches the key and drops its own contact shadow, e.g. tape with a lifted edge or chalk with grain sitting in the wood pores, and give the tick marks the same treatment or remove them."
+     },
+     {
+      "category": 3,
+      "severity": "minor",
+      "what": "The blur is overcooked and its bokeh is characterless. The checkered band in the top-left dissolves into featureless soft blobs with no defined aperture shape or edge structure, and the same mush swallows the rival car and every prop on the right.",
+      "fix": "Reduce the blur strength by roughly half and widen the in-focus band, and give the bokeh a real aperture shape with a defined edge so out-of-focus highlights read as photographic rather than as a Gaussian smear."
+     },
+     {
+      "category": 8,
+      "severity": "minor",
+      "what": "The props are strewn rather than placed. Coins are spread across the plateau at roughly even spacing like scatter decals, with no clustering, no relationship to the pencil or eraser, and nothing that suggests how they got there. There is also no floor-scale grime at all: no dust, no crumbs, no fibres, no fingerprints in the varnish.",
+      "fix": "Cluster the props into one or two plausible spills with a source implied (a tipped jar, a dropped pencil case) and add a fine layer of dust, hair and crumbs in the grain to make the floor feel lived on."
+     }
+    ],
+    "worst": "The hero car does not touch the ground. No contact shadow, no AO at the tyre patches, and a shapeless blurred oval standing in for a cast shadow while a nearby eraser throws a crisp, correctly-shaped one. The whole premise of the game is that a die-cast toy is really sitting on a real floor, and this single failure makes the car look composited over the wood rather than resting on it."
+   }
+  },
+  {
+   "id": "c07",
+   "side": "test",
+   "circuit": "bedroom",
+   "cell": "gameplay",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/bed/1-gameplay-hi.jpg",
+   "answer": {
+    "describe": "A high three-quarter night shot, roughly 1280x720, looking down on a pale toy track that sweeps in a wide S through the frame: one ribbon curves from bottom-centre up and around to the right, and a second, wider ribbon runs across the upper-right quadrant with a red-and-white kerb along its inside edge. A small blue-and-teal open-cockpit die-cast car with a rollbar/wing sits just left of centre at about (700,405), on the near ribbon, crossing a black-and-white chequered start/finish band that runs diagonally from (600,470) down-right to (860,560). Two faint dark trails run back from the car's rear wheels toward the bottom-left across the chequers. Ahead and to the right of the car a large blown-white teardrop of light lies flat on the track, centred near (830,365). On the upper track, near (1050,300), a big amorphous dark shadow is cast by something outside the frame, with a few small dark specks beside it. The rest of the floor is a dense brown pebbled carpet, scattered with red props: a ribbed open-topped crate at (170,350), a red brick at (410,375), a red-and-white cone or post at (355,480), a small dark block at (150,600), and an out-of-focus red sign or box blob at the top edge near (800,60). Bottom-right, four parallel orange rods (pencils or dowels) lie in near-darkness. Depth of field blurs the top and bottom edges heavily; the grade is cool purple in shadow, warm amber in the carpet, with a strong vignette.",
+    "scores": {
+     "1": 4,
+     "2": 3,
+     "3": 5,
+     "4": 4,
+     "5": 3,
+     "6": 4,
+     "8": 3,
+     "9": 4
+    },
+    "tell": "Two seconds, easily. The hero car at (700,405) casts no shadow of any kind - not a cast shadow, not a contact darkening under the sills or tyres - so it reads as a sticker lying on the track, while 250px to the right at (1050,300) a large blob shadow from an off-screen object proves the shadow system is running. Compounding it, the headlight pool is a single clipped-white splat that starts in open track about 40px ahead of the car's nose instead of at its headlights, and never touches the car itself: the car's front end stays dark blue while the tarmac in front of it is at 255. No commercial title ships a lit vehicle that neither casts a shadow nor receives its own light.",
+    "defects": [
+     {
+      "category": 2,
+      "severity": "critical",
+      "what": "The car at (700,405) has zero grounding. Sampling the track directly under the sills, between the wheels, and immediately behind the rear tyre gives the same lavender value as open track 100px away - no cast shadow, no contact AO, no darkening in the wheel arches. Yet a hard blob shadow sits on the track at (1050,300), so shadow casting is enabled in this scene; the car is simply excluded from it.",
+      "fix": "Put the car in the shadow-casting set for the headlight and any key light, and add a short-range contact/AO term under the chassis and inside the wheel arches so the tyres bite into the surface."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "The headlight pool centred at (830,365) is detached from its source: there is a clearly unlit band of track between the car's nose and the leading edge of the pool, the pool is one symmetric teardrop rather than two overlapping beams, and it lies dead flat - it neither narrows with the track's curvature nor climbs the raised kerb it reaches at bottom-right.",
+      "fix": "Anchor the beam to actual headlight positions on the mesh so it starts at the bumper, split it into two cones, and project it as real light so it wraps the kerb geometry instead of being a flat decal."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "The blob shadow at (1050,300) is unmotivated and badly formed - a lumpy, leaf-like silhouette from an object that is nowhere in frame, with a uniform hard edge and constant density across its whole 300px width, so it has no penumbra growth and gives no clue what cast it. Three small dark ellipses float to its upper-right around (1130,280) with no explanation at all.",
+      "fix": "Either bring the casting object into frame or move it out of the light; if it stays, use a soft-area shadow so the penumbra widens with distance from contact, and remove the stray specks."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "None of the floor props are grounded either. The ribbed crate at (170,350), the brick at (410,375) and the cone at (355,480) all sit on the carpet with no contact shadow and no AO, and the pebbles run undisturbed right up to and under their edges instead of being displaced or occluded.",
+      "fix": "Add contact shadows/AO for static props and sink them very slightly into the carpet so the pebbles occlude their bases."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The track surface is effectively untextured. Across the whole ribbon - clearest in the clean area between the car and the kerb around (760,430) - it is a flat lavender with a single uniform fine grain and one constant roughness: no plastic sheen variation, no moulding lines, no scuffing, no dust in the low spots. Next to it the carpet at (300,250) carries dense per-pebble displacement, so two adjacent materials sit at completely different fidelity levels.",
+      "fix": "Give the track a real substance: subtle moulded plastic sheen with varied roughness, seam and mould-parting lines, and grime/rubber accumulation in the racing line."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The carpet is one procedural noise with no macro variation. Every pebble across the entire visible floor - compare (200,200), (500,400), (300,650) - is the same size, same spacing, same density and same colour spread. There is no matting, no wear path, no lint, no direction to the pile, so the eye reads it as a generated field rather than a floor anyone walks on.",
+      "fix": "Break it with a low-frequency mask driving pile height, density and colour so there are trodden, matted and fluffy regions, and add a few oversized fibres and bits of lint at the near edge."
+     },
+     {
+      "category": 5,
+      "severity": "major",
+      "what": "The skid marks are wrong in three ways at once. Running back from the car through roughly (690,480) to (640,590) they are rendered as a repeating ribbed/dashed stamp with visible rungs and gaps rather than a continuous rubber streak; they are dead straight while the track under them curves and the car is angled across it; and they end abruptly mid-track with no opacity fade at the old end.",
+      "fix": "Emit the skid as a continuous ribbon from the actual tyre contact points, following the wheel path frame to frame, with per-segment opacity that fades with age and a smooth taper at the tail."
+     },
+     {
+      "category": 5,
+      "severity": "major",
+      "what": "There is no other effect anywhere in the frame. The car has just laid two skid trails across a start line and is razor-sharp with no motion blur on the body or wheels, no tyre smoke, no dust lifted off the carpet at the track edge, no light haze around the headlight pool. The one motion cue in the shot is contradicted by everything else, so the car reads parked.",
+      "fix": "Add wheel-rotation and subtle object motion blur, a low puff of tyre smoke at the sliding rear contact patch, and a light volumetric haze in the headlight cone so the beam has depth."
+     },
+     {
+      "category": 3,
+      "severity": "major",
+      "what": "The highlight is clipped, not bloomed. The core of the pool from about (770,330) to (900,400) is flat 255 white with no tonal roll-off and no colour left in it, and the surrounding glow is a broad soft halo over diffuse track rather than bloom on a specular. It is the single brightest and largest element in the frame and it is empty.",
+      "fix": "Roll the highlight off through a warm tungsten shoulder so the hot core keeps colour and gradient, drop the beam intensity a stop or two, and restrict bloom to specular highlights above threshold."
+     },
+     {
+      "category": 3,
+      "severity": "minor",
+      "what": "The bottom-right quadrant is crushed. The four orange rods between (950,590) and (1250,700) sit in near-black with barely a hue of separation, and everything below the kerb reads as a single dead value - roughly a fifth of the frame carries no readable information.",
+      "fix": "Lift the shadow toe and put a weak cool bounce or practical fill into the lower-right so the rods keep silhouette and colour separation."
+     },
+     {
+      "category": 4,
+      "severity": "major",
+      "what": "The car's cockpit is a black void. From (690,380) to (730,420) the interior, seat and floor are a single flat near-black with no seat back, no dash, no driver and no interior AO gradient - a die-cast toy at this camera distance would show a moulded tub. The tyres are smooth cylinders with no tread and no sidewall lettering, and the panel edges catch no light at all: no rim highlight along the shoulder line, no bevel glint on the rollbar or wing.",
+      "fix": "Model a simple moulded interior tub with a seat, add tread and sidewall relief to the tyres, and put a clearcoat specular with a sharp environment reflection on the body so bevels and the shoulder line read."
+     },
+     {
+      "category": 4,
+      "severity": "major",
+      "what": "The props are un-modelled blockouts. The crate at (170,350) is a cube with vertical stripes painted on and an open top that is a flat black hole with no interior faces; the brick at (410,375) is a flat quad with an illegible smear on it; the cone at (355,480) is a plain capsule with one white band. None has a bevel, a chamfer or any silhouette break.",
+      "fix": "Rebuild the crate with real slats, thickness and an interior, chamfer every prop edge so it catches light, and replace the painted-on brick detail with actual studs."
+     },
+     {
+      "category": 1,
+      "severity": "minor",
+      "what": "The livery decal on the car's flank, the cream panel around (720,415), is a low-resolution blur - the number and logo are unreadable mush - and it terminates in a hard rectangular edge that cuts across the body form instead of wrapping the panel.",
+      "fix": "Raise the decal resolution and mask it to the body panel so its boundary follows a moulding line rather than a rectangle."
+     },
+     {
+      "category": 8,
+      "severity": "major",
+      "what": "Nothing in the frame establishes a house. Beyond the carpet the world is an unbroken dark gradient - no skirting board, no furniture leg, no doorway, no chair, no practical light source anywhere - so the tracks read as ribbons on an infinite brown plane. The only set dressing is four red toy props and one unreadable red blob at the top edge.",
+      "fix": "Bring domestic anchors into frame - a sofa leg or skirting board catching the falloff at the top edge, a power cable, a lamp providing the warm key with its own visible source - so the scale reads against known household objects."
+     },
+     {
+      "category": 6,
+      "severity": "major",
+      "what": "The composition is pointed rather than composed. The hero car is only about 110px wide out of 1280, sits just left of centre, and is aimed directly into the blown white pool, which is larger, brighter and higher-contrast than the car and takes all the visual weight to the right. The bottom-right quadrant is dead black and the top third is featureless blurred carpet, so roughly half the frame does no work.",
+      "fix": "Push in on the car so it occupies a meaningful share of the frame, place it on a third against the corner arc, and either bring the light pool down so the car wins the contrast or use it as a rim behind the car rather than a wall in front of it."
+     },
+     {
+      "category": 9,
+      "severity": "major",
+      "what": "Four fidelity levels sit side by side within 300px: photoreal displaced carpet at (300,250), a completely untextured plastic ribbon at (760,430), a flat-shaded gradient car with no clearcoat at (700,405), and a graphic hard-edged vector chequer band at (720,510) with pure-black squares that pick up no environment light at all.",
+      "fix": "Pick one target - stylised miniature - and pull all four toward it: dial the carpet's realism back a step, texture the track up several, give the car a clearcoat, and let the chequer's black squares receive ambient so they sit in the same lighting model as everything else."
+     }
+    ],
+    "worst": "The car casts no shadow and has no contact darkening whatsoever, so the hero object floats on the track like a decal - and the large blob shadow 250px away at (1050,300) proves shadows are being cast in this scene, which makes the omission read as a bug rather than a style. Nothing else in the frame can be fixed into working until the car is grounded."
+   }
+  },
+  {
+   "id": "c08",
+   "side": "test",
+   "circuit": "bedroom",
+   "cell": "chase",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/bed/2-chase-hi.jpg",
+   "answer": {
+    "describe": "A low, close chase-height shot of a blue die-cast sports car at dusk, sitting half off a pale paper/card track and half in deep brown loop-pile carpet. The car occupies the lower centre of the frame, seen from behind and slightly above: blue body with a black roof stripe, a rear wing, a red and amber taillight panel and a row of white reversing dots on the diffuser. Its headlight throws a large white blob of glare forward and left, blowing out the whole front half of the car and casting a warm amber pool across the carpet ahead of it. A pale kerb-wall ribbon with a blue lower band sweeps in a long arc from lower centre to upper centre-left, separating the carpet from a flat reddish rug beyond, where a red crayon, a brown wooden block, a small blue brick, a white ball and a blurred orange tub sit out of focus. To the right of the car the track surface runs off toward a black-and-white chequered start/finish band in the lower right corner, crossed by two or three parallel dashed skid bands. Upper right carries a red-and-white striped barrier, scattered red bricks on carpet, and a large near-black area with faint horizontal ribbing. A soft dark blob shadow falls on the track above the car, cast by something off-frame. Heavy depth of field blurs everything above the mid-line; the grade is cool violet in the shadows and warm amber in the headlight pool.",
+    "scores": {
+     "1": 5,
+     "2": 4,
+     "3": 4,
+     "4": 5,
+     "5": 2,
+     "6": 4,
+     "8": 3,
+     "9": 5
+    },
+    "tell": "Two seconds, and it is the headlight. A hard-edged, pure-white egg of bloom roughly 250px across sits on the car's nose and erases the windscreen, bonnet, front wheels and the entire front silhouette of the hero object. Commercial titles never let a bloom eat their subject; this reads as an unclamped emissive plus an untuned bloom threshold. Second tell in the same glance: the car is standing in deep carpet pile with no contact shadow, no occlusion and no wheels sunk into the loops, so it hovers on top of the pile like a decal.",
+    "defects": [
+     {
+      "category": 3,
+      "severity": "critical",
+      "what": "The headlight bloom is a solid, near-hard-edged white ellipse spanning from roughly x=470,y=230 to x=720,y=400. It is fully clipped white across its whole core, has almost no falloff on its upper-right side where it terminates abruptly against the track, and it occludes the entire front half of the car. The glare is also far brighter than the beam pool it supposedly produces on the carpet, so it reads as a billboard sprite pasted over the nose rather than light.",
+      "fix": "Clamp the headlight emissive before the bloom pass and cut the bloom threshold/intensity so the glare halo is at most a third of its current radius. Keep the beam pool on the carpet, and add a physical lens element with a small anisotropic streak so the light has a source rather than a blob. The car's nose, bonnet line and front wheel must be readable through it."
+     },
+     {
+      "category": 2,
+      "severity": "critical",
+      "what": "The hero car has no contact shadow and no ambient occlusion where it meets the carpet. Directly beneath the rear diffuser and valance (around x=620-700, y=470-500) the carpet loops are lit at full brightness, identical to loops 200px away, and the loops are not depressed or parted by the car's weight. The car casts no shadow anywhere in the frame despite an obvious warm key.",
+      "fix": "Add a grounding pass: raytraced or capsule contact shadow plus AO under the chassis, darkening the loops within roughly one car-width. Sink the wheels into the pile and displace or flatten the loops in the tyre footprint so the car is standing in the carpet rather than on it."
+     },
+     {
+      "category": 5,
+      "severity": "critical",
+      "what": "The skid marks crossing the track in the lower right (x=900-1280, y=530-680) are broken into a comb of tiny separate dashes, like a barcode, and are visibly aliasing rather than resolving. They also run as two or three straight parallel bands across the chequered start line, on a heading that matches no wheel path through this corner, and the car in frame is nowhere near them.",
+      "fix": "Raise the decal/render-target resolution and enable anisotropic filtering so the marks are continuous rubber, not dashes. Lay them along the actual contact path of the wheels through the corner, taper their opacity at the ends, and make the pair separation match the car's track width."
+     },
+     {
+      "category": 5,
+      "severity": "major",
+      "what": "There are no effects at all for what the frame is depicting. A die-cast car has just left the track into deep carpet pile at speed and nothing is being kicked up: no carpet fibre or dust puff at the wheels, no tyre smoke, no debris, no motion streak. The frame reads as a static prop shot, not an incident.",
+      "fix": "Add a short-lived, depth-faded fibre/dust burst at the tyre contact points with the pile, and a faint drift of it lit from behind by the headlight beam so it picks up rim light. If the car is meant to be stationary, remove the skid marks so the frame does not promise motion it never delivers."
+     },
+     {
+      "category": 2,
+      "severity": "major",
+      "what": "The barrier ribbon meets the carpet with no contact darkening along its entire base, from x=200,y=620 up the arc to x=560,y=80. The vertical blue face simply stops at the loop field, the loops carry on at full brightness right up to it, and none are compressed under it. The wooden block at x=0-230,y=200-350 has the same problem against the rug.",
+      "fix": "Bake or trace an AO gradient along the base of every static prop and the barrier, roughly one wall-height in falloff, and press the scattered carpet loops down inside the footprint of anything resting on them."
+     },
+     {
+      "category": 1,
+      "severity": "major",
+      "what": "The track surface is a single uniform fine-grain noise across its whole visible area with no roughness variation whatsoever: the same speckle density at x=850,y=420 as at x=1150,y=650, no scuffing in the racing line, no wear at the chequered band, no dirt at the edges, and a flat sheen everywhere. The taillight panel is the opposite failure, a flat matte orange rectangle and a flat yellow rectangle with hard edges, no lens geometry, no emission and no glow spilling onto the carpet behind, sitting on the same car whose headlight is nuclear.",
+      "fix": "Break up the track roughness with a large-scale variation mask plus a darker, smoother racing line and dirtier outer edges. Give the taillights actual lensed geometry with an emissive core and a small local light so they are consistent with the headlight's treatment."
+     },
+     {
+      "category": 8,
+      "severity": "major",
+      "what": "Outside the track the world is nearly empty. Beyond the barrier the carpet becomes a flat, featureless dark plane with no fibre geometry at all, and the loop-scatter region ends at a visible cut: a razor-straight sliced edge along the track boundary near x=760,y=560 to x=1000,y=700, and a ragged scatter cutoff in the upper right around x=1080,y=140. The whole right fifth of the frame (x=1080-1280) is a crushed near-black area with only faint ribbing and no recoverable detail. The props that do exist are four or five blurred toys with no arrangement that tells a story.",
+      "fix": "Extend the loop-pile scatter well past the barrier and fade its density rather than clipping it, so no geometry boundary is visible. Lift the black floor with a low bounce or fill so the right side reads as a room rather than a void, and stage the props deliberately: a spilled box, a chewed pencil, a route through furniture the track has been built around."
+     },
+     {
+      "category": 6,
+      "severity": "major",
+      "what": "The composition puts the brightest mass in the frame, the blank white bloom at x=470-720, adjacent to the hero, so the eye lands on empty white instead of on the car, which sits in one of the darker patches. The top third is an unreadable soft smear of out-of-focus barrier and shapes, the right fifth is black, and the action is illegible: nothing tells you whether the car is crashed, cutting a corner, or parked.",
+      "fix": "Reframe so the car reads as the brightest coherent shape, drop the aperture so the top of the frame holds some structure, and choose a moment: a yawed attitude and a dust plume if it is off-track, or put it back on the racing line. Pull the camera slightly so the chequered band and the barrier arc converge on the car rather than away from it."
+     },
+     {
+      "category": 3,
+      "severity": "minor",
+      "what": "Specular aliasing fireflies: a tight cluster of blown white pixels on the dark remote-shaped prop at roughly x=335,y=100, and another on the barrier top edge around x=430,y=45. Both are single-pixel-scale bright speckle in otherwise heavily defocused areas, so they survive the DOF blur and read as dirt on the lens.",
+      "fix": "Enable specular anti-aliasing / normal-map roughness clamping on those materials, and apply a firefly clamp before the bloom and DOF passes."
+     },
+     {
+      "category": 2,
+      "severity": "minor",
+      "what": "The large soft dark blob on the track above the car (around x=620-820, y=140-260) has no identifiable caster. Its silhouette is an amoeba with no recognisable form, and it is the same value as a real cast shadow, so it reads as a stain or a decal on the track rather than as an occlusion.",
+      "fix": "Either bring the casting object into frame so the shadow is legible, or reframe/relight so it falls outside the shot. A shadow whose caster is invisible must at minimum have a silhouette that suggests a real object."
+     },
+     {
+      "category": 4,
+      "severity": "minor",
+      "what": "The barrier is an unbevelled extrusion: its top outer edge is a razor 90-degree corner with no highlight anywhere along its length, and the curve shows straight polygonal chords in the silhouette near x=520,y=300 and along the outer edge around x=300,y=430. The wooden block at the left has a smeared, low-resolution grain texture with blobby dark patches that do not read as wood.",
+      "fix": "Add a small chamfer to the barrier's top edges so they catch a specular line, raise the tessellation on the curved sections until the chords disappear, and replace the block's grain with a higher-resolution, correctly-scaled wood texture."
+     }
+    ],
+    "worst": "The headlight bloom. It is a clipped white blob that deletes the front half of the only hero object in the frame, and it is the first thing a stranger would point at. Everything else in the shot is fixable detail work; this one destroys the subject."
+   }
+  }
+ ]
+}

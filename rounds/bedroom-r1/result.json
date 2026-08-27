@@ -1,0 +1,123 @@
+{
+ "test": "bedroom",
+ "control": "kitchen (24 reviewed rounds)",
+ "critiques": {
+  "test": 4,
+  "control": 4
+ },
+ "categories": [
+  {
+   "n": 1,
+   "label": "Materials & texture",
+   "test": 4.5,
+   "control": 4.5,
+   "delta": 0
+  },
+  {
+   "n": 2,
+   "label": "Lighting & shadow",
+   "test": 3.75,
+   "control": 3.75,
+   "delta": 0
+  },
+  {
+   "n": 3,
+   "label": "Post & grade",
+   "test": 5.25,
+   "control": 5.75,
+   "delta": -0.5
+  },
+  {
+   "n": 4,
+   "label": "Geometry & silhouette",
+   "test": 5,
+   "control": 4.5,
+   "delta": 0.5
+  },
+  {
+   "n": 5,
+   "label": "Effects",
+   "test": 2.75,
+   "control": 2.25,
+   "delta": 0.5
+  },
+  {
+   "n": 6,
+   "label": "Composition & camera",
+   "test": 4.75,
+   "control": 5,
+   "delta": -0.25
+  },
+  {
+   "n": 8,
+   "label": "Environment richness",
+   "test": 3.25,
+   "control": 3.25,
+   "delta": 0
+  },
+  {
+   "n": 9,
+   "label": "Cohesion",
+   "test": 4.5,
+   "control": 4,
+   "delta": 0.5
+  }
+ ],
+ "defects": {
+  "test": {
+   "critical": 8,
+   "major": 31,
+   "minor": 10,
+   "total": 49
+  },
+  "control": {
+   "critical": 8,
+   "major": 29,
+   "minor": 11,
+   "total": 48
+  }
+ },
+ "belowTheFloor": [],
+ "indistinguishable": [
+  "1 Materials & texture",
+  "2 Lighting & shadow",
+  "3 Post & grade",
+  "4 Geometry & silhouette",
+  "5 Effects",
+  "6 Composition & camera",
+  "8 Environment richness",
+  "9 Cohesion"
+ ],
+ "worst": [
+  {
+   "cell": "macro",
+   "worst": "The headlight lighting. It is simultaneously broken and overcooked: the projected light-shaft quads show their own rectangular outlines on the track ahead of the front wheel, and the same lamp's core clips to detail-free white across the left of the frame while its bloom wraps back and dissolves the car's own nose and roof rack. The single most desirable asset in the shot is being destroyed by the light that is supposed to show it off."
+  },
+  {
+   "cell": "establishing",
+   "worst": "Nothing in the frame is grounded. Cars, barriers, kerbs and carpet props all sit without a single contact shadow or any ambient occlusion, so the entire circuit reads as a flat decal printed onto the carpet rather than physical objects resting on it. This is the one fault that would still be visible at thumbnail size, and it undoes the miniature illusion that the tilt-shift and the warm key are working hard to build."
+  },
+  {
+   "cell": "gameplay",
+   "worst": "The car casts no shadow and has no contact darkening whatsoever, so the hero object floats on the track like a decal - and the large blob shadow 250px away at (1050,300) proves shadows are being cast in this scene, which makes the omission read as a bug rather than a style. Nothing else in the frame can be fixed into working until the car is grounded."
+  },
+  {
+   "cell": "chase",
+   "worst": "The headlight bloom. It is a clipped white blob that deletes the front half of the only hero object in the frame, and it is the first thing a stranger would point at. Everything else in the shot is fixable detail work; this one destroys the subject."
+  }
+ ],
+ "tells": {
+  "test": [
+   "Two things pick it out in under a second. First, the headlight pool on the track ahead of the car is not light, it is geometry: you can see two thin bright-outlined rectangles lying on the paper just left of the front wheel, the borders of the light-cookie/shaft quads. Second, the pebble field is a normal map on a flat plane, and it proves it where the paper track's edge crosses it beside the rear wheel: the boundary is a perfectly straight ruled line and not one stone breaks the profile. Add the pure-white clipped headlight core eating the car's nose and the left sixth of the frame, and the rear tyre sitting on loose gravel at speed with no dust, no scattered stones and no contact shadow, and a stranger would call it the hobby project immediately. The car asset itself would not give it away.",
+   "Two things pick it out instantly. First, nothing is grounded: the cars at the bottom-right hairpin sit on a brightly lit track surface with no contact shadow and no darkening underneath, the white barrier tube lays no shadow strip onto the carpet beside it, and the black slab props on the carpet have no directional shadow either, so the whole circuit reads as a decal printed on the carpet rather than plastic sitting on it. Second, the falloff does the framing instead of the lighting: the right-hand hairpin is crushed to black and the layout simply stops existing there, while the top-left barrier arcs float as disconnected glowing blue curves in a void. A commercial title would light the whole playfield and let composition, not clipped blacks, decide what you see.",
+   "Two seconds, easily. The hero car at (700,405) casts no shadow of any kind - not a cast shadow, not a contact darkening under the sills or tyres - so it reads as a sticker lying on the track, while 250px to the right at (1050,300) a large blob shadow from an off-screen object proves the shadow system is running. Compounding it, the headlight pool is a single clipped-white splat that starts in open track about 40px ahead of the car's nose instead of at its headlights, and never touches the car itself: the car's front end stays dark blue while the tarmac in front of it is at 255. No commercial title ships a lit vehicle that neither casts a shadow nor receives its own light.",
+   "Two seconds, and it is the headlight. A hard-edged, pure-white egg of bloom roughly 250px across sits on the car's nose and erases the windscreen, bonnet, front wheels and the entire front silhouette of the hero object. Commercial titles never let a bloom eat their subject; this reads as an unclamped emissive plus an untuned bloom threshold. Second tell in the same glance: the car is standing in deep carpet pile with no contact shadow, no occlusion and no wheels sunk into the loops, so it hovers on top of the pile like a decal."
+  ],
+  "control": [
+   "Yes, in well under two seconds, and two things do it. First, the grey slab behind the table: it is an untextured blockout box with faint seam lines, no worktop material, no doors, no handles, no toe-kick, no skirting where it meets the floor. Nothing else in the grid of reference games would ship a placeholder primitive across the full width of the background plate. Second, the shadow bookkeeping does not add up: a cereal box on the tabletop throws a crisp, hard shadow half its own length again to the right, but the table itself throws no shadow onto the floor at all and the floor carries no ambient occlusion under it. The tabletop is lit by a hard directional sun and the room is lit by flat ambient, so the diorama sits on top of the room instead of in it. After those, the giveaway is that the actual subject of a racing game - the cars - are 20-pixel dark blobs with no dust, no motion blur and no trailing skid, on a dirt surface.",
+   "Under two seconds, yes. Three things do it together. First, the hero blue car at frame centre has no contact shadow at all: the wood grain and its specular sheen run at full brightness right up to and under the sill, so the car reads as a sprite pasted onto the floor rather than an object resting on it. Second, the thin white lane lines break into stair-stepped dashes wherever they cross the mid-ground, and the wood grain behind the green car collapses into a dashed moire checkerboard, so the frame is visibly undersampled. Third, plain untextured grey cubes are sitting in the scene next to a carefully-grained floor, which reads as unfinished blockout left in the shot. A commercial title would have none of these.",
+   "Picked out in well under two seconds, and the giveaway is that nothing in the frame casts a shadow. There is a clear warm low key light — it puts a hot highlight along the blue car's left flank and a bright edge on the kerb — yet neither car, nor the rumble strip, drops any shadow onto the wooden floor. Boosting the exposure confirms it: the wood grain runs unbroken and at full brightness straight under the blue car's rocker and under the green car's rear bumper, and the white lane line stays bright where it passes beneath the green car. Both cars therefore read as stickers pasted onto a floor photo rather than objects sitting on it. Second giveaway: the floor is a single corrugated ridge pattern at one frequency with no board joints and no variation between planks, so it reads as corduroy, not as wood.",
+   "Two seconds, and it is the hero car. It sits on the wood with no contact shadow and no ambient occlusion at the tyres, while its cast shadow is a formless oval blur about 2.5x its own footprint offset to the right, with none of the car's silhouette in it, no wheel gaps, no wing. Meanwhile the grey eraser twenty centimetres away throws a hard-edged, dark, correctly-shaped shadow. Same light, two incompatible shadow models, and the car ends up looking pasted onto a photo of a floor rather than resting on it. The plain white outer barrier seals it: a perfectly uniform, clipped-white ribbon with no texture, no scuffs and almost no shading gradient across its cylindrical cross-section, sitting in the same frame as a beautifully scuffed striped kerb. Add zero effects of any kind on two cars mid-corner and the miniature conceit collapses."
+  ]
+ }
+}

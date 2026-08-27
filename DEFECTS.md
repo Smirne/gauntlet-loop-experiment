@@ -3024,3 +3024,73 @@ correct is easy; deciding *which* surfaces deserve a 2048 when the budget will n
 them is a judgement about what the frame is made of, and it should be made deliberately rather
 than as a side effect of scene-graph walk order. D50's `prioritise()` gives the ordering hook
 that a real policy would need.
+
+
+## D52 — The critic score cannot tell a reviewed circuit from an unreviewed one — CRITICAL (method) — OPEN
+
+Bedroom was to get its first critic round. It got one, and the round is about the critic
+instead.
+
+Eight critics, one frame each, same brief, shuffled and unlabelled: **four frames of bedroom,
+which has never been reviewed, and four of kitchen, which has been through 24 rounds.** The
+kitchen half is the control — the critic-round equivalent of the identical-frame pairs that
+D28's fix put into every A/B. It had never been run before, because until now a critic round
+had no floor at all.
+
+| category | bedroom | kitchen | delta |
+|---|---|---|---|
+| 1 Materials & texture | 4.50 | 4.50 | 0 |
+| 2 Lighting & shadow | 3.75 | 3.75 | 0 |
+| 3 Post & grade | 5.25 | 5.75 | −0.5 |
+| 4 Geometry & silhouette | 5.00 | 4.50 | +0.5 |
+| 5 Effects | 2.75 | 2.25 | +0.5 |
+| 6 Composition & camera | 4.75 | 5.00 | −0.25 |
+| 8 Environment richness | 3.25 | 3.25 | 0 |
+| 9 Cohesion | 4.50 | 4.00 | +0.5 |
+
+Defects raised: **bedroom 49** (8 critical, 31 major, 10 minor), **kitchen 48** (8 critical,
+29 major, 11 minor). Per-frame means run 3.75–4.75 on both sides, and the single highest and
+single lowest frame in the round are both *kitchen*.
+
+**Not one category clears the ±1.0 floor. All eight are indistinguishable.**
+
+Two readings, and they are both bad:
+
+1. **The absolute critic score has no resolving power.** It returns roughly 4.3/10 and about
+   twelve defects for any frame of this project, so every per-round score ever recorded —
+   including the "critic rounds 7 · 5.19" on the status page — measured the critic's baseline
+   hostility rather than the build.
+2. **24 rounds of kitchen work produced no measurable visual gain** over a circuit that has
+   had none.
+
+**These are separable, and the test is cheap.** Run the same brief over the deliberately
+degraded frames already built for D28's validation (`rounds/d28-mush` — a 320 px round trip,
+which six of six comparative judges called worse, unanimously and in both orders). If a
+visibly broken frame also scores ≈4.3 with ≈12 defects, reading 1 is proved and the absolute
+score is a constant function. If it scores materially lower, the scale works and reading 2 is
+the live one. **Not yet run** — the round hit an API session limit.
+
+What is NOT in doubt: the comparative instrument does resolve. In `rounds/d28-mush` the same
+class of judge picked the clean frame 6-0 across three cameras and both orders, p=0.031, with
+zero false differences on the controls. Whatever is wrong here is specific to scoring one
+frame in isolation, not to judging generally.
+
+**The bedroom defect list from this round is not usable as a bedroom defect list.** Its
+contents may still be true — several findings are specific and locatable, and the four
+"worst problem" answers converge hard on one thing:
+
+- *macro* — the projected light-shaft quads render their own rectangular outlines on the
+  track ahead of the front wheel, while the same lamp's core clips to detail-free white
+- *chase* — the headlight bloom is a clipped white blob that deletes the front half of the
+  only hero object in the frame
+- *gameplay* — the car casts no shadow and has no contact darkening, so it floats like a
+  decal, while a large blob shadow sits ~250 px away attached to nothing
+- *establishing* — nothing in the frame is grounded; no contact shadow or AO anywhere
+
+Three of four independently name the headlights or the missing contact shadow. That
+convergence is worth following up **as a lead**, by looking at the frames and the code, not
+by citing the scores — the scores are what this defect is about. The `250 px away from the
+car` blob shadow in particular is a claim about geometry that can be checked directly.
+
+Round record: `rounds/bedroom-r1`. Harness: `tools/critique-round.js`, which will not build a
+round without a control circuit.
