@@ -772,24 +772,26 @@ export class VehicleVisual {
           // The occlusion under a car is wider than the car: it takes in both
           // tyre contact patches and the shadowed air under the sills.
           //
-          // These two numbers are the whole reason a car reads as floating.
-          // Lighting._autoContactEntry carries a MEASURED pair — 1.75 and 2.30,
-          // with a comment explaining that the plateau edge then "lands just
-          // outside the tyre line on both axes" — but registering explicitly
-          // here SUPPRESSES that automatic entry, so the tuned numbers have
-          // never once been used and these narrower ones win instead.
-          //
-          // The blob is drawn, correctly placed, correctly blended. It is just
-          // that at 1.28 x 1.68 its dense plateau is entirely UNDERNEATH the
-          // car, occluded by the very object it exists to ground, and only the
-          // faintest rim of the penumbra is ever visible from a camera above.
-          // Measured against blobs-off at the chase pose, grain zeroed, control
-          // 0.000%: shipped 0.185% of frame at 5.1 mean luma; the tuned pair
-          // 3.903% at 16.7. Twenty-one times the area for a 37% wider quad.
+          // Registering explicitly here SUPPRESSES Lighting._autoContactEntry,
+          // so whatever is written below is the only pair a car ever gets. For
+          // a long time that was the narrow 1.28 x 1.68, whose dense plateau
+          // sits entirely UNDERNEATH the car, occluded by the very object it
+          // exists to ground — measured against blobs-off at the chase pose,
+          // grain zeroed, control 0.000%: 0.185% of frame at 5.1 mean luma,
+          // against 3.903% at 16.7 for the tuned pair Lighting had measured.
           //
           // `?contactHalo=N` lerps between the two so both can be rendered from
-          // ONE build at ONE moment (D25). Default 0 until a human has judged
-          // the frames.
+          // ONE build at ONE moment (D25). SHIPPED AT 1 since d3d54ef — the
+          // tuned pair is what every car in the game now gets.
+          //
+          // THIS DID NOT FIX THE THING IT WAS SUPPOSED TO FIX. The blob is
+          // registered, drawn, and correctly placed under its car, and it moves
+          // real pixels — 0.89% of frame on bedroom, 0.58% on kitchen, both
+          // against a 0.000% floor. Eight blind critics then looked at frames
+          // shot from this build, four per circuit, and all eight said the cars
+          // have no contact shadow and read as decals. Blob AREA is not the
+          // variable that buys the grounding read. See D53 before widening it
+          // again.
           length: fp.length * lerpNum(1.28, 1.75, CONTACT_HALO),
           width: fp.width * lerpNum(1.68, 2.30, CONTACT_HALO),
           groundLean: lerpNum(0, 0.6, CONTACT_HALO),

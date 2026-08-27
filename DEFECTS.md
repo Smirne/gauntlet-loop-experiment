@@ -3095,5 +3095,100 @@ convergence is worth following up **as a lead**, by looking at the frames and th
 by citing the scores — the scores are what this defect is about. The `250 px away from the
 car` blob shadow in particular is a claim about geometry that can be checked directly.
 
+**Followed up, and it held: see D53.** The claim is true in every part, on both circuits, and
+the contact shadow it asks for is already shipped and measurable. That does not settle D52
+either way — a lead that survives says the critics can see, not that the score can
+discriminate. The `rounds/d28-mush` discriminator is still the test that decides this one.
+
 Round record: `rounds/bedroom-r1`. Harness: `tools/critique-round.js`, which will not build a
 round without a control circuit.
+
+---
+
+## D53 — The contact shadow is present, measured, and invisible to every critic — MAJOR — OPEN
+
+D52 closed with a lead rather than a finding: three of four bedroom critics named the missing
+contact shadow or the headlights as the worst thing in the frame, and one made a checkable
+claim about geometry — *"the large blob shadow 250px away at (1050,300) proves shadows are
+being cast in this scene, which makes the omission read as a bug rather than a style."*
+Checked. Every part of it is true, and the conclusion it points at is the opposite of the
+obvious one.
+
+**The blob is there.** Not "should be there" — measured, in the running build, on both
+circuits:
+
+| | bedroom (night, sun 0.44) | kitchen (morning, sun 5.91) |
+|---|---|---|
+| blobs registered / drawn | 264 / 264 | 264 / 264 |
+| pool strength | 0.82 | 0.74 |
+| `dark` written for a grounded car | 0.82 | 0.74 |
+| **all 264 blobs off** | **6.38 %** of frame | **2.21 %** |
+| **the 8 car blobs off** | **0.89 %** (33 k px, mean Δ 41) | **0.58 %** (5.3 k px, mean Δ 37) |
+| all shadow mapping off | 0.44 % | 1.45 % |
+| floor (identical state, twice) | **0.0000 %** | **0.0000 %** |
+
+Blob centroids sit 14–42 px from their car's projected contact patch in a 2560 px frame —
+under the car, where they belong. Nothing is broken, mispositioned, culled, or suppressed.
+
+**And it was the tuned pair, not the narrow one.** `CONTACT_HALO_DEFAULT` went to 1 in
+`d3d54ef` on 25 Aug 12:46; the bedroom and kitchen frames were shot 26 Aug 16:20. The blobs
+the critics looked at were 1.75 × 2.30 with `groundLean` 0.6 — confirmed live, not inferred.
+The widening that D25/D42 argued for had already shipped, over a day earlier.
+
+**Eight out of eight critics said the cars have no contact shadow and read as decals.** Four
+bedroom, four kitchen, blind, one frame each, no contact between them. Kitchen — 24 reviewed
+rounds — is if anything more explicit than bedroom:
+
+> the wood grain and its specular sheen run at full brightness right up to and under the sill,
+> so the car reads as a sprite pasted onto the floor rather than an object resting on it
+
+> No contact shadow, no AO at the tyre patches, and a shapeless blurred oval standing in for a
+> cast shadow while a nearby eraser throws a crisp, correctly-shaped one
+
+That last line is the kitchen critic independently reporting bedroom's "250 px away" claim:
+**the props throw shadows the cars do not.** Two circuits, two lighting presets, eight
+observers, same complaint.
+
+### What this defect actually says
+
+Blob **area** is not the variable that buys the grounding read, and the project has now spent
+two defects (D25, D42) and a ship on the assumption that it is. 21× the area moved the
+critics not at all. The remaining candidates, none of them tested:
+
+* **No dark line at the tyre contact patch.** Every critic asks for the same specific thing —
+  "a tight, dark contact shadow/AO term at the tyre patches and under the sills". A soft
+  elliptical plateau under the whole car is not that, at any width.
+* **The asymmetry against props.** A crisp, correctly-shaped shadow beside a shapeless oval
+  reads as a bug even if the oval is objectively darker. This is a *relative* fault, so a
+  brighter blob cannot fix it — only a shaped one can.
+* **Cast shadow, unresolved.** Whether a car reaches the cascade shadow maps at all is still
+  unknown. Two instruments failed to answer it and the failures are recorded below, because
+  the next person will otherwise reach for the same two.
+
+### Instruments that lied, and how they were caught
+
+Both were caught by a control, and neither would have been caught without one.
+
+* **`composer.render()` re-renders the main pass but not the shadow maps.** Toggling
+  `castShadow` on 145 props changed **0 pixels** — and so did toggling it on the car, which
+  is the answer one was hoping for. The positive control is what exposed it: an instrument
+  that cannot see 145 props cannot be trusted to have seen 1 car. Toggling the whole system
+  (`shadowMap.enabled = false`, materials recompiled) *does* register, which is where the
+  0.44 % / 1.45 % rows above come from.
+* **`MG.capture()` drifts between calls.** Two captures of a paused engine at the same pose
+  differ by **12.1 %** — larger than every effect being measured, and larger than the
+  positive control taken between them. `engine.pause()` freezes the fixed step, not the RAF,
+  and temporal history keeps moving. `capture-set.js` pins properly; a bare `MG.capture()`
+  pair does not, and D49's cross-session warning does not cover it.
+
+The working instrument is synchronous: `renderer.render(scene, camera)` and a `drawImage`
+readback inside one JS task, so no RAF can interleave. Its floor is 0.0000 %, exactly — not
+0.102 %, because nothing steps between the two reads.
+
+### Also fixed here
+
+The comment at the registration site in `VehicleVisual.js` still described the pre-`d3d54ef`
+world in the present tense — "the tuned numbers have never once been used and these narrower
+ones win instead", and "Default 0 until a human has judged the frames" — 36 hours after the
+default became 1 and the tuned numbers started shipping. Rewritten to say what the code does,
+and to carry the measurement above so the next widening has to argue past it.
