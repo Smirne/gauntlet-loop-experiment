@@ -3229,15 +3229,67 @@ observers read that as "no shadow at all".
   Unchanged.
 * **Darkness.** Mean Δ 49.7 for the car against 51.4 for the props. The shadow is not faint.
 
-### Lead for whoever takes this next
+### The cascade lead — RETRACTED, it was my probe
 
-Driving `sunDir` to near-vertical and calling `_fitToCamera` moved **cascade 0 only** —
-cascades 1 and 2 held their positions unchanged across the whole sun move. The player car
-lives in cascade 1 (camera distance 131.5; splits are 2 / 105.2 / 200.5 / 1300). Whether that
-is the snap cache correctly refusing a jitter, or a fit that never runs for the far cascades,
-is not known. It is the first thing to check, because a cascade fitted for a stale sun would
-produce exactly this: a shadow that is present, correctly dark, correctly placed, and shaped
-like nothing.
+Recorded here rather than deleted, because the retraction is the useful part.
+
+`_intervals` is `[1, 2, 3, 4]` at ultra (Lighting.js:856): cascade 0 refits every frame, the
+wider ones every 2nd, 3rd and 4th, and the throttle is bypassed only by `_isCameraCut` —
+which compares **camera** position and direction, nothing else. Moving the sun is not a camera
+cut. The probe changed `sunDir` and called `_fitToCamera` exactly once, landing on a frame
+where `_frame % 2` and `_frame % 3` were both non-zero, so cascades 1 and 2 were skipped
+*correctly*.
+
+The throttle is not an oversight; it is the fix for a defect this file already records. From
+the comment at the top of `_fitToCamera`: `Capture` calls `syncSystems()` once after posing,
+so cascade 2 "refits only when the frame counter happens to be divisible by 3. r18 won that
+lottery and was scored with shadows; r19 and r20 lost it and were scored without. Four blind
+judges called r18 the better build 4/4 on exactly that difference." The cut check exists to
+stop that, and it does.
+
+So: no defect here, and the first thing to check turned out to be the last thing.
+
+### The control that replaces it: a box where the car is
+
+Same frame, same light, same cascade, same receiving surface, contact blobs hidden — a plain
+`MeshStandardMaterial` box the size of the car's footprint (9.12 × 3.0 × 4.11) placed beside
+it at the car's own yaw, plus a 2.2 u cube further along.
+
+**The box throws a crisp, hard-edged, obviously rectangular shadow. The cars beside it do
+not.** Whatever is happening is a property of the cars, not of the shadow system, the
+cascade, the receiver, or the light.
+
+Ruled out from there, each against a 0.0000 % floor:
+
+* **`alphaTest`.** The paint material carries `alphaTest: 0.45` when the livery texture has
+  apertures (`VehicleVisual.js:249`), and three applies the same test in the depth pass — a
+  good story for a shadow full of holes. Zeroing it on all 8 cars moved **0.055 %** of the
+  frame. Not it.
+* **Body height.** The box sits on the ground; a car's shell floats on its wheels. Lifting the
+  box 1.6 u to match the sill detached its shadow and moved it — still crisp. Not it.
+
+### What is actually measured, and where it stops
+
+Isolating each caster by toggle and profiling the per-pixel darkening it contributes (floor:
+0 px):
+
+| | pixels | max darkening | median | mean / max | fraction at full density |
+|---|---|---|---|---|---|
+| the box | 82 027 | 84.4 | 57.4 | **0.619** | 3.5 % |
+| all 8 cars | 176 166 | 93.7 | 51.1 | **0.482** | 0.9 % |
+
+The cars' shadows reach a *higher* peak darkening than the box's and carry less of their area
+at full density — real, and in the expected direction, but a ratio of 1.3, not the gulf that
+"crisp versus formless" implies. **The photometric gap is much smaller than the perceptual
+one**, which is itself the finding: whatever the eight critics were responding to is not
+mostly a density difference.
+
+The untested hypothesis, stated as one: the box reads as a shadow because it has straight
+edges and resolves to a *rectangle*, while a car lit from 24° and viewed from above projects
+to a rounded blob with no interpretable contour — so the missing quantity is **shape
+information, not darkness**. If that is right, no amount of density tuning will move a critic,
+and the fix is contour: a harder edge near the contact patch, or a shadow that resolves the
+wheel gaps. Testing it needs a shape metric, not another diff.
 
 ### Also fixed here
 
