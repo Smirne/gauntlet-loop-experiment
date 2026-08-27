@@ -2518,9 +2518,12 @@ Done, except the parts that are a human's to do.
   licence to honour, total.
 - **Page furniture**: title, an inline-SVG favicon (no external request, no asset pipeline),
   description, `theme-color`, OG tags.
-- **The build is 4.8 MB unpacked, 1.24 MB zipped, 122 files, `index.html` at the archive root**
+- **The build is 4.8 MB unpacked, ~1.25 MB zipped, 95 files, `index.html` at the archive root**
   — which is what itch's "play in browser" upload expects. Against itch's limits this is
-  nothing.
+  nothing. (This line said *122 files* until 27 Aug 2026. 122 is the number of zip *entries*;
+  27 of them are directories. Caught by diffing a fresh staging tree against the uploaded
+  archive and finding 95 on both sides — the count was never wrong about the build, only
+  about what it was counting.)
 
 Left for a human, because publishing is not mine to do: create the page, upload the zip, tick
 "this file will be played in the browser", choose the viewport size, write the description and
