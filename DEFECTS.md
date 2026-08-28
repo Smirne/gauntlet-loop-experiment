@@ -3403,9 +3403,22 @@ build, and it is the most reproducible observation this project has:
 > falloff shape, no visible beam cone … No shipped racing title lets a headlight nuke its own
 > road surface like that. — *(clean, gameplay)*
 
-Add the four bedroom critics from `rounds/bedroom-r1`, three of whom named the headlights or the
-missing contact shadow, and this now spans **two circuits, two lighting presets, and both sides
-of a controlled round**.
+Add `rounds/bedroom-r1`, where **all four** bedroom critics raised it (14, 6, 8 and 13 mentions
+across their answers). **That is ten of ten critics who have ever been shown a bedroom night
+frame.**
+
+**Corrected on the same day it was written.** This entry first claimed the evidence spanned
+"two circuits, two lighting presets". It does not, and the error was mine: all six discriminator
+frames are bedroom, not kitchen — the critics describe carpet and a night interior, and the
+`abval2` captures they were cut from are bedroom's. The kitchen critics in `rounds/bedroom-r1`
+mention a headlight 1, 0, 0 and 0 times, for the good reason that **kitchen has no headlights
+on**: it runs the `morning` preset at darkness 0.0 against a threshold of `> 0.24`
+(`VehicleVisual.js:1077`), so the lamps never switch on. They could not have seen one.
+
+So this is **one circuit and one preset** — but unanimous within it, and still spanning both
+sides of a controlled round, which is the part that matters: the test variable is a 320 px round
+trip and has nothing to do with lighting, so the complaint cannot be an artifact of the
+degradation.
 
 ### The cause is in the code, and the code's own comment contains it
 
