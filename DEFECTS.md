@@ -14,6 +14,8 @@ become false. Both corrections are recorded in place.
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
 | **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
+| **D57** | bedroom is unplayably dark in two places | MAJOR; reported from play with a screenshot. Measured: road-ahead luma swings 37&ndash;172 round the lap, and the first ramp sits in a hole. Same root cause as D53 |
+| **D58** | the game slows down and gets stuck | MAJOR; reported from play, **not yet measured**. Mechanism identified: the fixed-step cap forgives owed time, so a stall slows the world rather than just dropping frames |
 | **D56** | eliminated with cars still behind you | MAJOR; reported from play. Ranked on `score`, eliminated on `roadDistance` — the two disagree by design |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
 | D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
@@ -3741,3 +3743,102 @@ dump the whole field's `score`, `position` and `roadDistance` at the moment the
 player goes, and confirm that cars classified behind the player really were ahead
 of them on the road. Until that is on record, the mechanism above is a reading of
 the source, not a measurement.
+
+
+## D57 — Bedroom is unplayably dark in two places, and the first ramp is one of them — MAJOR — OPEN
+
+Reported from a playthrough, with a screenshot: *"some places are too dark, it's
+hard to see"*, then *"the initial ramp is all dark"*. In the frame supplied, the
+road edge is barely discernible, the car is a silhouette, and the only things that
+read at all are the emissive lane markers and one kerb.
+
+**Measured, and it is not a uniform darkness — it is two holes.** `tools/lap-trace.js`
+rides a lap and samples the mean luma of the band of screen directly ahead of the
+car, which is the part a player has to read to know where the road goes:
+
+| t | 0.13 | **0.15** | **0.17** | **0.19** | 0.25 | 0.31 | 0.35 | **0.41** | 0.45 | 0.53 | 0.65 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| road-ahead luma | 105 | **59** | **44** | **52** | 92 | 162 | 172 | **37** | 149 | 154 | 76 |
+
+**The first ramp is at t = 0.148** (`paperback`, from the track file) and that is
+exactly where the floor drops out: 105 → 44 between t = 0.13 and t = 0.17, a 2.4×
+fall onto the ramp, minimum 13.5. The player's report and the measurement agree to
+within a bucket. There is a second and slightly worse hole at **t = 0.41 (37)**,
+which is the darkest point sampled. Across the lap the swing is **37 → 172, 4.6×**.
+
+**The mechanism is one lamp.** `nightLamp` is keyed not by its directional but by
+a single point light at offset `[-118, 205, -92]` with `irradiance: 5.6`, and
+punctual lights have fallen off physically since three r155. Everything else in the
+preset is small — sun 0.44, fill 0.26, bounce 0.22, rim 0.26, ambient 0.18. So
+brightness round the circuit is essentially a d² map of distance from that lamp,
+and the stretches facing away from it get almost nothing. Nothing fills in behind it.
+
+This is the same root cause as D53, arriving from the other direction. D53 measured
+that a car's ground shadow is nearly absent at night and concluded the problem was
+the light level rather than the shadow. D57 is a player hitting that same light level
+and being unable to drive. **They should be fixed together, and the fix is a lighting
+change, not a shadow or a headlight change.**
+
+### Not fixed. Candidates, none costed yet
+
+* **Lift the preset's ambient/fill floor** so the dark side of the room never falls
+  below a readable value. Cheapest, and it flattens the lamp's modelling — the thing
+  that makes the bedroom the best-looking track in the game (D45).
+* **A second lamp, or a bounce card, on the far side.** Keeps directional modelling,
+  costs a light and possibly a shadow map.
+* **Light the road itself** — emissive or a raised albedo on the track surface only,
+  leaving the carpet dark. Preserves the night mood exactly and targets the one
+  surface that has to be readable. Probably the best value, and it is what the
+  existing lane markers already do accidentally, since they are the only thing
+  legible in the player's screenshot.
+* Headlights cannot fix it: D54 just shipped and its whole point was that the beam
+  is a forward pool at ground level. On the ramp the car pitches up and the beam
+  goes over the top of the road entirely.
+
+### Limits of the measurement, stated
+
+The sweep was cut short. **Nothing past t ≈ 0.73 was sampled**, so the second half of
+the lap is unmeasured and there may be more holes. One bucket (t = 0.73) holds 2102
+of 3000 samples, meaning the autopiloted car sat in one place for most of the run —
+either a stuck car, which would belong to D58, or an artifact of driving `_tick` by
+hand. Not yet distinguished. The sweep rendered at 1280×720 at pixel ratio 1, not the
+ultra path the player sees.
+
+
+## D58 — The game slows down and gets stuck during play — MAJOR — OPEN (not yet measured)
+
+Reported from a playthrough: *"sometimes the game slows down / get stuck"*. Nothing
+has been measured; this entry exists so the next session starts from the mechanism
+rather than from a blank page.
+
+**Why it will present as slowing down rather than as dropped frames.** `Engine._tick`
+runs its fixed steps under a cap:
+
+    const maxSteps = Math.max(1, Math.min(20, Settings.physics.maxCatchUpSteps || 5));
+    while (this._accum >= fdt && steps < maxSteps) { ... }
+
+and when the cap is hit with time still owed it does not carry the debt forward — it
+**forgives** it: `this._accum = 0`, `stats.droppedSteps += ...`, and after
+`SPIRAL_TRIP` consecutive events it emits `ENGINE_OVERLOAD`. Separately,
+`maxRenderDt` (0.05) clamps the frame delta, so any frame longer than 50 ms is
+simulated as 50 ms. Both mean a stall does not merely drop frames — **the simulated
+world runs slower than the wall clock**, which is exactly what "slows down" describes
+and is not what a plain frame-rate dip feels like.
+
+The guard is deliberate and correct as a spiral-of-death defence. The open question is
+what is spiking hard enough to trip it.
+
+**Where to start, in this order.** `MG.engine.stats.droppedSteps` and
+`stats.overloads` are already counting during normal play, so the first thing to
+establish is whether they are non-zero in a session the player calls stuttery — that
+alone separates "the sim is losing time" from "the renderer is dropping frames", and
+they need completely different fixes. Then the usual suspects, none of them checked:
+the texture foundry sharpening drafts on an idle queue mid-race, the cascade refits
+(`_intervals = [1,2,3,4]`), and material recompiles from a light count changing —
+`SPOT_BUDGET`'s own comment warns that every added spotlight recompiles every material
+in the scene, and bedroom's headlights switch on mid-race when darkness crosses 0.24.
+
+`tools/lap-trace.js` `start()` records per-frame wall time stamped with `trackT`, so a
+spike can be pointed at a place — but it must be run on a real rAF loop, not in a
+browser pane, which throttles to roughly 0.1 s of race per composite and makes every
+frame-time number meaningless.
