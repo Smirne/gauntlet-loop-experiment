@@ -15,7 +15,7 @@ become false. Both corrections are recorded in place.
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
 | **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
 | **D57** | bedroom is unplayably dark in two places | MAJOR; reported from play with a screenshot. Measured: road-ahead luma swings 37&ndash;172 round the lap, and the first ramp sits in a hole. Same root cause as D53 |
-| **D58** | the game slows down and gets stuck | MAJOR; reported from play, **not yet measured**. Mechanism identified: the fixed-step cap forgives owed time, so a stall slows the world rather than just dropping frames |
+| **D58** | the game freezes while you drive, up to 5 s | MAJOR; **diagnosed**. Shaders compile on first draw and nothing pre-warms them: `programs` 11&rarr;329 during play, every stall inside `render` on a tick that compiled. Floor 4&ndash;7 ms; `renderer.compile()` does **not** fix it |
 | **D56** | eliminated with cars still behind you | MAJOR; reported from play. Ranked on `score`, eliminated on `roadDistance` — the two disagree by design |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
 | D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
@@ -3805,40 +3805,136 @@ hand. Not yet distinguished. The sweep rendered at 1280×720 at pixel ratio 1, n
 ultra path the player sees.
 
 
-## D58 — The game slows down and gets stuck during play — MAJOR — OPEN (not yet measured)
+## D58 — The game freezes for up to five seconds because it compiles its shaders while you are driving — MAJOR — **DIAGNOSED, NOT FIXED**
 
-Reported from a playthrough: *"sometimes the game slows down / get stuck"*. Nothing
-has been measured; this entry exists so the next session starts from the mechanism
-rather than from a blank page.
+Reported from a playthrough: *"sometimes the game slows down / get stuck"*. It is not
+a frame-rate dip. It is a **synchronous render stall of half a second to five
+seconds**, and its cause is now measured: three compiles a material's shader program
+the first time that material is actually drawn, nothing in this project pre-warms
+them, and so 250-odd shader compiles happen *during the race*.
 
-**Why it will present as slowing down rather than as dropped frames.** `Engine._tick`
-runs its fixed steps under a cap:
+**The instrument, and why the old objection does not apply.** Every previous attempt
+died on the same true statement: this project's only browser runs the game in a hidden
+pane where rAF is throttled to roughly 0.1 s of race per composite, so wall-clock
+frame pacing measures Chrome's background policy, not the game. That kills frame
+*pacing*. It does not kill this. Throttling changes WHEN a frame runs; it does not
+change how much CPU that frame's work costs once it has started. `_tick` is a single
+synchronous JS task, so timing its inside is honest under any scheduler.
+`tools/tick-cost.js` therefore stops the engine's rAF and drives `_tick` by hand off a
+synthetic 60 Hz clock — one fixed step per tick, no catch-up feedback — and times each
+one, splitting it by wrapping the engine's own phase methods. The engine already times
+these, but it stores an **EMA** of each, and an EMA of a spike is not a spike: a hitch
+is precisely the sample an EMA is built to hide. The raw per-tick number had to be
+taken.
 
-    const maxSteps = Math.max(1, Math.min(20, Settings.physics.maxCatchUpSteps || 5));
-    while (this._accum >= fdt && steps < maxSteps) { ... }
+**The floor.** Ticks that compile nothing: p50 **4.2 ms**, p90 **7.5 ms**, p99
+**9.3-9.6 ms**. The engine is comfortably inside budget when it is only rendering.
 
-and when the cap is hit with time still owed it does not carry the debt forward — it
-**forgives** it: `this._accum = 0`, `stats.droppedSteps += ...`, and after
-`SPIRAL_TRIP` consecutive events it emits `ENGINE_OVERLOAD`. Separately,
-`maxRenderDt` (0.05) clamps the frame delta, so any frame longer than 50 ms is
-simulated as 50 ms. Both mean a stall does not merely drop frames — **the simulated
-world runs slower than the wall clock**, which is exactly what "slows down" describes
-and is not what a plain frame-rate dip feels like.
+**The signal.** Four sweeps of 1500 ticks each. Every large stall is inside `render`,
+and every one lands on a tick where `renderer.info.programs.length` grew:
 
-The guard is deliberate and correct as a spiral-of-death defence. The open question is
-what is spiking hard enough to trip it.
+| sweep | tick | trackT | total ms | render ms | new programs |
+|---|---|---|---|---|---|
+| 1 | 0 | 0.058 | **1165.6** | 1153.2 | +58 |
+| 1 | 675 | 0.099 | **567.4** | 501.0 | +39 |
+| 1 | 4 | 0.058 | 554.1 | 552.6 | +34 |
+| 1 | 546 | 0.087 | 406.9 | 330.3 | +27 |
+| 1 | 1069 | 0.153 | 247.3 | 241.3 | +11 |
+| 2 | 484 | 0.229 | 452.3 | 375.1 | +27 |
+| 2 | 1027 | 0.286 | 126.3 | 125.1 | +1 |
+| 4 | 379 | 0.073 | **5370.1** | 5340.0 | +39 |
 
-**Where to start, in this order.** `MG.engine.stats.droppedSteps` and
-`stats.overloads` are already counting during normal play, so the first thing to
-establish is whether they are non-zero in a session the player calls stuttery — that
-alone separates "the sim is losing time" from "the renderer is dropping frames", and
-they need completely different fixes. Then the usual suspects, none of them checked:
-the texture foundry sharpening drafts on an idle queue mid-race, the cascade refits
-(`_intervals = [1,2,3,4]`), and material recompiles from a light count changing —
-`SPOT_BUDGET`'s own comment warns that every added spotlight recompiles every material
-in the scene, and bedroom's headlights switch on mid-race when darkness crosses 0.24.
+Ticks 546, 675 and 1069 are 9, 11 and 18 seconds into the race — mid-race, long past
+any countdown. Sweep 2 covered a **new** stretch of track and compiled 28 more, which
+is the shape of the complaint: it stalls when you reach somewhere you have not
+rendered yet, which is why it is *sometimes*.
 
-`tools/lap-trace.js` `start()` records per-frame wall time stamped with `trackT`, so a
-spike can be pointed at a place — but it must be run on a real rAF loop, not in a
-browser pane, which throttles to roughly 0.1 s of race per composite and makes every
-frame-time number meaningless.
+**The control, which is what makes this a conclusion rather than a correlation.**
+Re-running the identical sweep over already-compiled material removes the stalls in
+that range entirely: p99 falls from 19.8 ms to 9.6 ms and every tick with
+`dProgram === 0` comes in at or under 12.9 ms. Same code, same camera, same physics,
+same instrument — the only difference is whether the programs already existed.
+
+**Scale.** `programs` grows from **11 at boot to 329** over a few laps of driving.
+Of the 227 counted at one mid-point, **149 are `physical`** against 150 distinct
+materials in a 331-mesh scene: essentially one program per material, each deferred
+until its mesh is first drawn. The set does **converge** — after four sweeps a further
+1200 ticks added exactly zero — which is the one piece of good news here, because it
+means a complete pre-warm is possible in principle.
+
+**Nothing pre-warms them.** `grep -rn "\.compile(\|compileAsync" src/` returns nothing.
+
+**And the obvious fix does not work.** `renderer.compile(scene, camera)` before the
+race produced only 54 new programs in 45 ms (11 -> 65; a second call added 0 and cost
+2.1 ms, so it is idempotent and the measurement is sound) — and the sweep that
+followed **still** created 167 more and still stalled 819 ms, at the *same tick
+indices* with the *same* counts (+58, +34, +27, +39) as the run without it. Compiling
+for the main camera pass touches none of the programs that actually stall. The
+remaining suspects for what the real render needs that `compile()` does not produce
+are the shadow-cascade passes and the PostFX chain's targets; that is the next thing
+to establish, and it decides the fix.
+
+**Fix candidates, none implemented — the choice is a real trade and belongs to a
+human.** Every one of them moves the cost to load time; the question is how much
+loading a player will accept to never freeze mid-corner.
+
+1. **Warm-up flythrough during the load screen.** Drive the camera round the circuit
+   once with the engine ticking before handing control over. This is what actually
+   produced the 329 programs in the measurements above, so it is the one option known
+   to reach saturation. Costs seconds of load, and they are honest seconds — the
+   loading bar can show them.
+2. **`compileAsync` per pass.** Await `KHR_parallel_shader_compile` for the main pass,
+   each shadow cascade and the post chain. Cheaper than a flythrough if it reaches the
+   same set; unproven that it does.
+3. **Cut the material count.** 150 distinct materials for 331 meshes is the root
+   quantity. Sharing materials across meshes reduces the program set directly, but is
+   a much larger change and trades against how varied the scene looks.
+4. **Accept and mask.** Keep the stall but never let it land during play — e.g. hold
+   the countdown until the program count stops growing.
+
+**Stated limits.**
+- Ticks were driven back to back, so the driver never got idle time in which
+  `KHR_parallel_shader_compile` could overlap work that a real 60 Hz loop might hide.
+  These numbers may therefore **overstate** the stall a player sees. They do not
+  overstate the compile count, which is a count and not a time. The 5370 ms outlier in
+  particular should be treated as an upper bound, not as a typical figure.
+- Two ticks stalled without compiling anything: sweep 4 tick 0 at 86.6 ms and tick 8 at
+  21.9 ms, both immediately after a `restart()`. So "every stall is a compile" is not
+  quite true — "every stall over 13 ms outside a restart is a compile" is what the data
+  supports.
+- The hardware is the user's own machine, so the compile costs are representative of
+  it; the *scheduling* around them is not.
+- This tool is blind by construction to the other stall source below.
+
+**A second, independent stall source, measured but not yet caught in a race.** The
+texture foundry hands out a magnified 256 draft immediately and queues the sharp bake
+on `requestIdleCallback`. A bake cannot be interrupted, and `scheduleIdle`'s loop takes
+the first one *before* consulting any deadline — deliberately, since refusing to start
+would stall the queue forever. So the scheduler is permitted to take an uninterruptible
+bake at any moment. What one costs, measured directly, with the repeat call as both
+floor and control (every repeat came back at 0 ms, so these are real work and not timer
+noise):
+
+| kind | size | first bake | repeat |
+|---|---|---|---|
+| varnishedWood | 1024 | **344.9 ms** | 0 |
+| poolFelt | 1024 | 132.5 ms | 0 |
+| sand | 512 | 118.9 ms | 0 |
+| grass | 512 | 42.3 ms | 0 |
+| soil | 512 | 89.0 ms | 0 |
+
+confirming the ~300 ms at 1024 that `Surfaces.js` already quotes in its own comment.
+At boot, bedroom leaves **11 kinds pending**, and the queue took 13.5 s of wall time to
+drain in this pane. The drain *rate* there is Chrome's background throttle and
+transfers to nothing; the two facts that do transfer are that the queue is non-empty
+when a race can start and that each item is an uninterruptible bake of up to 345 ms.
+A hand-driven sweep cannot see these — `requestIdleCallback` never fires while a
+synchronous loop owns the thread — so their absence from the tables above is a
+property of the instrument, not evidence that they do not happen.
+
+Related: the cache reports **423.4 MB against a 256 MB budget**, and `targetSize` never
+evicts — it only shrinks *new* bakes once over budget. That is D51's territory, not
+this one, but it is the same measurement session and worth recording.
+
+`tools/tick-cost.js` holds both instruments: `run()` for the per-tick sweep and
+`bakeCost()` for the foundry, each with its own floor and control.
