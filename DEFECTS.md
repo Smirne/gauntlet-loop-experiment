@@ -14,7 +14,6 @@ become false. Both corrections are recorded in place.
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
 | **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
-| **D54** | the headlight clips to white at the near end of its own beam | MAJOR; named by 6 of 6 critics on both sides of a controlled round. `?headlight=N` and the four-rung ladder now exist; **waiting on a human's look verdict** |
 | **D56** | eliminated with cars still behind you | MAJOR; reported from play. Ranked on `score`, eliminated on `roadDistance` — the two disagree by design |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
 | D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
@@ -23,6 +22,10 @@ become false. Both corrections are recorded in place.
 
 **D52 is resolved** — the critic score does discriminate, and the scoreboard is not void. What
 it discriminated is the uncomfortable part: see its entry.
+
+**D54 is fixed and shipped** — judged from frames by a human, at N=1 / decay 0.60 / 45 cd, with
+the far end of the beam unmoved. See its entry for why the first attempt to get that judgement
+failed.
 
 Everything else is fixed, retracted, or documented as harness behaviour. Two entries share a
 number by accident and are now **D23a** and **D23b**. D30 and D31 each carry a deliberate
@@ -3389,6 +3392,39 @@ and to carry the measurement above so the next widening has to argue past it.
 ---
 
 
+
+### 28 Aug, judged and shipped: N=1, decay 0.60, 45 cd
+
+The four frames went to the only judge whose opinion decides a look on this
+project, and the first answer back was *"i really can't tell the difference,
+sorry."* That was a delivery failure, not a null result: four separate downsized
+images in a chat cannot be compared, because human vision is poor at difference
+in space and excellent at change over time. Rebuilt as a page that flips the
+rungs in place, blinks them at 1.6 Hz, and can subtract them — and the verdict
+came back immediately:
+
+> **"i prefer n=1 decay 0.6. Maybe less realistic. but more clear"**
+
+Which is the right trade and the reason is worth keeping: these are die-cast cars
+on a carpet at 1 unit = 1 cm, read at speed from a chase camera. Legibility beats
+photometric honesty, and decay 0.6 is not physical for a real reflector. It costs
+nothing at range, because 7.458 at 20 u is a fixed point of the whole family.
+
+`HEADLIGHT_DEFAULT` is now 1. Verified in a fresh boot with no URL parameter:
+**decay 0.600, 45 cd, 7.458 at 20 u** (unchanged) and **23.3 at 3 u**, down from
+155 — from 21× over target to 3× over. `?headlight=0` still returns 1.6 / 900,
+so the old look is one parameter away and the ladder can still be re-rendered.
+
+The lesson for the next look decision is about the harness, not the lamp: **a
+comparison the judge cannot flip between is not a comparison.** Three of the four
+rungs were measurably different by 10–31% of pixels and none of that reached the
+person deciding until the frames could be alternated in place.
+
+Two numbers in this entry's own dial table were also wrong and are corrected:
+0.33 and 0.67 were written as 321 cd / 116 cd, and the values the build actually
+produces are **335** and **121**. The near-field figures move with them, 80 → 83
+and 42 → 44.
+
 ### 28 Aug: the shape metric says the shadow is not misshapen. It is nearly absent.
 
 Built `tools/shadow-shape.js` to answer the open question — *is the missing
@@ -3466,7 +3502,7 @@ reproduced and have not re-examined.
 light, "there is nothing to shadow" is confirmed as the mechanism. If they stay at 15
 out of 255 in full sun, this reading is wrong and the contour question is open again.
 
-## D54 — The headlight is tuned for the far end of its own beam and clips to white at the near end — MAJOR — OPEN
+## D54 — The headlight is tuned for the far end of its own beam and clips to white at the near end — MAJOR — **FIXED** (ships at N=1, decay 0.6)
 
 Raised by the D52 discriminator, from evidence it was not looking for.
 

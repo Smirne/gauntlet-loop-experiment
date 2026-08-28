@@ -119,22 +119,39 @@ const SPOT_BUDGET = 6;
  * pinned at 7.458 while the near end comes down:
  *
  *     N     decay   intensity   at 3 u
- *     0      1.60      900        155     shipped
- *     0.33   1.27      321         80
- *     0.67   0.93      116         42
- *     1      0.60       45         23
+ *     0      1.60      900        155     was shipped
+ *     0.33   1.27      335         83
+ *     0.67   0.93      121         44
+ *     1      0.60       45         23     SHIPS
  *
- * `?headlight=N` so all four render from ONE build at ONE moment (D25).
- * Default 0 — nothing changes until a human has judged the frames, which is
- * this project's rule for anything that is a look.
+ * `?headlight=N` so all four render from ONE build at ONE moment (D25). The
+ * four frames were rendered from one boot at frame 4400, with N=0 shot first
+ * and again last as the floor: those two files are byte-identical, same md5,
+ * five renders apart. So the only thing separating the rungs is this dial.
+ *
+ * SHIPPED AT 1. The judgement is the user's and so is the reason for it:
+ *
+ *     "i prefer n=1 decay 0.6. Maybe less realistic. but more clear"
+ *
+ * Which is the right trade for this game and worth writing down rather than
+ * losing to a commit message. These are die-cast cars on a carpet at 1 unit =
+ * 1 cm, read at speed from a chase camera; legibility beats photometric
+ * honesty every time, and decay 0.6 is not physical for a real reflector. The
+ * near field drops 155 -> 23 while the far field does not move at all, so this
+ * costs no reach: 7.458 at 20 u is a fixed point of the whole family.
+ *
+ * Do not "correct" the decay back towards 2.0 for realism. That is the defect,
+ * not the fix, and it was judged from frames by a human. See D54.
  */
+const HEADLIGHT_DEFAULT = 1;
+
 const HEADLIGHT_SHAPE = (() => {
   try {
     const v = new URLSearchParams(location.search).get('headlight');
-    if (v === null || v === '') return 0;
+    if (v === null || v === '') return HEADLIGHT_DEFAULT;
     const n = Number(v);
-    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
-  } catch (_) { return 0; }
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : HEADLIGHT_DEFAULT;
+  } catch (_) { return HEADLIGHT_DEFAULT; }
 })();
 
 /** Irradiance the beam is aimed at, 20 u ahead. Derived from the shipped pair. */
@@ -1153,8 +1170,9 @@ export class VehicleVisual {
       //
       // That target is held constant across the whole `?headlight=N` dial; what
       // the dial moves is the decay, and therefore the shape of the pool at the
-      // near end. See HEADLIGHT_SHAPE — the shipped 900 is the N=0 case, and it
-      // is 21x over target at 3 u, which is D54.
+      // near end. See HEADLIGHT_SHAPE. The old 900 was the N=0 case and it was
+      // 21x over target at 3 u, which is D54; this now ships at N=1, so the
+      // number here is 45 cd at decay 0.6 and the same 7.458 at 20 u.
       s.intensity = this._lampMix * HEADLIGHT_INTENSITY;
     }
   }
