@@ -14,7 +14,7 @@ become false. Both corrections are recorded in place.
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
 | **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
-| **D57** | bedroom is unplayably dark in two places | MAJOR; reported from play with a screenshot. Measured: road-ahead luma swings 37&ndash;172 round the lap, and the first ramp sits in a hole. Same root cause as D53 |
+| **D57** | bedroom is unplayably dark in two places | MAJOR; reported from play with a screenshot. Luma swings 37&ndash;172 round the lap and the first ramp sits in the hole. **Four candidates rendered and put to the user**; none is selective, and the one I meant to recommend lifts the carpet *more* than the road |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
 | **D56** | eliminated with cars still behind you | MAJOR; reported from play. Ranked on `score`, eliminated on `roadDistance` — the two disagree by design |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
@@ -3745,7 +3745,7 @@ of them on the road. Until that is on record, the mechanism above is a reading o
 the source, not a measurement.
 
 
-## D57 — Bedroom is unplayably dark in two places, and the first ramp is one of them — MAJOR — OPEN
+## D57 — Bedroom is unplayably dark in two places, and the first ramp is one of them — MAJOR — OPEN (candidates rendered; waiting on a look decision)
 
 Reported from a playthrough, with a screenshot: *"some places are too dark, it's
 hard to see"*, then *"the initial ramp is all dark"*. In the frame supplied, the
@@ -3804,6 +3804,52 @@ either a stuck car, which would belong to D58, or an artifact of driving `_tick`
 hand. Not yet distinguished. The sweep rendered at 1280×720 at pixel ratio 1, not the
 ultra path the player sees.
 
+
+
+### The candidates, rendered — and the one I was going to recommend does not work
+
+`tools/dark-ladder.js` renders the ramp under each candidate from ONE boot at ONE
+moment, in one synchronous task, with the director left on so the pose is a real one.
+Floor: `base` rendered first and last came back **byte-identical** (md5 `b6c065c5`),
+0.00 on both bands. Control: a global exposure lift moved +12.42, so the run counts.
+Each row also reads the rig back after applying, because a variant that fails to apply
+renders the base frame and reports a difference of zero — which is indistinguishable
+from "this candidate does not help". That is not hypothetical: it happened here first
+time round, when the road materials were fetched from `ctx.trackBuilder`, which is the
+module wrapper `{ TrackBuilder, default }` and not the instance. The variant silently
+rendered the shipped frame and read as a clean null.
+
+Two bands: the road ahead, which the player must read, and off-track carpet, which they
+must not need to.
+
+| candidate | road | carpet | road | carpet |
+|---|---|---|---|---|
+| shipped | 23.27 | 12.32 | 1.00x | 1.00x |
+| lift the room floor (ambient 0.18 -> 0.62, fill 0.26 -> 0.58) | 24.89 | 12.69 | 1.07x | 1.03x |
+| the lamp works harder (irradiance 5.6 -> 15.5, cone -> 0.92) | 154.45 | 92.17 | 6.64x | 7.48x |
+| the road self-lights (emissive on road/kerbs/markings) | 45.78 | 31.20 | 1.97x | 2.53x |
+| *exposure — CONTROL, 1.20 -> 1.95* | *36.17* | *16.11* | *1.55x* | *1.31x* |
+| **floor — shipped again** | **23.27** | **12.32** | **1.00x** | **1.00x** |
+
+**Lifting the ambient floor is not the fix.** A 3.4x lift on ambient buys 7% on the
+road. Whatever is missing at the ramp, ambient is not it.
+
+**And "light only the road" is refuted as implemented.** It was my recommendation, on
+the reasoning that it targets the one surface that must be readable and leaves the mood
+alone. It does the opposite of the second half: the carpet comes up **2.53x** against
+the road's **1.97x**. Bloom spreads the emission, and an emissive surface cannot be kept
+to itself once it is bright enough to matter. The idea survives; this implementation of
+it does not, and making it selective means keeping the road out of the bloom pass, which
+is a real change rather than a tuning value.
+
+**None of the four is selective.** Every way of adding light here adds it everywhere.
+What is left is a taste question — how much, and how much of the dark to trade — so it
+went to the user as frames rather than as a table, on D54's rule that a comparison the
+judge cannot flip between is not a comparison:
+
+    https://claude.ai/code/artifact/9f5ed7f7-1e8e-4805-bc54-9fe95b50a950
+
+Not yet answered. Nothing ships here until it is.
 
 ## D58 — The game freezes because respawning a car recompiles every shader in the game — MAJOR — **FIXED** (the blink moved off the light-bearing node)
 
