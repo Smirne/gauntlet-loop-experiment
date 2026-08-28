@@ -95,6 +95,54 @@ const PRESET_DARKNESS = {
 // — the player's are the ones anybody looks at.
 const SPOT_BUDGET = 6;
 
+/* ------------------------------------------------------------- headlight shape */
+/**
+ * D54. The shipped headlight is 900 cd at decay 1.6, chosen so that the beam
+ * lands at roughly 7 where it matters — "on the road 20 u ahead". That number
+ * is right, and it is the only distance it is right at.
+ *
+ * Irradiance goes as I / d^decay, so holding the far field fixed says nothing
+ * about the near field, and the near field is what the camera is pointed at:
+ *
+ *     20 u    7.5      the tuned figure
+ *      8 u     32      4x over
+ *      5 u     69      9x over
+ *      3 u    155      21x over
+ *
+ * It clips, and a clipped region has no falloff and no shape by definition —
+ * which is every word of what ten out of ten critics said about it.
+ *
+ * Turning the intensity down is not the fix: 900 is correct at 20 u, so that
+ * only trades a blown near field for a beam with no reach. The lever that
+ * changes the SHAPE of the pool rather than its overall level is `decay`. This
+ * dial lowers decay and raises intensity together so the 20 u irradiance stays
+ * pinned at 7.458 while the near end comes down:
+ *
+ *     N     decay   intensity   at 3 u
+ *     0      1.60      900        155     shipped
+ *     0.33   1.27      321         80
+ *     0.67   0.93      116         42
+ *     1      0.60       45         23
+ *
+ * `?headlight=N` so all four render from ONE build at ONE moment (D25).
+ * Default 0 — nothing changes until a human has judged the frames, which is
+ * this project's rule for anything that is a look.
+ */
+const HEADLIGHT_SHAPE = (() => {
+  try {
+    const v = new URLSearchParams(location.search).get('headlight');
+    if (v === null || v === '') return 0;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+  } catch (_) { return 0; }
+})();
+
+/** Irradiance the beam is aimed at, 20 u ahead. Derived from the shipped pair. */
+const HEADLIGHT_FAR_TARGET = 900 / Math.pow(20, 1.6);
+/** Decay at the current dial setting; intensity is solved to hold the far target. */
+const HEADLIGHT_DECAY = 1.6 + (0.6 - 1.6) * HEADLIGHT_SHAPE;
+const HEADLIGHT_INTENSITY = HEADLIGHT_FAR_TARGET * Math.pow(20, HEADLIGHT_DECAY);
+
 /* --------------------------------------------------------------- respawn blink */
 /** Blinks per second while a respawned car is coming back. */
 const RESPAWN_BLINK_HZ = 11;
@@ -731,7 +779,7 @@ export class VehicleVisual {
     for (let i = 0; i < want && i < heads.length; i++) {
       if (_spotsUsed >= SPOT_BUDGET) break;
       const h = this.isPlayer ? heads[i] : heads[0];
-      const spot = new THREE.SpotLight(0xfff0d0, 0, 220, 0.42, 0.55, 1.6);
+      const spot = new THREE.SpotLight(0xfff0d0, 0, 220, 0.42, 0.55, HEADLIGHT_DECAY);
       spot.name = `headlight${i}`;
       spot.position.set(this.isPlayer ? h.x : 0, h.y + 0.1, h.z);
       spot.target.position.set(this.isPlayer ? h.x * 1.6 : 0, h.y - 3.2, h.z + 26);
@@ -1099,10 +1147,15 @@ export class VehicleVisual {
       if (s.visible !== want) s.visible = want;
       if (!want) continue;
       // Punctual intensity is candela and falls off as distance^decay, so the
-      // number that matters is the irradiance where the beam lands: 900 cd at
-      // decay 1.6 puts roughly 7 on the road 20 u ahead, which sits alongside
-      // Lighting's own lamp rather than blowing straight through the grade.
-      s.intensity = this._lampMix * 900;
+      // number that matters is the irradiance where the beam lands: roughly 7
+      // on the road 20 u ahead, which sits alongside Lighting's own lamp rather
+      // than blowing straight through the grade.
+      //
+      // That target is held constant across the whole `?headlight=N` dial; what
+      // the dial moves is the decay, and therefore the shape of the pool at the
+      // near end. See HEADLIGHT_SHAPE — the shipped 900 is the N=0 case, and it
+      // is 21x over target at 3 u, which is D54.
+      s.intensity = this._lampMix * HEADLIGHT_INTENSITY;
     }
   }
 

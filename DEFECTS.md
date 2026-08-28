@@ -14,7 +14,8 @@ become false. Both corrections are recorded in place.
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
 | **D53** | the car's shadow carries no shape information | MAJOR; cause narrowed, not found |
-| **D54** | the headlight clips to white at the near end of its own beam | MAJOR; named by 6 of 6 critics on both sides of a controlled round |
+| **D54** | the headlight clips to white at the near end of its own beam | MAJOR; named by 6 of 6 critics on both sides of a controlled round. `?headlight=N` and the four-rung ladder now exist; **waiting on a human's look verdict** |
+| **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
 | D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
 | D41 | the macro camera's focus erases the scale cues | **open by design** — left as a question, same reason |
 | D3, D4 | `rubber()` crushes to black; `brushedAluminium` reads blue | status never recorded; needs a look, probably long since fixed |
@@ -3450,11 +3451,113 @@ That flag is a deliberate cost decision (the comment at `SPOT_BUDGET` explains t
 shadow-casting spotlight recompiles every material in the scene), so it is a trade, not an
 oversight. But it is a trade whose price is now measured: six of six critics noticed.
 
-### Not yet done
+### The dial now exists, and the ladder is rendered
 
-Nothing has been changed. The fix is not simply "turn it down" — 900 cd is correct at the far
-end, so lowering it to fix the near end will lose the beam's reach. The candidates are a
-different `decay`, a physically shaped cone with an inner falloff, or a lamp that is clamped in
-the grade rather than in candela. Which one is a look decision, and this project's rule is that
-a look is decided from frames by a human. `?headlight=N` does not exist yet; it should, so the
-options can be rendered from one build at one moment (D25).
+The fix is not simply "turn it down" — 900 cd is correct at the far end, so lowering it to fix
+the near end would lose the beam's reach. So the dial trades the two against each other and
+holds the far end fixed by construction. `?headlight=N` in `VehicleVisual.js`, N in [0, 1]:
+
+    HEADLIGHT_DECAY     = 1.6 + (0.6 - 1.6) * N
+    HEADLIGHT_INTENSITY = (900 / 20^1.6) * 20^HEADLIGHT_DECAY
+
+The leading constant is the irradiance the original comment was aiming for — 7.458 at 20 u — and
+it is a *fixed point of the whole family*. Every rung lands on 7.458 at 20 u; they differ only
+in how fast the beam gets there. Verified live at all four settings.
+
+| N | decay | intensity | at 20 u | at 3 u | pixels changed vs N=0 | max Δ |
+|---|---|---|---|---|---|---|
+| **0** (shipping) | 1.60 | 900 | 7.46 | **155** | — baseline | — |
+| **0 repeated** | 1.60 | 900 | 7.46 | 155 | **0.000%** | **0** |
+| 0.33 | 1.27 | 335 | 7.46 | 83 | 10.165% | 118 |
+| 0.67 | 0.93 | 121 | 7.46 | 44 | 23.160% | 183 |
+| 1.00 | 0.60 | 45 | 7.46 | **23** | 30.827% | 203 |
+
+`shots/d54-hl-{00,033,067,100}.png`, 2560x1440, one boot, race clock 38.075, frame 4400, seven
+cars moving. The floor rung is not "small" — the first and last renders of the ladder are the
+same file, md5 `38297a98…`, five renders apart. The near field moves 6.7× across the ladder
+while the far field does not move at all.
+
+**What the frames show.** At N=0 the pool directly ahead of the car has a white-hot core that
+clips — it reads as a flare, and it swallows the apex of the cone where the cone is defined. By
+N=1 the core is gone: the wash is warm, the wood grain reads straight through it, and the two
+shadow edges cast by the car's own body are continuous from the bumper outward, so the pool
+finally reads as a *cone* rather than a blob. The lit stretch further up the track is unchanged
+in all four, which is the point of the fixed far end.
+
+**Nothing is committed as the default.** `HEADLIGHT_SHAPE` defaults to 0, so the build ships
+exactly as before; the dial only answers the URL. Which rung ships is a look decision and this
+project's rule is that a look is decided from frames by a human.
+
+### It also refutes two things the harness believed about itself — see D55
+
+The first attempt at this ladder was one boot per setting, pinned by absolute frame. It was
+worthless, and finding out why cost more than the ladder did.
+
+
+## D55 — A pinned frame is not the moment it says it is: the pin does not cross a boot, and the camera does not come with it — CRITICAL (method) — OPEN
+
+Two independent failures in `tools/pin-shot.js`, both found while trying to render the D54
+headlight ladder, both of which silently produce a frame that looks completely valid.
+
+### 1. Pinning by frame does not survive a boot
+
+`pin-shot.js`'s own header says it: *"PIN BY STEP COUNT, not by wall clock. The engine is a
+fixed 120 Hz timestep, so N steps from boot is the same simulated moment every time."* That
+claim is false, and here is the measurement that kills it. Two boots of the byte-identical URL
+(`?track=bedroom&skipmenu=1&t=16&quality=ultra&autopilot=1&mute=1&headlight=0`), each stepped
+to **absolute frame 3841** and asserted to have landed there:
+
+| | boot A | boot B |
+|---|---|---|
+| frame at shot | 3841 | 3841 |
+| race clock at shot | 32.175 | **32.500** |
+| car speeds | 21.6, 2.2, 22.1, 2.3, 2.5, 28.9, 64.2, 81.5 | 84.2, 76.3, 92.9, 8.8, 1.8, 26.4, 19.9, 96.1 |
+
+**91.176% of pixels differ**, mean channel delta 41.5, and every one of the six bands is between
+89.6% and 94.0% — the whole frame, not a region. The floor for two boots of one build in one
+session is 0.102% (D49). This is not a near miss; the two frames are different races.
+
+The cause is visible in the numbers. During the pin itself the clock and the frame counter are
+locked exactly: A advanced 1908 steps and 15.900 s, B advanced 1878 steps and 15.650 s, both
+precisely 1/120 per step. The divergence is entirely upstream, in the `?t=16` boot seek, which
+advances `race.raceTime` by something that is **not** engine steps — so two boots arrive at the
+same frame number holding different clocks, and the frame counter is not a cross-boot coordinate
+at all. D25 fixed exactly this for `captureSet` by pinning to a **race clock** (`PIN_RACE_TIME`)
+rather than a step count; `pin-shot` was written afterwards and pins by step count.
+
+### 2. Force-stepping leaves the camera behind
+
+`pinShot` disables the director for the duration — correctly, per D26, because the director
+drifts the camera. But **the director is also what drives the camera**, and it runs in the render
+loop, not the fixed step. So `stepOnce()` moves the cars and moves nothing else. Step far enough
+and the shot is taken from a camera belonging to the pre-step moment.
+
+Measured directly. From a held frame, stepping 20 at a time and projecting the player into the
+camera each time, the car walks off the screen and never comes back:
+
+| frame | 3871 | 3931 | 3991 | 4091 | 4191 | 4331 |
+|---|---|---|---|---|---|---|
+| player NDC y | −0.29 | +0.08 | +0.48 | +1.04 | +1.49 | **+2.01** |
+
+Monotonic, straight out of the top of the frame. The 1878-step pin above produced a 2560×1440
+frame of **an empty stretch of track with no car in it** — and it reported `movingCars: 8`,
+`raceState: "racing"`, `ok: true`. Nothing in the return value says the picture is of nowhere.
+Re-enabling the director snapped the camera back onto the car within four RAF frames, which
+confirms the direction of causation.
+
+Both failures share a shape: **the assertion that was checked is not the assertion that
+matters.** `frameAfter === 3841` was true in both boots and told me nothing.
+
+### Not fixed
+
+Nothing has been changed in `pin-shot.js`. The D54 ladder routed around it instead —
+`tools/light-ladder.js` never crosses a boot and never steps: it takes the whole ladder from one
+live-driven moment, changing only the parameter under test between renders, with every render
+and readback inside a single synchronous JS task so no RAF can interleave. Its floor rung is
+**byte-identical** to its baseline, md5 for md5, five renders apart. That is the strongest floor
+this project has recorded and it is worth keeping, but it only works for parameters that can be
+changed live, which is a strictly smaller class than what `pin-shot` claims to cover.
+
+A real fix for `pin-shot` needs both halves: pin to `race.raceTime` like `captureSet` does, and
+either drive the camera forward during the step or refuse a step larger than the camera's
+settling time.
