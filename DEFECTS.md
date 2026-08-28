@@ -15,6 +15,7 @@ become false. Both corrections are recorded in place.
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
 | **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
 | **D54** | the headlight clips to white at the near end of its own beam | MAJOR; named by 6 of 6 critics on both sides of a controlled round. `?headlight=N` and the four-rung ladder now exist; **waiting on a human's look verdict** |
+| **D56** | eliminated with cars still behind you | MAJOR; reported from play. Ranked on `score`, eliminated on `roadDistance` — the two disagree by design |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
 | D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
 | D41 | the macro camera's focus erases the scale cues | **open by design** — left as a question, same reason |
@@ -3639,3 +3640,68 @@ changed live, which is a strictly smaller class than what `pin-shot` claims to c
 A real fix for `pin-shot` needs both halves: pin to `race.raceTime` like `captureSet` does, and
 either drive the camera forward during the step or refuse a step larger than the camera's
 settling time.
+
+
+## D56 — You can be eliminated with cars still behind you, because the game ranks you on one quantity and eliminates you on another — MAJOR — OPEN
+
+Reported from play: *"sometimes I get eliminated while there are still active cars
+behind me."*
+
+Not reproduced by measurement yet. But it does not need a repro to be established
+as possible, because the two orders involved are different quantities by
+construction and the code says so in its own comments.
+
+**The position you are shown is a score order.** `_rank()` sorts `standings` with
+`compareEntries`, which for running cars is `b.score - a.score`. That array is what
+the HUD reads for "6TH", and what the results table reads.
+
+**The car that gets eliminated is chosen on road order.** `_checkElimination()`
+scans for the entry with the lowest `roadDistance` and takes it, explicitly
+refusing to use the tail of `standings`:
+
+> The car that goes is therefore the one furthest back ON THE ROAD, found by
+> scanning rather than taken off the tail of `standings` — the classification can
+> legitimately disagree with the road order, and here it is the road order that
+> decides.
+
+**And the two are guaranteed to disagree, on purpose.** `score` carries the cut
+penalty; `roadDistance` is documented as being indifferent to it. D14 is the reason:
+
+> One moderate cut costs more score than the elimination gap, so a car sitting
+> mid-pack in plain view could be eliminated for it.
+
+Which gives the reported symptom directly. A CPU cuts a corner. Its `score` drops
+below the player's, so the HUD moves it *behind* the player and the player sees a
+car still racing behind them. Its `roadDistance` does not drop, because that signal
+deliberately follows the cut — so on the road it is still ahead. The player is now
+genuinely last on the road, the gap opens, and the player is eliminated with one or
+more cars showing behind them.
+
+Every individual decision here is defensible and each was made for a measured
+reason. The defect is the pair: **the game shows you one ranking and enforces
+another, and never shows you the one it enforces.** From the seat, that is
+indistinguishable from a bug.
+
+### Not fixed, and the fix is a design call
+
+Three candidates, and they are not equivalent:
+
+* **Eliminate on the order the player is shown.** Simple and honest, but it
+  reinstates exactly the defect D14 removed: a cut costs more score than the
+  elimination gap, so cutting could put a mid-pack car out.
+* **Require last on BOTH orders.** The player is only eliminated when they are last
+  by score *and* last on the road. Keeps D14's protection, removes the
+  contradiction, and costs some eliminations that were spatially fair.
+* **Show the road order while elimination is armed.** Changes nothing about who
+  goes; makes the threat legible. The player would see themselves drop to last
+  before being taken out, which is what "a threat you can feel closing" needs.
+
+The third is the smallest change and the only one that does not trade away
+something already bought. But which of these ships is a design decision, not a bug
+fix, and it is the user's call.
+
+**Before implementing any of them, this needs a repro** — hook `race:eliminated`,
+dump the whole field's `score`, `position` and `roadDistance` at the moment the
+player goes, and confirm that cars classified behind the player really were ahead
+of them on the road. Until that is on record, the mechanism above is a reading of
+the source, not a measurement.
