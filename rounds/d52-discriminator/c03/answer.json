@@ -1,0 +1,26 @@
+{
+  "describe": "A near-side profile shot of a dark blue die-cast toy car, race number 88 on the door, driving right-to-left along a pale paper or card track laid over a household surface. The car's headlights are on and throw a bright warm cone across the track to the left of frame, blowing out the left edge. The track is a light grey/white paper strip with black-and-white kerb blocks along its right edge; to the right of the track is a field of rounded brown pebbles or gravel-like beads. In the blurred background sits a red-and-white striped ramp or barrier and a couple of small bright bokeh points, with a large dark mass (furniture or shadowed room) filling the upper left. The scene is night-lit, low key, with strong depth-of-field blur at the top and bottom of the frame, in a tilt-shift miniature style.",
+  "scores": { "1": 6, "2": 7, "3": 6, "4": 6, "5": 4, "6": 6, "8": 5, "9": 6 },
+  "tell": "The headlight beam. It is a flat, hard-edged white wedge painted onto the paper with no falloff gradient, no volumetric haze in the air, and a visible straight-line boundary running from the lamp to the left frame edge — it reads as an unlit emissive decal rather than light. Combined with the completely blown-out white blob at the left edge that has no bloom shape and no source visible, a stranger would pick this out in under two seconds.",
+  "defects": [
+    { "category": 5, "severity": "critical",
+      "what": "The headlight pool at left is a solid clipped white mass with a razor-straight upper edge (the diagonal line running from the front lamp toward the left edge at roughly mid-height). It has no penumbra, no falloff, no cookie/texture, and it does not interact with the paper's surface at all — the kerb blocks and paper wrinkles inside the pool receive no modulation.",
+      "fix": "Replace the projected wedge with a real spot light with IES falloff and a soft penumbra, add a subtle volumetric slice so the cone reads in air, and let the beam pick up the paper's shading and the kerb geometry inside it. Roll off the clipped highlight so it has a value gradient." },
+    { "category": 1, "severity": "major",
+      "what": "The pebble field on the right is a single repeated bead shape at near-uniform size, spacing and value across the entire lower-right third. There is no size variation, no debris, no dust in the crevices, and every pebble shares the same specular roughness, so the field reads as an instanced particle scatter rather than gravel.",
+      "fix": "Vary pebble scale and rotation, add several distinct meshes, break up the tone with a low-frequency dirt/AO mask, and drop finer grit and dust between the stones." },
+    { "category": 3, "severity": "major",
+      "what": "The depth-of-field is applied as a strong band top and bottom while the car sits in a narrow sharp strip — but the transition is abrupt: the pebbles immediately behind the rear wheel are already heavily smeared while pebbles at the same apparent distance to the right of the car are sharp. The blur is following screen position, not depth.",
+      "fix": "Drive the blur from the actual depth buffer with a physically plausible aperture and focus distance instead of a screen-space gradient, so near/far falloff is consistent across the frame." },
+    { "category": 8, "severity": "major",
+      "what": "Beyond the paper track and the pebble strip there is nothing legible: the top-left half of the frame is an undifferentiated black mass with no readable household object, and the only background props are one blurred red-white striped ramp and two floating bokeh dots. Nothing tells you this is a house rather than a void.",
+      "fix": "Put readable domestic silhouettes into the background at that scale — a chair leg, a skirting board, a power socket, a book stack — and give them enough rim light to separate from black so the miniature-in-a-real-room premise reads." },
+    { "category": 4, "severity": "minor",
+      "what": "The car's rear three-quarter is under-detailed relative to the front: the rear wheel arch and rocker area are a flat unbroken blue panel with no shutline, no door gap continuation and no bevel highlight, so the die-cast panel-break language present at the front (bonnet, light housing) stops halfway down the body.",
+      "fix": "Carry the panel shutlines and chamfered edges through the rear door and arch, and add a thin bevel that catches the warm key so the silhouette reads as pressed metal along its whole length." },
+    { "category": 6, "severity": "minor",
+      "what": "The car is nearly dead-centre horizontally and its motion direction (leftward, toward the beam) is cramped — the front bumper has only a short run of track before the blown-out white area, so there is no visual lead room for the direction of travel.",
+      "fix": "Shift the car back toward the right third so the headlight cone and the track ahead occupy the lead space, and tuck the clipped highlight further out of frame." }
+  ],
+  "worst": "The headlight beam: a hard-edged, clipped, non-volumetric white wedge stamped on the paper that neither falls off nor lights anything inside it. It is the brightest element in the frame and the first thing that marks the shot as hobby work."
+}

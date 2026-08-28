@@ -1,0 +1,44 @@
+{
+  "describe": "A high, steeply-angled overhead shot of a pale off-white plastic slot-car style track banking through a hairpin, laid across a dark carpet with a coarse loop-pile texture. A single small blue/teal die-cast car with a visible windscreen and roll structure sits mid-corner on the track, lit by a hard warm key from the upper right that blows out a bright hot spot on the track surface just ahead of it and casts a long ragged shadow of an off-screen object across the upper-right track section. A black-and-white checker start/finish panel crosses the track in the lower centre-right, with faint dark tyre streaks running over it. To the right, a red-and-white striped kerb rings the inner edge of the corner, with a second sunlit run of track and what looks like a brown wooden slat or ramp in the lower right. Scattered across the carpet at left are small props: a red crate/container, red pencil-like sticks, small dark and white blocks. The image is graded cool magenta-violet in the shadows against the warm key, with strong tilt-shift blur on the near and far extremes and a soft vignette.",
+  "scores": { "1": 6, "2": 6, "3": 7, "4": 5, "5": 3, "6": 6, "8": 5, "9": 6 },
+  "tell": "Two things give it away in under two seconds. First, the track itself is a featureless matte plastic extrusion with no material story at all — no surface grain, no seams, no wear, no join lines, no thickness read on its edges — so it reads as an untextured grey-white primitive lofted along a spline, sitting in stark contrast to the very high-detail carpet it lies on. Second, the blown-out specular hot spot on the track ahead of the car is a pure white clipped blob with no shape, no falloff structure and no matching light source in frame; a commercial title would shape that highlight and let the bloom sit only on speculars, not on a clipped patch of diffuse track.",
+  "defects": [
+    {
+      "category": 5,
+      "severity": "major",
+      "what": "The car is at speed on a banked hairpin and produces no effect whatsoever — no tyre smoke, no dust lifted off the carpet, no motion streaking, no rear light trail. The only motion evidence in frame is the pair of thin dark tyre streaks painted across the checker panel behind it, and those are a flat decal: they have uniform width and opacity, do not darken toward the contact patch, and do not follow the curvature of the racing line the car is actually taking.",
+      "fix": "Add a light tyre-scrub particle at the contact patches with depth fade, and drive the skid decal from the actual wheel path so it curves with the corner and varies in opacity with slip."
+    },
+    {
+      "category": 4,
+      "severity": "major",
+      "what": "The track section is the weakest geometry in frame: it is a constant-section extrusion with no visible bevel, no chamfer catching the key light along its outer lip, and no modelled thickness where it cuts against the carpet in the mid-left. Where the checker panel meets it, the panel is a flat quad pasted on top rather than a modelled plate with an edge.",
+      "fix": "Bevel the track edges so the rim catches a specular line under the key, and give the checker panel real thickness with a lit edge."
+    },
+    {
+      "category": 2,
+      "severity": "major",
+      "what": "The bright ragged shadow falling across the upper-right track run is cast by something entirely outside the frame and has no legible shape — it reads as a torn blob, not as an object. With no visible caster and no other object in frame throwing a shadow of comparable length or hardness, it reads as an unexplained artefact rather than a lighting cue.",
+      "fix": "Either bring the casting object into frame or replace it with a shadow whose silhouette is readable and consistent with the props actually present."
+    },
+    {
+      "category": 5,
+      "severity": "minor",
+      "what": "The car's own headlights are not lighting anything. The hot patch of track ahead of the car is a broad round bloom, not a pair of directional beams, so the car reads as a passive prop lit by the scene rather than an active vehicle.",
+      "fix": "Give the car actual headlight cones with visible falloff on the track ahead, or remove the ambiguous hot spot so it does not read as a failed headlight."
+    },
+    {
+      "category": 3,
+      "severity": "minor",
+      "what": "The specular hot spot around x=800,y=370 is fully clipped to white across a large area with no highlight rolloff, and the bloom around it is a soft round halo with no shaping — it flattens the track's form exactly at the point the eye is drawn to, which is also where the car is.",
+      "fix": "Pull exposure down or add highlight compression so the hot spot retains gradient, and restrict bloom to actual speculars rather than the whole blown patch."
+    },
+    {
+      "category": 8,
+      "severity": "minor",
+      "what": "The props scattered on the carpet at left — the red crate, the red pencils, the small dark and white blocks — are placed at even random-scatter intervals with no relationship to each other or to the track. Nothing implies a person built this track: no cables, no track supports, no clamps, no furniture leg, no hand-placed anchor.",
+      "fix": "Cluster props into implied human events (a spilled box, a stack of books propping the banking) and add the physical supports the banked track would actually require."
+    }
+  ],
+  "worst": "The track surface is the subject of the shot and it is the least finished object in it — an untextured, unbevelled plastic extrusion with a clipped white blowout across its most visible section, sitting on a carpet rendered with far more material detail than the track itself. The eye goes straight to the brightest area and finds no surface there at all."
+}

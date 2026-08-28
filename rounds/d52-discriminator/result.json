@@ -1,0 +1,118 @@
+{
+ "test": "mush (320 px round trip)",
+ "control": "clean (full detail)",
+ "critiques": {
+  "test": 3,
+  "control": 3
+ },
+ "categories": [
+  {
+   "n": 1,
+   "label": "Materials & texture",
+   "test": 5,
+   "control": 6,
+   "delta": -1
+  },
+  {
+   "n": 2,
+   "label": "Lighting & shadow",
+   "test": 4.67,
+   "control": 5.67,
+   "delta": -1
+  },
+  {
+   "n": 3,
+   "label": "Post & grade",
+   "test": 4.33,
+   "control": 5.67,
+   "delta": -1.34
+  },
+  {
+   "n": 4,
+   "label": "Geometry & silhouette",
+   "test": 4.33,
+   "control": 5.33,
+   "delta": -1
+  },
+  {
+   "n": 5,
+   "label": "Effects",
+   "test": 3,
+   "control": 3.33,
+   "delta": -0.33
+  },
+  {
+   "n": 6,
+   "label": "Composition & camera",
+   "test": 5.33,
+   "control": 6,
+   "delta": -0.67
+  },
+  {
+   "n": 8,
+   "label": "Environment richness",
+   "test": 4.67,
+   "control": 5.33,
+   "delta": -0.66
+  },
+  {
+   "n": 9,
+   "label": "Cohesion",
+   "test": 5,
+   "control": 5.67,
+   "delta": -0.67
+  }
+ ],
+ "defects": {
+  "test": {
+   "critical": 5,
+   "major": 13,
+   "minor": 6,
+   "total": 24
+  },
+  "control": {
+   "critical": 2,
+   "major": 12,
+   "minor": 6,
+   "total": 20
+  }
+ },
+ "belowTheFloor": [
+  "3 Post & grade: 4.33 vs 5.67 (-1.34)",
+  "1 Materials & texture: 5 vs 6 (-1)",
+  "2 Lighting & shadow: 4.67 vs 5.67 (-1)",
+  "4 Geometry & silhouette: 4.33 vs 5.33 (-1)"
+ ],
+ "indistinguishable": [
+  "5 Effects",
+  "6 Composition & camera",
+  "8 Environment richness",
+  "9 Cohesion"
+ ],
+ "worst": [
+  {
+   "cell": "gameplay",
+   "worst": "The headlight: a clipped pure-white blob with no falloff, no cone volume and no reciprocal effect on the car emitting it, sitting on a car that itself casts no contact shadow. It is the brightest thing in the frame and the single most obvious signal that this is not a commercial render."
+  },
+  {
+   "cell": "chase",
+   "worst": "The bare, unmotivated point light floating in mid-air behind the car: it blows a featureless white hole through the centre of the frame, hides the hero car it is supposed to reveal, and casts a hard constant-penumbra fan shadow that betrays the whole scene as an untuned engine viewport rather than a lit shot."
+  },
+  {
+   "cell": "macro",
+   "worst": "The blur and the blown headlight together hide the frame instead of composing it — an over-cranked tilt-shift smears every environment element into unreadable mush while a flat, shadowless, clipped-white headlight pool erases the track surface, so there is almost no legible surface detail anywhere in the image to judge."
+  }
+ ],
+ "tells": {
+  "test": [
+   "The headlight. It is a single blown-out white blob with a hard elliptical core and no falloff structure, no cone volume, no cookie or lens shape, and crucially it does not light the car that emits it or cast the car's own shadow backwards. Beside a Hot Wheels Unleashed or Art of Rally night shot, that one artefact reads as a hobby project instantly. Second giveaway: the car itself is barely 40px of low-poly blue with no bevel highlights, so the frame's hero object is the least resolved thing in it.",
+   "Yes, in well under two seconds. The giveaway is the naked point light sitting in open air behind the car: a raw white blown-out blob with no emitter geometry, no lamp, no housing, throwing a hard-edged fan shadow with zero penumbra growth. Real engines hide or model the source. Second giveaway is the carpet: a single high-frequency loop pattern applied at one uniform scale across the entire floor with no wear, no lint, no directional lay, and no lighting variation, which reads as a bump-mapped plane rather than fibre. Third is the car itself, which is only about 40 px of blocky low-poly body with no bevel highlights and no wheel definition, dwarfed by the effects around it.",
+   "The tilt-shift is dialled far past miniature-sell into pure smear: the striped kerb across the top third and the pebble band bottom-right are reduced to unreadable mush, and even the hero car's rear quarter is soft. Combined with a headlight cone that is a flat blown-white ellipse painted onto the track with no falloff shaping, no visible beam volume and no cast shadow from the car's own body, a stranger reads this instantly as 'hobby project hiding untextured geometry behind blur'."
+  ],
+  "control": [
+   "The headlight blowout. A single unclamped white blob directly in front of the car burns to pure paper-white with no falloff shape, no visible beam cone, no cookie or lens character, and it flattens the entire midground into a featureless disc. No shipped racing title lets a headlight nuke its own road surface like that. Second tell: the pebbled carpet reads as one uniform bump-mapped noise field at a single scale across the whole frame, and the car has no wheel-contact shadow under it.",
+   "The headlight beam. It is a flat, hard-edged white wedge painted onto the paper with no falloff gradient, no volumetric haze in the air, and a visible straight-line boundary running from the lamp to the left frame edge — it reads as an unlit emissive decal rather than light. Combined with the completely blown-out white blob at the left edge that has no bloom shape and no source visible, a stranger would pick this out in under two seconds.",
+   "Two things give it away in under two seconds. First, the track itself is a featureless matte plastic extrusion with no material story at all — no surface grain, no seams, no wear, no join lines, no thickness read on its edges — so it reads as an untextured grey-white primitive lofted along a spline, sitting in stark contrast to the very high-detail carpet it lies on. Second, the blown-out specular hot spot on the track ahead of the car is a pure white clipped blob with no shape, no falloff structure and no matching light source in frame; a commercial title would shape that highlight and let the bloom sit only on speculars, not on a clipped patch of diffuse track."
+  ]
+ }
+}

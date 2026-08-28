@@ -1,0 +1,32 @@
+{
+  "describe": "A dusk/interior-lit toy-scale racing frame. A single blue die-cast car sits in the lower-middle third, three-quarter rear view, on a pale grey track surface with a raised light-blue kerb wall curving from bottom-left up and away to the top-centre. The car's headlights (facing away from camera, up-track) throw an extremely bright cone onto the track ahead, blowing out to pure white and casting a long dark silhouette-shadow of the car up the road. To the right of the track are a red-and-white striped kerb/barrier, a black-and-white checker section in the mid-right, and a large checkered flag surface running along the bottom-right corner. The ground plane is a coarse brown pebbled carpet or gravel-like texture filling the left and centre-bottom. Background left is a dark blurred domestic floor with a rug, a crayon or pencil, a small block, and other unfocused household props. Heavy depth-of-field blur at the top and left edges, warm-to-cool grade, deep blue shadows against orange-lit highlights.",
+  "scores": { "1": 6, "2": 4, "3": 4, "4": 5, "5": 3, "6": 6, "8": 6, "9": 5 },
+  "tell": "The headlight blowout. A single unclamped white blob directly in front of the car burns to pure paper-white with no falloff shape, no visible beam cone, no cookie or lens character, and it flattens the entire midground into a featureless disc. No shipped racing title lets a headlight nuke its own road surface like that. Second tell: the pebbled carpet reads as one uniform bump-mapped noise field at a single scale across the whole frame, and the car has no wheel-contact shadow under it.",
+  "defects": [
+    { "category": 2, "severity": "critical",
+      "what": "The headlight pool on the track just ahead of the car is fully clipped to white over a large area (roughly the centre of frame), destroying all track surface detail there and producing a hard-edged luminous disc rather than a beam. It also does not read as two headlights - it is one blob.",
+      "fix": "Drop headlight intensity by 2-3 stops, split into two spot lights with an IES-style cookie and visible cutoff, and let the tonemapper roll off rather than clip - keep asphalt texture legible inside the pool." },
+    { "category": 2, "severity": "major",
+      "what": "The car has no contact shadow or grounding AO at the tyre contact patches. Its own cast shadow projects up-road away from camera, so under and around the chassis the track brightness is unbroken and the car reads as hovering a few millimetres above the surface.",
+      "fix": "Add a tight contact shadow / capsule AO at each wheel and under the chassis, independent of the headlight-driven cast shadow." },
+    { "category": 5, "severity": "major",
+      "what": "No effects at all for a car apparently at speed on a corner - no dust lift off the pebbled surface, no tyre skid or scuff on the pale track, no motion blur on the wheels, no rear light bloom streak. The frame is effectively a static beauty shot posed as action.",
+      "fix": "Add wheel-contact dust puffs with depth fade, faint skid decals following the racing line, and rotational blur on the wheels." },
+    { "category": 3, "severity": "major",
+      "what": "The grade crushes the left and background thirds to near-black mush - the household props (rug, crayon, block) are barely readable shapes with no shadow detail, while the centre clips to white. The frame carries almost no midtone.",
+      "fix": "Lift the shadow toe and reduce the highlight ceiling; use a filmic curve with intent rather than raw contrast, and add a little fill so the domestic props stay legible as story." },
+    { "category": 1, "severity": "major",
+      "what": "The pebbled ground covers the whole left and lower-centre at one uniform grain size and one roughness, right to the far distance, with no variation, no debris, no fibre strands and no scale change. It reads as a single bump map, not carpet or gravel.",
+      "fix": "Vary the pebble/fibre scale with distance, break it with patches of matting and loose particles, and add roughness variation plus a hint of anisotropic sheen." },
+    { "category": 4, "severity": "major",
+      "what": "The car silhouette is soft and undetailed: the rear end is a plain slab with a red decal strip standing in for tail lights, the roof/spoiler pillars merge into an ambiguous mass, and no bevel highlights run along the body edges. It does not read as a desirable die-cast object.",
+      "fix": "Add real tail-light geometry with emissive lenses, chamfer the body edges so they catch a rim light, and give the car a base-metal parting line and axle detail." },
+    { "category": 9, "severity": "major",
+      "what": "The track elements do not belong to one product: the pale grey road with faint painted lines, the light-blue foam kerb wall, the red/white striped barrier and the checker flag section each have a different fidelity and material language - the kerb wall in particular is untextured flat plastic against a heavily textured floor.",
+      "fix": "Unify with one material vocabulary - decide the whole set is printed/moulded plastic toy track and give every piece the same surface wear, edge chamfer and print-registration character." },
+    { "category": 6, "severity": "minor",
+      "what": "The subject car sits low-centre with the brightest thing in frame directly above it, so the eye goes to the blowout, not the car; the checker flag plane in the bottom-right corner is a large bright wedge that pulls attention out of frame.",
+      "fix": "Reframe or reduce the headlight so the car is the brightest read; push the checker plane further out of frame or darken it." }
+  ],
+  "worst": "The clipped headlight pool. It is the single loudest element in the frame, it is physically wrong for the scale (a die-cast headlight would not floodlight a metre of road), it erases the track material and any effects that would sell speed, and it forces the grade into the clipped-white / crushed-black split that makes everything else look worse."
+}

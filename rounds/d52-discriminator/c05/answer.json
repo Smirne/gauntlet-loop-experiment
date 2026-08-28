@@ -1,0 +1,56 @@
+{
+  "describe": "A night-time interior scene: a small blue die-cast sports car sits near the apex of a curved white/pale track section that sweeps from lower-right up and around to the left, bordered by a low rounded lavender-grey barrier wall. The track and its surround are laid over a dark brown carpet whose looped-pile texture fills most of the lower and left frame. A single bright warm point light source blooms directly behind/above the car, blowing out to pure white and casting a long hard fan-shaped shadow up and to the right across the track and carpet. Black-and-white checker flag markings run along the lower-right track edge and again in the upper-right on a red/white curbed section. In the upper left a dark orange rectangular object (a book or box) with an orange rounded prop sits on the carpet, and a thin red-and-white striped stick lies at the lower left. The overall grade is cool purple-blue with the one warm light pool; the background falls off into near-black.",
+  "scores": { "1": 5, "2": 4, "3": 4, "4": 4, "5": 2, "6": 5, "8": 5, "9": 5 },
+  "tell": "Yes, in well under two seconds. The giveaway is the naked point light sitting in open air behind the car: a raw white blown-out blob with no emitter geometry, no lamp, no housing, throwing a hard-edged fan shadow with zero penumbra growth. Real engines hide or model the source. Second giveaway is the carpet: a single high-frequency loop pattern applied at one uniform scale across the entire floor with no wear, no lint, no directional lay, and no lighting variation, which reads as a bump-mapped plane rather than fibre. Third is the car itself, which is only about 40 px of blocky low-poly body with no bevel highlights and no wheel definition, dwarfed by the effects around it.",
+  "defects": [
+    {
+      "category": 2,
+      "severity": "critical",
+      "what": "The key light is a bare, unoccluded point source floating in mid-air directly behind the car at roughly frame centre. It blows to pure white with no falloff shaping and its shadow of the car is a hard-edged fan with a constant-width penumbra all the way out to the checker curb, which is physically wrong for a source this close and this small.",
+      "fix": "Give the light a modelled emitter (a work lamp, a phone torch, a headlight housing) so it is motivated in-shot, and use an area/sphere light so the car's shadow softens with distance from the contact point."
+    },
+    {
+      "category": 3,
+      "severity": "major",
+      "what": "Bloom is uncontrolled: the light pool is a featureless white disc roughly 120 px across with a soft halo that eats the car's rear half and the track surface behind it, destroying all detail in the brightest third of the composition. There is no lens shaping (no streak, no dirt, no ghosting), just an isotropic smear.",
+      "fix": "Clamp bloom threshold so only speculars bloom, cut bloom intensity by at least half, and add mild lens flare/dirt shaping so the highlight reads as an optical event instead of an overexposed sprite."
+    },
+    {
+      "category": 4,
+      "severity": "major",
+      "what": "The car is blocked out, not modelled. The roof and rear deck read as flat faceted planes, the wheel arches have no visible wheels or tyres, and no edge of the body catches a bevel highlight despite an intense light directly behind it. At this camera distance it should be the hero object and it has less silhouette information than the carpet.",
+      "fix": "Add bevelled edges, actual wheel/tyre geometry with rim detail, glass with a separate specular, and a clearcoat layer so the paint kicks a sharp edge highlight against the backlight."
+    },
+    {
+      "category": 5,
+      "severity": "critical",
+      "what": "There are no effects at all. A car at the apex of a corner with a blown-out light behind it shows no dust, no tyre smoke, no skid mark on the track, no particle motion, no motion blur. The frame is completely static; nothing indicates the car is moving rather than parked.",
+      "fix": "Add a contact-hugging skid/dust trail following the tyre path around the apex, light dust motes catching the backlight (which this lighting setup would sell beautifully), and per-object motion blur on the car and wheels."
+    },
+    {
+      "category": 3,
+      "severity": "major",
+      "what": "Aliasing on the checker flag in the lower right: the black/white squares show hard stair-stepped diagonals along the track edge, and the upper-right red/white curb strip shears into moire where it recedes.",
+      "fix": "Enable temporal AA plus proper mip/aniso filtering on the checker and curb textures, and bake the checker into the track material rather than a decal on a coplanar surface."
+    },
+    {
+      "category": 1,
+      "severity": "major",
+      "what": "The carpet loop texture is applied at one constant world scale across the entire floor from foreground to background with no variation, no dirt, no flattened traffic paths and no fibre direction, so the near carpet and the far carpet look identical and the surface reads as a repeating bump pattern rather than pile.",
+      "fix": "Break the uniformity with a large-scale mask varying roughness/albedo, add flattened and worn zones, vary loop direction, and shift to shell or card-based fibre for the near foreground where the pattern is most readable."
+    },
+    {
+      "category": 8,
+      "severity": "minor",
+      "what": "The house context is thin and unreadable: the only props are a dark orange box shape at upper left, a small orange rounded object, and a thin red/white stick at lower left, all under-lit to near silhouette and none identifiable as a real household object. Nothing tells you which room this is or that anyone lives here.",
+      "fix": "Add recognisable, correctly scaled household objects lit enough to read (a skirting board, a table leg, a shoe, a controller, a cable run) so the toy scale is confirmed by the environment rather than only by the track."
+    },
+    {
+      "category": 6,
+      "severity": "minor",
+      "what": "The hero car is placed dead-centre and is almost entirely swallowed by the light bloom directly behind it, so the brightest region of the frame and the subject fight each other. The composition also lacks any foreground occluder to establish depth, and the upper-right corner is a formless dark mass.",
+      "fix": "Offset the light so it rims the car from three-quarter behind rather than dead behind, drop the camera lower for a hero angle, and add a defocused foreground element (carpet pile or a prop) to build depth layers."
+    }
+  ],
+  "worst": "The bare, unmotivated point light floating in mid-air behind the car: it blows a featureless white hole through the centre of the frame, hides the hero car it is supposed to reveal, and casts a hard constant-penumbra fan shadow that betrays the whole scene as an untuned engine viewport rather than a lit shot."
+}

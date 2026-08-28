@@ -1,0 +1,56 @@
+{
+  "describe": "A night-time, low-angle three-quarter-rear view of a dark blue die-cast hatchback/hot-rod car with the number 88 on its door, driving left-to-right along a pale grey track surface that curves away toward the upper right. The car's headlights throw a broad warm cone of light forward-left across the track surface, blowing out the left third of the frame; a second, dimmer car body is just visible behind/left of the hero car. A red-white-and-blue striped kerb or bunting runs across the upper middle distance, with another bright blown light source above it. The right and bottom-right of the frame is a coarse brown pebbled/gravel band running diagonally out of frame. Everything except a narrow band around the car is heavily blurred by an aggressive tilt-shift/DOF effect, and the whole image is graded cool blue-violet in the shadows with warm amber only inside the headlight cone.",
+  "scores": { "1": 4, "2": 5, "3": 3, "4": 5, "5": 4, "6": 5, "8": 4, "9": 5 },
+  "tell": "The tilt-shift is dialled far past miniature-sell into pure smear: the striped kerb across the top third and the pebble band bottom-right are reduced to unreadable mush, and even the hero car's rear quarter is soft. Combined with a headlight cone that is a flat blown-white ellipse painted onto the track with no falloff shaping, no visible beam volume and no cast shadow from the car's own body, a stranger reads this instantly as 'hobby project hiding untextured geometry behind blur'.",
+  "defects": [
+    {
+      "category": 3,
+      "severity": "critical",
+      "what": "The depth-of-field/tilt-shift is so strong that nothing outside a ~200px band is legible — the red/white/blue kerb across the upper third has no discernible edge, and the pebble field in the lower right is a brown smudge. It also eats the hero car itself: the rear hatch and tail lamp are already out of focus.",
+      "fix": "Cut the blur strength by at least half and pull the focal plane back so the whole car is sharp; use a narrower blur gradient anchored at the car rather than a full-frame tilt-shift, and add a sharp near-field element for depth contrast."
+    },
+    {
+      "category": 2,
+      "severity": "critical",
+      "what": "The headlight pool at frame left is a uniformly blown white/amber blob with a hard elliptical outer edge and no intensity gradient inside it — no hotspot, no penumbra, and no shadow of the car's own front bumper or wheels cut into it. The car is lit from the front but casts nothing onto the track behind it either.",
+      "fix": "Use a real spot/IES headlight with shadow casting so the bumper and wheels occlude the beam, add falloff and a soft penumbra, and lower intensity so the track material inside the pool is not clipped to white."
+    },
+    {
+      "category": 1,
+      "severity": "major",
+      "what": "The track surface in the mid-left, where the headlight lights it directly, shows no surface detail at all — no asphalt/plastic grain, no roughness variation, no specular break-up. It reads as untextured flat shading, which is exactly why the beam looks painted on.",
+      "fix": "Add a fine normal/roughness map to the track material with anisotropic scuffing along the driving line so the direct light picks out microdetail instead of a flat wash."
+    },
+    {
+      "category": 5,
+      "severity": "major",
+      "what": "The car is apparently cornering hard at speed, yet there are no effects at all: no tyre smoke, no dust lifted off the adjacent gravel, no skid or scuff trail behind the rear tyres, no motion streaking on the wheels — the tyres look parked.",
+      "fix": "Add rolling/slip-driven tyre scuff decals following the contact patch, light dust puffs at the gravel boundary, and per-object motion blur or wheel spin blur so the speed implied by the pose is visible."
+    },
+    {
+      "category": 2,
+      "severity": "major",
+      "what": "The car sits on the track with no discernible contact shadow or ambient occlusion under the sills and wheel arches — the darkest value under the car is the same as the car's own body paint, so the wheels have no visible grounding where they meet the surface.",
+      "fix": "Add a capsule/contact shadow plus screen-space AO tightened at the wheel contact patches, and lift the track's ambient value slightly so the occlusion actually reads as a darker gradient."
+    },
+    {
+      "category": 8,
+      "severity": "major",
+      "what": "Beyond the track ribbon and one gravel band, there is nothing in this frame that says 'ordinary house' — the background collapses to a black void above the kerb, so the toy-scale premise (furniture, skirting board, floor, household clutter for scale reference) is entirely absent and the track reads as floating in darkness.",
+      "fix": "Bring at least one recognisable household object into frame at readable scale — a chair leg, book stack, carpet edge, skirting board — and add dim ambient fill so the void reads as a room rather than nothing."
+    },
+    {
+      "category": 1,
+      "severity": "minor",
+      "what": "The car body has a single flat clearcoat response: the blue paint on the rear quarter, the black roof and the tyres all share the same broad, low-contrast highlight character, so rubber, painted metal and glass are not distinguishable as different substances.",
+      "fix": "Separate the roughness values per material — near-mirror clearcoat with sharp highlights on paint, matte high-roughness rubber, and a distinct glass shader with a tighter specular and slight reflection."
+    },
+    {
+      "category": 6,
+      "severity": "minor",
+      "what": "The car is centred low and split by the frame's midline with its nose obscured by its own blown-out headlight glare, so the most readable part of the subject (front end, driver's line into the corner) is destroyed; the corner it is taking exits top-right unread because of the blur.",
+      "fix": "Reframe so the car sits on a third with the corner apex visible and legible ahead of it, and reduce the headlight exposure so the front of the car survives the glare."
+    }
+  ],
+  "worst": "The blur and the blown headlight together hide the frame instead of composing it — an over-cranked tilt-shift smears every environment element into unreadable mush while a flat, shadowless, clipped-white headlight pool erases the track surface, so there is almost no legible surface detail anywhere in the image to judge."
+}

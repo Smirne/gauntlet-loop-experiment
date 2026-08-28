@@ -13,11 +13,14 @@ become false. Both corrections are recorded in place.
 |---|---|---|
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
-| **D52** | the critic score cannot tell a reviewed circuit from an unreviewed one | CRITICAL (method); the `rounds/d28-mush` discriminator decides it |
 | **D53** | the car's shadow carries no shape information | MAJOR; cause narrowed, not found |
+| **D54** | the headlight clips to white at the near end of its own beam | MAJOR; named by 6 of 6 critics on both sides of a controlled round |
 | D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
 | D41 | the macro camera's focus erases the scale cues | **open by design** — left as a question, same reason |
 | D3, D4 | `rubber()` crushes to black; `brushedAluminium` reads blue | status never recorded; needs a look, probably long since fixed |
+
+**D52 is resolved** — the critic score does discriminate, and the scoreboard is not void. What
+it discriminated is the uncomfortable part: see its entry.
 
 Everything else is fixed, retracted, or documented as harness behaviour. Two entries share a
 number by accident and are now **D23a** and **D23b**. D30 and D31 each carry a deliberate
@@ -3056,7 +3059,7 @@ than as a side effect of scene-graph walk order. D50's `prioritise()` gives the 
 that a real policy would need.
 
 
-## D52 — The critic score cannot tell a reviewed circuit from an unreviewed one — CRITICAL (method) — OPEN
+## D52 — The critic score cannot tell a reviewed circuit from an unreviewed one — CRITICAL (method) — RESOLVED (the score works; the answer is the worse one)
 
 Bedroom was to get its first critic round. It got one, and the round is about the critic
 instead.
@@ -3129,6 +3132,61 @@ discriminate. The `rounds/d28-mush` discriminator is still the test that decides
 
 Round record: `rounds/bedroom-r1`. Harness: `tools/critique-round.js`, which will not build a
 round without a control circuit.
+
+---
+
+### Resolved, 28 Aug 2026 — the discriminator ran, and reading 1 is dead
+
+The test was designed at the time this defect was raised and is recorded above: run the same
+brief over frames that are *known* to be worse. Built as `rounds/d52-discriminator` —
+**test: the three 320 px round-trip "mush" frames; control: the three clean originals**, same
+poses, same race moment, same build. One variable, and it is one already proven visible: six
+comparative judges in both orders called clean better **6-0 (p=0.031)**, position balanced
+3/3, zero false differences across three null pairs (`rounds/d28-mush`).
+
+This is a stronger control than the bedroom round had. Bedroom-vs-kitchen confounded *circuit*
+with *review history*; nothing is confounded here.
+
+Six critics, one frame each, blind and shuffled:
+
+| pose | mush | clean | delta | defects m/c | critical m/c |
+|---|---|---|---|---|---|
+| gameplay | 5.00 | 5.50 | −0.50 | 8 / 6 | 1 / 0 |
+| chase | 4.25 | 4.88 | −0.62 | 8 / 8 | 2 / 1 |
+| macro | 4.38 | 5.75 | **−1.38** | 8 / 6 | 2 / 1 |
+| **overall** | **4.54** | **5.38** | **−0.83** | 24 / 20 | 5 / 2 |
+
+**Mush scored lower in 3 of 3 poses and in 8 of 8 categories** — every single category moved in
+the predicted direction, including the four that did not clear the ±1.0 floor. Four did clear
+it: Post & grade (−1.33), Materials & texture (−1.00), Lighting & shadow (−1.00), Geometry &
+silhouette (−1.00).
+
+**Reading 1 is refuted. The absolute critic score is not a constant function, and nothing on
+the scoreboard is void.** The 5.19 stands. Given a genuinely degraded frame the score moves,
+consistently, by about eight tenths of a point.
+
+### Which leaves the reading nobody wanted
+
+**24 rounds of kitchen work produced no gain this instrument can see.** Side by side:
+
+| | mean \|delta\| | direction |
+|---|---|---|
+| mush vs clean | **0.834** | 8 of 8 categories the same way |
+| bedroom vs kitchen | 0.281 | 3 up, 3 down, 2 tied |
+
+There is a third possibility and it deserves naming rather than burying: the instrument's
+sensitivity floor may simply sit *between* "24 rounds of polish" and "a 320 px round trip" —
+working, but too coarse for the differences this loop is trying to produce. That is not
+reading 1, and it would be a comfortable place to land.
+
+**The direction data argues against it.** An instrument that is merely too blunt, pointed at a
+real difference, should still *lean* the right way even when magnitudes stay under the floor —
+exactly as the four sub-floor categories did in the mush round. Bedroom versus kitchen did not
+lean at all: three categories favoured the reviewed circuit, three favoured the unreviewed one,
+two tied. That is not a small signal under a coarse instrument. That is the shape of no signal.
+
+So the honest statement is the harsher one: the critic round can measure, and what it measures
+is that two dozen rounds of review left no mark a blind critic can find.
 
 ---
 
@@ -3325,3 +3383,65 @@ world in the present tense — "the tuned numbers have never once been used and 
 ones win instead", and "Default 0 until a human has judged the frames" — 36 hours after the
 default became 1 and the tuned numbers started shipping. Rewritten to say what the code does,
 and to carry the measurement above so the next widening has to argue past it.
+
+---
+
+## D54 — The headlight is tuned for the far end of its own beam and clips to white at the near end — MAJOR — OPEN
+
+Raised by the D52 discriminator, from evidence it was not looking for.
+
+**Six critics out of six named the headlight**, as the tell or as the single worst problem in
+the frame — and crucially they did so on **both sides of the round**. Three were looking at
+degraded frames, three at clean ones; the degradation is a 320 px round trip and has nothing to
+do with lighting. So this is not an artifact of the test variable. It is a property of the
+build, and it is the most reproducible observation this project has:
+
+> a clipped pure-white blob with no falloff, no cone volume and no reciprocal effect on the car
+> emitting it — *(mush, gameplay)*
+
+> A single unclamped white blob directly in front of the car burns to pure paper-white with no
+> falloff shape, no visible beam cone … No shipped racing title lets a headlight nuke its own
+> road surface like that. — *(clean, gameplay)*
+
+Add the four bedroom critics from `rounds/bedroom-r1`, three of whom named the headlights or the
+missing contact shadow, and this now spans **two circuits, two lighting presets, and both sides
+of a controlled round**.
+
+### The cause is in the code, and the code's own comment contains it
+
+`VehicleVisual.js:1105` sets `s.intensity = this._lampMix * 900`, with this justification:
+
+> Punctual intensity is candela and falls off as distance^decay, so the number that matters is
+> the irradiance where the beam lands: 900 cd at decay 1.6 puts roughly 7 on the road 20 u
+> ahead, which sits alongside Lighting's own lamp rather than blowing straight through the grade.
+
+The arithmetic is right and the reasoning is sound — **for 20 u ahead**. The beam does not start
+at 20 u. At decay 1.6, irradiance ∝ 900 / d^1.6:
+
+| distance ahead | irradiance | against a target of ~7 |
+|---|---|---|
+| 20 u | 7.5 | the tuned figure |
+| 8 u | 32 | 4× over |
+| 5 u | 69 | 9× over |
+| 3 u | 155 | **21× over** |
+
+The near end of the pool — the part directly in front of the car, which is what the camera is
+looking at in every one of these frames — is being driven ten to twenty times past the value the
+comment was aiming for. It clips, and a clipped region has no falloff and no shape by
+definition. Every critic complaint follows from that one number: no falloff, no cone, no beam
+structure, erases the track surface under it.
+
+**And `spot.castShadow = false` (`VehicleVisual.js:739`)**, which is the other half of what they
+reported — *"it does not light the car that emits it or cast the car's own shadow backwards"*.
+That flag is a deliberate cost decision (the comment at `SPOT_BUDGET` explains that every extra
+shadow-casting spotlight recompiles every material in the scene), so it is a trade, not an
+oversight. But it is a trade whose price is now measured: six of six critics noticed.
+
+### Not yet done
+
+Nothing has been changed. The fix is not simply "turn it down" — 900 cd is correct at the far
+end, so lowering it to fix the near end will lose the beam's reach. The candidates are a
+different `decay`, a physically shaped cone with an inner falloff, or a lamp that is clamped in
+the grade rather than in candela. Which one is a look decision, and this project's rule is that
+a look is decided from frames by a human. `?headlight=N` does not exist yet; it should, so the
+options can be rendered from one build at one moment (D25).
