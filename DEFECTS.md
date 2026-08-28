@@ -13,7 +13,7 @@ become false. Both corrections are recorded in place.
 |---|---|---|
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
-| **D53** | the car's shadow carries no shape information | MAJOR; cause narrowed, not found |
+| **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
 | **D54** | the headlight clips to white at the near end of its own beam | MAJOR; named by 6 of 6 critics on both sides of a controlled round. `?headlight=N` and the four-rung ladder now exist; **waiting on a human's look verdict** |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
 | D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
@@ -3386,6 +3386,84 @@ default became 1 and the tuned numbers started shipping. Rewritten to say what t
 and to carry the measurement above so the next widening has to argue past it.
 
 ---
+
+
+### 28 Aug: the shape metric says the shadow is not misshapen. It is nearly absent.
+
+Built `tools/shadow-shape.js` to answer the open question — *is the missing
+quantity contour rather than darkness?* — and the answer at the pose the critics
+were judging is neither. It is light.
+
+**The instrument.** Difference imaging: a shadow is exactly what disappears when
+you switch it off, so render the region with and without each shadow and subtract.
+The residue is that shadow alone — no wood grain, no carpet, no bodywork, no
+headlight spill. Seven variants from one boot at one moment, every render and
+readback inside a single synchronous JS task. The floor is `base` minus `base2`,
+the same render five variants apart: **exactly zero on every statistic**, and the
+two PNGs are byte-identical.
+
+Two designs were thrown away first, and both failures are the reason to trust the
+third:
+
+* Absolute gradient inside the region called **21.3% of it an edge in every
+  variant**, because a fifth of a wooden track at 2560×1440 is grain. Removing
+  the entire contact halo moved that by 0.1. That is a fact about the instrument.
+* The positive control returned **all zeros** on its first paired run: the `cast`
+  flag was being applied to the car's meshes, and the car is hidden in both box
+  variants, so box and box-without-shadow rendered identically. A control that
+  returns zero voids the run. It does not get to be a finding.
+
+**The measurement.** Bedroom, night, chase pose, frame 4428, car centred at NDC
+(0, −0.16) at 87 km/h — the frame family every one of the eight critics was
+looking at. Region is a 24.6 u square of ground centred under the car, with the
+car's own silhouette masked out so this is a question about the ground and not
+about a highlight on a wing mirror.
+
+| isolated by subtraction | area | peak | mean depth | grad p99.9 | sharpness |
+|---|---|---|---|---|---|
+| **floor** (same render twice) | **0** | **0** | **0** | **0** | **0** |
+| contact halo alone | 0.791% | 8.57 | 3.03 | 1.81 | 0.211 |
+| car's cast shadow alone | 1.047% | 14.94 | 3.49 | 2.23 | 0.149 |
+| both of the car's shadows | 1.207% | 15.15 | 5.13 | 3.27 | 0.216 |
+| **box of the car's footprint, in the car's place** | **1.286%** | **14.94** | **2.84** | **2.55** | **0.171** |
+
+*Depths are luma out of 255. `sharpness` is grad p99.9 divided by peak: how much
+of a shadow's own depth turns up inside one pixel at its sharpest, normalised so
+that darker cannot be mistaken for sharper.*
+
+**The car's shadow is not misshapen.** Against a box of its own footprint, standing
+in exactly its place, on exactly the same ground, under exactly the same light and
+the same cascade, the car matches on every axis: peak **14.94 against 14.94**, area
+1.047% against 1.286%, sharpness 0.149 against 0.171. The hypothesis this probe was
+built to test — that the halo buries the cast shadow's contour — is **refuted**:
+the halo is the smallest of the three isolations and removing it changes the region's
+mean luma by 0.23 out of 255.
+
+**What is actually wrong is the size of every number in that table.** The whole
+ground-shadow contribution of a car — halo and cast shadow together — darkens 1.2%
+of the region by a mean of 5 luma and a peak of 15, out of 255. The region's own
+mean is 36 and its darkest pixel is 11.66 **in all seven variants**. Put plainly:
+`base` and `neither` — the shipping frame, and the same frame with both of the car's
+ground shadows switched off — are indistinguishable by eye. There is no light under
+that car for a shadow to remove.
+
+So D53 is not a shadow-shape defect. It is a lighting-level one, and it is the same
+frame as D54: the only strong light in the picture is a headlight pointing forward at
+ground level, which produces almost no downward occlusion beneath the car that casts
+it. Eight critics said the cars look like decals. On this evidence they are describing
+a car sitting on a surface that is already black.
+
+**Limits, stated rather than buried.** One pose, one circuit, one preset. The box
+control loses the headlights, because the spotlights are parented to the car's visual
+root — so its illumination is not identical to the car's, only its geometry, place and
+cascade are. And the box does not cast the crisp rectangle recorded earlier in this
+entry: at this pose it casts almost nothing either, which is consistent with the
+reading above but means the earlier observation was made under conditions I have not
+reproduced and have not re-examined.
+
+**Next:** run the same probe on a daylight circuit. If the numbers scale up with the
+light, "there is nothing to shadow" is confirmed as the mechanism. If they stay at 15
+out of 255 in full sun, this reading is wrong and the contour question is open again.
 
 ## D54 — The headlight is tuned for the far end of its own beam and clips to white at the near end — MAJOR — OPEN
 
