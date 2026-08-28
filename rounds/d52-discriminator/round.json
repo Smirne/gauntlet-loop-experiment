@@ -1,0 +1,55 @@
+{
+ "test": "mush (320 px round trip)",
+ "control": "clean (full detail)",
+ "builtFrom": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/spec-d52.json",
+ "tasks": [
+  {
+   "id": "c01",
+   "side": "control",
+   "circuit": "clean (full detail)",
+   "cell": "chase",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/2-chase-clean.jpg",
+   "answer": null
+  },
+  {
+   "id": "c02",
+   "side": "test",
+   "circuit": "mush (320 px round trip)",
+   "cell": "gameplay",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/1-gameplay-mush.jpg",
+   "answer": null
+  },
+  {
+   "id": "c03",
+   "side": "control",
+   "circuit": "clean (full detail)",
+   "cell": "macro",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/3-macro-clean.jpg",
+   "answer": null
+  },
+  {
+   "id": "c04",
+   "side": "control",
+   "circuit": "clean (full detail)",
+   "cell": "gameplay",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/1-gameplay-clean.jpg",
+   "answer": null
+  },
+  {
+   "id": "c05",
+   "side": "test",
+   "circuit": "mush (320 px round trip)",
+   "cell": "chase",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/2-chase-mush.jpg",
+   "answer": null
+  },
+  {
+   "id": "c06",
+   "side": "test",
+   "circuit": "mush (320 px round trip)",
+   "cell": "macro",
+   "source": "/private/tmp/claude-501/-Users-michele-giacobazzi-Desktop-wspace-welld-gauntlet-loop-experiment--claude-worktrees-gauntlet-loop-experiment-11bcc4/5ded4c28-2ba5-48f4-9795-3416a7837ca6/scratchpad/abval2/3-macro-mush.jpg",
+   "answer": null
+  }
+ ]
+}
