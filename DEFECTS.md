@@ -15,7 +15,7 @@ become false. Both corrections are recorded in place.
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
 | **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
 | **D57** | bedroom is unplayably dark in two places | MAJOR; reported from play with a screenshot. Measured: road-ahead luma swings 37&ndash;172 round the lap, and the first ramp sits in a hole. Same root cause as D53 |
-| **D58** | the game freezes while you drive, up to 5 s | MAJOR; **diagnosed**. Shaders compile on first draw and nothing pre-warms them: `programs` 11&rarr;329 during play, every stall inside `render` on a tick that compiled. Floor 4&ndash;7 ms; `renderer.compile()` does **not** fix it |
+| **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
 | **D56** | eliminated with cars still behind you | MAJOR; reported from play. Ranked on `score`, eliminated on `roadDistance` — the two disagree by design |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
 | D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
@@ -3805,7 +3805,7 @@ hand. Not yet distinguished. The sweep rendered at 1280×720 at pixel ratio 1, n
 ultra path the player sees.
 
 
-## D58 — The game freezes for up to five seconds because it compiles its shaders while you are driving — MAJOR — **DIAGNOSED, NOT FIXED**
+## D58 — The game freezes because respawning a car recompiles every shader in the game — MAJOR — **FIXED** (the blink moved off the light-bearing node)
 
 Reported from a playthrough: *"sometimes the game slows down / get stuck"*. It is not
 a frame-rate dip. It is a **synchronous render stall of half a second to five
@@ -3938,3 +3938,95 @@ this one, but it is the same measurement session and worth recording.
 
 `tools/tick-cost.js` holds both instruments: `run()` for the per-tick sweep and
 `bakeCost()` for the foundry, each with its own floor and control.
+
+---
+
+### The cause, found by following the cache key
+
+The section above stops at "shaders compile during the race" and lists pre-warming
+candidates. All of them were wrong, and the measurement that killed them is worth
+keeping: **a camera flythrough of 32 poses round the whole circuit, rendering each
+through the real render path, compiled exactly ZERO new programs in 91 ms.** If new
+geometry coming into view were the cause, that would have compiled everything. So the
+programs were not being created by *what is on screen*. They were being created by
+something that only happens when the simulation advances.
+
+Toggling one spot light's `visible` and re-rendering, with rendering-twice-unchanged as
+the control:
+
+| action | visible spots | programs |
+|---|---|---|
+| render, nothing changed | 1 | 71 |
+| render, nothing changed | 1 | 71 |
+| **+1 spot visible** | 2 | **105 (+34)** |
+| **+1 spot visible** | 3 | **139 (+34)** |
+| turn that spot back off | 2 | 139 (+0, that variant already existed) |
+
+three builds `NUM_SPOT_LIGHTS` into every shader from the count of *visible* lights, so
+changing that count invalidates the program cache key of every material in the game.
+Confirmed independently by diffing the cache keys across a burst, where two slots in
+the light-count section swap between 7 and 1:
+
+    existing: ...,5,0,7,0,1,0,3,0,1,0,0,2,0,0,0,0,1,134145,srgb,...
+    added:    ...,5,0,1,0,1,0,3,0,1,0,0,2,0,0,0,0,7,134145,srgb,...
+
+**And the thing changing the count was the respawn blink.** `_updateRespawn` did
+
+    this.root.visible = ((this._respawnT * RESPAWN_BLINK_HZ) % 1) < duty;
+
+three gathers lights by walking the scene graph and skipping any subtree whose root is
+invisible. The six headlight spots hang off the car, so hiding the car hid six spot
+lights with it — several times a second, for the 0.6 s of the effect, every time
+anybody in the field respawns. That is the whole shape of the complaint: it is
+*sometimes* because it needs a respawn, and it is *bedroom* because the spots are only
+lit — and therefore only in the light list — at night.
+
+The method's own docstring claimed the blink "costs one boolean, and cannot disturb
+anything it does not own". It owned one boolean and disturbed the entire shader cache.
+That sentence is why nobody looked here: it is a confident, reasonable, wrong assertion
+about blast radius, and it had been sitting in the file the whole time.
+
+**A note on the light census that nearly sent this the wrong way.** A per-tick census of
+the scene's lights showed `spot: 7` identical either side of a +39 burst, which appeared
+to rule the lights out. It was wrong: it tested each light's own `visible` flag and not
+its ancestors'. The renderer skips whole invisible subtrees. A census that does not
+model the traversal it is standing in for is not a census.
+
+### The fix
+
+Two changes in `src/vehicle/VehicleVisual.js`, both keeping the number of visible lights
+constant across a race:
+
+1. `_setBlink(on)` blinks `this.meshes` and never `root` or `body`, so the lights stay
+   in the graph. Verified: all 32 of the car's meshes hide and restore (wheels
+   included), spot count holds at 7 through both states, and a full off/on cycle now
+   creates **0** programs where it used to create 27&ndash;39.
+2. Headlight `visible` is keyed to the **preset's** darkness rather than to `_lampMix`.
+   `_lampMix` is a per-car smoothed ramp that crosses its threshold while you drive;
+   the preset is a property of the track and holds still for the whole race. A daylight
+   track therefore never pays for spot lights at all. `?spotvis=toggle` restores the old
+   behaviour for an A/B — it is a defect switch, not a quality setting.
+
+**Result**, same instrument, same track, same 1500 ticks, fresh boot each time:
+
+| | before | after |
+|---|---|---|
+| programs created during a race | 69 &rarr; 199 (**130**) | 69 &rarr; 85 (**16**) |
+| worst **mid-race** stall | **567 ms** | **71 ms** |
+| p99 tick | 19.8 ms | **10.2 ms** |
+| p50 tick | 4.2 ms | 4.4 ms |
+
+The +58 / +39 / +34 / +27 bursts are gone.
+
+**What is left, honestly.** Tick 0 still costs ~690 ms (+58 programs): the first frame
+ever rendered compiles the base set. That is now a *load* cost paid at the grid rather
+than a freeze in a corner, and it is where a pre-warm would go if one is ever wanted —
+but note that `renderer.compile()` is measured above as no help for it. The texture
+foundry's uninterruptible bakes (up to 344.9 ms) are untouched and remain a separate
+stall source this instrument cannot see. Neither is what the player reported.
+
+**Cost of the fix.** Seven live spot lights instead of one costs about **2.4 ms a
+frame** at 2796x1573, measured interleaved A/B/A/B with both configurations
+pre-compiled: 20.5 / 20.7 ms against 17.9 / 18.4 ms. Only night tracks pay it. Against
+a 567 ms freeze it is not a close call, and it is one line to re-argue if it ever
+matters.

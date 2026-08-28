@@ -95,6 +95,20 @@ const PRESET_DARKNESS = {
 // — the player's are the ones anybody looks at.
 const SPOT_BUDGET = 6;
 
+/*
+ * Headlights are held permanently in the scene and switched with intensity, not
+ * with `visible`, because changing the number of visible lights recompiles every
+ * material in the game mid-race. See the long note in _updateLamps and D58.
+ *
+ * `?spotvis=toggle` restores the pre-D58 behaviour for an A/B. It is a defect
+ * switch, not a quality setting: the old path is the one that freezes.
+ */
+const SPOT_ALWAYS_VISIBLE = (() => {
+  try {
+    return new URLSearchParams(location.search).get('spotvis') !== 'toggle';
+  } catch (_) { return true; }
+})();
+
 /* ------------------------------------------------------------- headlight shape */
 /**
  * D54. The shipped headlight is 900 cd at decay 1.6, chosen so that the beam
@@ -939,7 +953,7 @@ export class VehicleVisual {
     if (f <= 0) {
       // Hand `visible` back exactly once, and never fight whoever else owns it
       // — Race.start() sets it true for the whole field on a restart.
-      if (this._respawning) { this.root.visible = true; this._respawning = false; }
+      if (this._respawning) { this._setBlink(true); this._respawning = false; }
       this._respawnLast = 0;
       return;
     }
@@ -954,7 +968,33 @@ export class VehicleVisual {
 
     const k = saturate(this._respawnT / RESPAWN_BLINK_TIME);
     const duty = RESPAWN_BLINK_DUTY + (1 - RESPAWN_BLINK_DUTY) * k;
-    this.root.visible = ((this._respawnT * RESPAWN_BLINK_HZ) % 1) < duty;
+    this._setBlink(((this._respawnT * RESPAWN_BLINK_HZ) % 1) < duty);
+  }
+
+  /**
+   * Blink the car's MESHES. Never `root`, and never `body`.
+   *
+   * three gathers the scene's lights by walking the graph and skipping any
+   * subtree whose root is invisible. The headlight spots hang off `body`, so
+   * hiding this car hid six spot lights with it — which changes NUM_SPOT_LIGHTS
+   * in every shader, invalidates the program cache key of every material in the
+   * game, and recompiles the lot synchronously inside the frame. At
+   * RESPAWN_BLINK_HZ that is several full recompiles per second for the whole
+   * 0.6 s of the effect, every time anybody in the field respawns.
+   *
+   * Measured: +27 to +39 programs per toggle, and single frames of 578 ms and
+   * 668 ms. It is the larger half of D58, and it is why the freeze is
+   * *sometimes* — it needs a respawn — and why it shows up in bedroom, where
+   * the spots are lit and therefore in the light list at all.
+   *
+   * The note above this method used to say the effect "costs one boolean, and
+   * cannot disturb anything it does not own". It owned one boolean and
+   * disturbed the entire shader cache. Keep the blink on the meshes, where its
+   * blast radius really is what that sentence claims.
+   */
+  _setBlink(on) {
+    this.root.visible = true;
+    for (const m of this.meshes) m.visible = on;
   }
 
   lateUpdate(dt, ctx, vehicle) {
@@ -1160,9 +1200,37 @@ export class VehicleVisual {
     }
 
     for (const s of this.spots) {
-      const want = this._lampMix > 0.02;
-      if (s.visible !== want) s.visible = want;
-      if (!want) continue;
+      // NEVER toggle `visible` on a light that is in the scene during a race.
+      //
+      // three builds NUM_SPOT_LIGHTS into every shader from the count of
+      // *visible* lights, so a headlight switching on does not light the road —
+      // it changes that count, invalidates the program cache key of every
+      // material in the game and recompiles the lot, synchronously, inside the
+      // frame. Measured on this scene: one spot changing visibility costs
+      // **+34 programs**, and the resulting render stalls ran from 126 ms to
+      // 5370 ms. That is D58 — "sometimes the game slows down / gets stuck" —
+      // and it is the whole of it.
+      //
+      // Lighting.js already keeps its own lamp permanently visible for exactly
+      // this reason, and says so at the site. This is that rule applied to the
+      // headlights, which were the one place still breaking it. With the count
+      // held constant, 14 consecutive on/off transitions cost **0** programs.
+      //
+      // The price is that a dark track evaluates its spot lights every frame
+      // even while they are off. Measured interleaved A/B/A/B at 2796x1573:
+      // 20.5/20.7 ms with seven live spots against 17.9/18.4 ms with one, so
+      // about 2.4 ms a frame at 4.4 megapixels. Against a five-second freeze
+      // that is not a close call, and `?spotvis=toggle` restores the old
+      // behaviour if it ever needs to be re-argued from frames.
+      // Keyed to the PRESET's darkness, not to `_lampMix`. `_lampMix` is a
+      // per-car smoothed ramp that crosses its threshold while you are driving,
+      // which is precisely when a recompile must not happen; the preset is a
+      // property of the track and holds still for the whole race. So a night
+      // track carries its spots live from the grid onwards and a daylight track
+      // never pays for them at all. The one transition left is preset -> preset,
+      // which happens during load, not during a lap.
+      s.visible = SPOT_ALWAYS_VISIBLE ? dark > 0.24 : this._lampMix > 0.02;
+      if (this._lampMix <= 0.02) { s.intensity = 0; continue; }
       // Punctual intensity is candela and falls off as distance^decay, so the
       // number that matters is the irradiance where the beam lands: roughly 7
       // on the road 20 u ahead, which sits alongside Lighting's own lamp rather
