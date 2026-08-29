@@ -16,7 +16,7 @@ become false. Both corrections are recorded in place.
 | **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
 | **D57** | bedroom is unplayably dark in two places | MAJOR; **exposure shipped** at 1.20&rarr;1.95, chosen by the user from a rendered ladder. It was the ladder's *control*, not a candidate &mdash; and the most selective thing in it. Needs a playthrough, since a still cannot say whether the rest of the lap is now too bright |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
-| **D56** | eliminated with cars still behind you | MAJOR; **reproduced**. 5 races, 14 eliminations, **5 of them (35.7%) with cars the HUD showed behind the victim**. Worst: a car eliminated from **P2 of 7 with five cars listed behind it**. The elimination scan is correct; the HUD never shows the quantity it uses |
+| **D56** | eliminated with cars still behind you | MAJOR; **FIXED**. Only the standings tail &mdash; the car the HUD shows last &mdash; is now a candidate; the spatial `roadDistance` gap still decides whether it goes. Disagreements **35.7% &rarr; 0%**, elimination count unchanged (14 vs 16 control) |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
 | D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
 | D41 | the macro camera's focus erases the scale cues | **open by design** — left as a question, same reason |
@@ -3680,7 +3680,7 @@ either drive the camera forward during the step or refuse a step larger than the
 settling time.
 
 
-## D56 — You can be eliminated with cars still behind you, because the game ranks you on one quantity and eliminates you on another — MAJOR — **REPRODUCED** (35.7% of eliminations; worst case P2 of 7)
+## D56 — You can be eliminated with cars still behind you, because the game ranks you on one quantity and eliminates you on another — MAJOR — **FIXED** (35.7% -> 0%)
 
 Reported from play: *"sometimes I get eliminated while there are still active cars
 behind me."*
@@ -3816,6 +3816,56 @@ the player never kept pace. That guard is the only reason the fourth, fifth and 
 attempts were not written up as "no disagreement found". A null result from a harness that
 cannot exercise the condition is not evidence of absence, and it looks exactly like
 evidence of absence.
+
+### Fixed: score picks who is asked, the road decides the answer
+
+The user chose the third candidate, with a refinement that makes it better than the one
+I described:
+
+> *"eliminate on the standing order. The rule might be linked to the roadDistance, but
+> only the last car in the current race should be checked for elimination."*
+
+That splits the two quantities into different jobs instead of letting them compete:
+
+* **WHO is a candidate** — the last running car in classification order, which is exactly
+  the car the HUD is showing at the back. Only ever that one car.
+* **WHETHER it goes** — unchanged: the same spatial `roadDistance` gap to the leading
+  runner.
+
+**This answers the objection the file itself raised against the standings order.** The old
+comment rejected it because one moderate cut costs more score than the elimination gap, so
+a car mid-pack in plain view could be taken out for it. Under the split it cannot: being
+bottom of the standings only makes a car *eligible*, and a cut-penalised car still
+physically with the pack fails the spatial gap and survives exactly as before. The
+rejection was right about plain option 3 and does not apply to this.
+
+**Measured**, five races each, three laps, bedroom, player on the same AI as the rivals,
+`?elimrule=road` as the control on the same build:
+
+| | fixed | control (`?elimrule=road`) |
+|---|---|---|
+| eliminations | 14 | 16 |
+| **with cars the HUD showed behind the victim** | **0 (0%)** | **4 (25%)** |
+| worst case | 0 behind | 3 behind |
+| victim was not last on the road | 2 | 0 |
+
+The first pre-fix run measured 5 of 14 (35.7%) on the same probe. The control run confirms
+the flag flips the behaviour on one build rather than the difference coming from anywhere
+else.
+
+Two things worth reading off that table honestly:
+
+* **The field still culls.** 14 eliminations against the control's 16 — the worry that
+  protecting the standings tail would stall the cull did not materialise at this gap.
+  Not zero cost, but not a stalled race either.
+* **The victim was not last on the road twice out of fourteen.** That is the intended
+  consequence, not a regression: a car adrift at the back of the road but not bottom of
+  the standings is no longer taken out, because the screen was not calling it last. It is
+  the exact trade the user asked for, and it is now the direction the surprise runs — the
+  game can spare a car the road would have cut, but it can no longer cut a car the screen
+  said was ahead of somebody.
+
+`?elimrule=road` restores the pre-D56 behaviour for an A/B.
 
 ## D57 — Bedroom is unplayably dark in two places, and the first ramp is one of them — MAJOR — **EXPOSURE SHIPPED**, awaiting a playthrough
 

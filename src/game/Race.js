@@ -116,6 +116,57 @@ const ELIM_LAP_FRACTION = 0.50; // ...or this much of the lap, whichever is larg
 // there yet.
 const ELIM_GRACE_LAPS = 1;
 
+/*
+ * WHICH CAR IS EVEN A CANDIDATE — D56.
+ *
+ * Reported from play as "sometimes I get eliminated while there are still active
+ * cars behind me", and reproduced: across five races, **5 of 14 eliminations
+ * (35.7%)** took a car the HUD was showing with at least one car behind it. The
+ * worst case eliminated a car the screen had running **P2 of 7, with five cars
+ * listed behind it**.
+ *
+ * Neither half was broken. The HUD's number is the `standings` index, sorted by
+ * `score`; elimination scanned for the minimum `roadDistance`. Both are right on
+ * their own terms and both are defended below. What nothing defended was the
+ * pair: the player was shown one order, judged by another, and never shown the
+ * second, so "there were cars behind me" was never a misreading of the screen —
+ * it WAS the screen.
+ *
+ * The fix, chosen by the user:
+ *
+ *     "eliminate on the standing order. The rule might be linked to the
+ *      roadDistance, but only the last car in the current race should be
+ *      checked for elimination."
+ *
+ * So the two quantities now do different jobs instead of competing:
+ *
+ *   WHO is a candidate — the last running car in CLASSIFICATION order, i.e.
+ *   exactly the car the HUD is showing at the back. Only ever that one car.
+ *
+ *   WHETHER it actually goes — still the spatial test it always was, the same
+ *   `roadDistance` gap to the leading runner.
+ *
+ * That ordering matters, and it answers the objection this file used to raise
+ * against the standings order — that one moderate cut costs more score than the
+ * elimination gap, so a car sitting mid-pack in plain view could be taken out
+ * for it. It cannot: being bottom of the standings now only makes a car
+ * ELIGIBLE. A cut-penalised car that is still physically with the pack fails the
+ * spatial gap and survives, exactly as before. Score picks who is asked; the
+ * road decides the answer.
+ *
+ * The residual, stated rather than discovered later: a car that is genuinely
+ * adrift at the back of the ROAD but not bottom of the standings is no longer a
+ * candidate, so the field can cull more slowly. That is measured in D56 rather
+ * than assumed.
+ *
+ * `?elimrule=road` restores the pre-D56 behaviour for an A/B.
+ */
+const ELIM_BY_STANDINGS = (() => {
+  try {
+    return new URLSearchParams(location.search).get('elimrule') !== 'road';
+  } catch (_) { return true; }
+})();
+
 /* -------------------------------------------------------------------- helpers */
 
 function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -1201,15 +1252,22 @@ export class Race {
     // maximum needed nothing at all.
     const order = this.standings;
     let running = 0;
-    let last = null;    // furthest back on the road
-    let ref = null;     // leading car still running, in classification order
+    let roadLast = null;   // furthest back on the ROAD (the pre-D56 candidate)
+    let tail = null;       // last runner in CLASSIFICATION order — what the HUD shows last
+    let ref = null;        // leading car still running, in classification order
     for (let i = 0; i < order.length; i++) {
       const e = order[i];
       if (e.finished || e.eliminated) continue;
       running++;
       if (!ref) ref = e;                                       // standings is sorted
-      if (!last || e.roadDistance < last.roadDistance) last = e;
+      tail = e;                                                // ...so the final one is the tail
+      if (!roadLast || e.roadDistance < roadLast.roadDistance) roadLast = e;
     }
+
+    // D56: only the car the HUD shows at the back is ever a candidate. The
+    // spatial gap below still decides whether it actually goes.
+    const last = ELIM_BY_STANDINGS ? tail : roadLast;
+
     if (running <= ELIM_MIN_REMAINING || !last || !ref || ref === last) return;
 
     if (ref.roadDistance - last.roadDistance < this.elimination.gap) return;
