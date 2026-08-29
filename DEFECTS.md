@@ -16,7 +16,7 @@ become false. Both corrections are recorded in place.
 | **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
 | **D57** | bedroom is unplayably dark in two places | MAJOR; **exposure shipped** at 1.20&rarr;1.95, chosen by the user from a rendered ladder. It was the ladder's *control*, not a candidate &mdash; and the most selective thing in it. Needs a playthrough, since a still cannot say whether the rest of the lap is now too bright |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
-| **D56** | eliminated with cars still behind you | MAJOR; reported from play. Ranked on `score`, eliminated on `roadDistance` — the two disagree by design |
+| **D56** | eliminated with cars still behind you | MAJOR; **reproduced**. 5 races, 14 eliminations, **5 of them (35.7%) with cars the HUD showed behind the victim**. Worst: a car eliminated from **P2 of 7 with five cars listed behind it**. The elimination scan is correct; the HUD never shows the quantity it uses |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
 | D40 | tyre smoke calibration | **open by design** — the dial ships at 0 and the look is a human call |
 | D41 | the macro camera's focus erases the scale cues | **open by design** — left as a question, same reason |
@@ -3680,7 +3680,7 @@ either drive the camera forward during the step or refuse a step larger than the
 settling time.
 
 
-## D56 — You can be eliminated with cars still behind you, because the game ranks you on one quantity and eliminates you on another — MAJOR — OPEN
+## D56 — You can be eliminated with cars still behind you, because the game ranks you on one quantity and eliminates you on another — MAJOR — **REPRODUCED** (35.7% of eliminations; worst case P2 of 7)
 
 Reported from play: *"sometimes I get eliminated while there are still active cars
 behind me."*
@@ -3744,6 +3744,78 @@ player goes, and confirm that cars classified behind the player really were ahea
 of them on the road. Until that is on record, the mechanism above is a reading of
 the source, not a measurement.
 
+
+### Reproduced, with a rate
+
+`tools/elim-probe.js` runs whole races off a synthetic clock and snapshots the field at
+every `race:eliminated`. Five races, three laps, bedroom, player on the same AI the rivals
+use:
+
+| | |
+|---|---|
+| eliminations | 14 |
+| **with cars the HUD showed behind the victim** | **5 (35.7%)** |
+| worst case | victim shown **P2 of 7**, five cars listed behind it |
+| the player hit it | 1 of the 2 times he was eliminated |
+| `roadRuleViolations` | **0** |
+
+That last row is the check, not a finding: the elimination scan claims to take the car
+furthest back on the road, so `roadBehind` must be 0 in every event, and it is. **The scan
+is not broken.** Both halves are individually correct and defended at their sites — score
+carries the cut penalty, which belongs in the classification and would be savage as a
+spatial rule; `roadDistance` is where the car actually is. What nothing defends is the
+pair. The player is shown one order and judged by another, and is never shown the second.
+
+Sample events (`hudPos` is literally the number on screen, since `e.position` is the
+standings index):
+
+    35.4 s  car5   HUD P5 of 8, behind it: car6 car3 car2    road rank 8   ELIMINATED
+    57.9 s  car0   HUD P7 of 8, behind it: car6              road rank 8   ELIMINATED  <- the player
+    79.8 s  car5   HUD P2 of 7, behind it: car1 car6 car2 car0 car4        ELIMINATED
+
+So "there were still cars behind me" is not a misreading of the screen. It is the screen.
+
+**Fix candidates, none implemented — this is a UI decision as much as a rules one.**
+
+1. **Show the quantity that kills you.** Leave both orders alone and put the elimination
+   threat on the HUD: your gap to the cut, or a marker on the car actually last on the
+   road. The rules stay correct and the surprise goes away. Cheapest, and the only one
+   that does not make something else worse.
+2. **Rank the HUD on `roadDistance`.** Then the screen agrees with the rule — but the
+   classification stops reflecting the cut penalty, and a cutter reads as ahead.
+3. **Eliminate on the standings order.** Explicitly rejected at the call site, and the
+   rejection is right: one moderate cut costs more score than the elimination gap, so a
+   car in plain view mid-pack would be taken out for it.
+
+### The harness lesson: three null results that were all the same broken setup
+
+The first run returned **six clean zeroes across six races** — no disagreements at all —
+and it was worthless. The player has no `Driver`: `main.js` builds one for every car
+*except* car 0, because car 0 is the human. With nothing driving it the player's car
+crawled, finishing a 36-second stretch on roadDistance **581** against the leader's
+**2022**, which made it last on *both* orders and made `hudBehind = 0` true for a reason
+that has nothing to do with the question.
+
+Getting an autopilot onto the player took three failed attempts, each of which produced
+the same innocent-looking null:
+
+* `engine.add(driver)` **appends**, so it ran after the vehicles rather than before them
+  like every real driver. The control loop closed on stale state and the steering
+  saturated — throttle 0.98 with steer pinned at 1.0, grinding in place.
+* Disabling Vehicle's `_pollInput` did nothing, because that was never the thing
+  overwriting it.
+* The actual cause: **Input does not merely fail to help, it actively drives the player**,
+  calling `player.setControls(c)` every frame with `this.raw.*` — all zeros when no human
+  is at the keyboard. `Input.js` documents the handoff at the top of the file ("Race can
+  hand the player to an autopilot … Input asks before it writes"), and not accepting is
+  the supported way to take the wheel. `ctx.input.enabled = false` and the pace went from
+  0.26 to 1.00.
+
+The probe now reports `playerPace` and refuses the run as **voided** rather than null when
+the player never kept pace. That guard is the only reason the fourth, fifth and sixth
+attempts were not written up as "no disagreement found". A null result from a harness that
+cannot exercise the condition is not evidence of absence, and it looks exactly like
+evidence of absence.
 
 ## D57 — Bedroom is unplayably dark in two places, and the first ramp is one of them — MAJOR — **EXPOSURE SHIPPED**, awaiting a playthrough
 
