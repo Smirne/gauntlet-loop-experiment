@@ -218,6 +218,22 @@ export async function shapeProbe(opts = {}) {
 
   const refreshShadows = () => {
     for (const c of lighting.cascades) c.light.shadow.needsUpdate = true;
+    // THE LAMP TOO, or this probe cannot see a night shadow at all.
+    //
+    // `lamp.shadow.autoUpdate` is false and `needsUpdate` is set in exactly one
+    // place — `Lighting._updateLamps`, which runs in update(). This probe pauses
+    // the engine and renders directly, so that never runs, and the lamp's shadow
+    // map keeps rendering a world that does not contain the box this probe just
+    // added. On a night preset the lamp IS the caster: the sun cascades sit at
+    // intensity 0.44 and contribute almost nothing.
+    //
+    // Caught by the positive control returning zero. The box darkened the
+    // sampled region from mean 65.04 to 57.73, so it was plainly in frame, yet
+    // toggling its `castShadow` moved the isolate by 0.07 of a code value —
+    // "the box casts no shadow", which is impossible and therefore an
+    // instrument fault rather than a finding. Every night number this probe
+    // produced before this line was added is void for the same reason.
+    if (lighting.lamp?.shadow) lighting.lamp.shadow.needsUpdate = true;
   };
 
   const VARIANTS = [
@@ -316,6 +332,15 @@ export async function shapeProbe(opts = {}) {
   const F = (name) => out.find((r) => r.variant === name).L;
   const RW2 = region.w, RH2 = region.h;
   const floorDelta = opts.floorDelta ?? 1;
+  // `mask: false` measures the SAME frames without excluding the object's own
+  // silhouette. The masked number answers "is there a shadow the player can
+  // see beside the car"; the unmasked one answers "is there a shadow at all".
+  // Running both separates a shadow that is absent from one that exists and
+  // falls entirely underneath the car, and those want completely different
+  // fixes — the first is a shadow-casting problem, the second is a light-angle
+  // one.
+  if (opts.mask === false) objMaskScreen = null;
+
   // One mask for every pairing, in region-local pixels, so all five isolations
   // are computed over the identical pixel set.
   const mask = objMaskScreen

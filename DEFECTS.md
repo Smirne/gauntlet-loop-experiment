@@ -13,7 +13,7 @@ become false. Both corrections are recorded in place.
 |---|---|---|
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
-| **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
+| **D53** | the car's cast shadow lands entirely under the car | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
 | **D57** | bedroom is unplayably dark in two places | MAJOR; **exposure shipped** at 1.20&rarr;1.95, chosen by the user from a rendered ladder. It was the ladder's *control*, not a candidate &mdash; and the most selective thing in it. Needs a playthrough, since a still cannot say whether the rest of the lap is now too bright |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
 | **D56** | eliminated with cars still behind you | MAJOR; **FIXED**. Only the standings tail &mdash; the car the HUD shows last &mdash; is now a candidate; the spatial `roadDistance` gap still decides whether it goes. Disagreements **35.7% &rarr; 0%**, elimination count unchanged (14 vs 16 control) |
@@ -3197,7 +3197,7 @@ is that two dozen rounds of review left no mark a blind critic can find.
 
 ---
 
-## D53 — The contact shadow is present, measured, and invisible to every critic — MAJOR — OPEN
+## D53 — The contact shadow is present, measured, and invisible to every critic — MAJOR — **EXPLAINED**: the cast shadow exists and lands entirely under the car
 
 D52 closed with a lead rather than a finding: three of four bedroom critics named the missing
 contact shadow or the headlights as the worst thing in the frame, and one made a checkable
@@ -3503,6 +3503,70 @@ reproduced and have not re-examined.
 **Next:** run the same probe on a daylight circuit. If the numbers scale up with the
 light, "there is nothing to shadow" is confirmed as the mechanism. If they stay at 15
 out of 255 in full sun, this reading is wrong and the contour question is open again.
+
+### Re-measured after the exposure change — and the instrument was wrong
+
+Two findings, and the second one invalidates work.
+
+**1. The probe could not see a night shadow at all.** `shadow-shape.js` refreshed the sun
+cascades between variants and never touched the lamp. `lamp.shadow.autoUpdate` is false and
+`needsUpdate` is set in exactly one place, `Lighting._updateLamps`, which runs in update() —
+and the probe pauses the engine and renders directly, so it never ran. The lamp's shadow map
+therefore kept rendering a world that did not contain the box the probe had just added. On a
+night preset the lamp IS the caster: the sun cascades sit at intensity 0.44 and contribute
+almost nothing.
+
+Caught by the positive control returning zero. The box darkened the sampled region from mean
+65.04 to 57.73, so it was plainly in frame, and toggling its `castShadow` still moved the
+isolate by 0.07 of a code value. "The box casts no shadow" is impossible, so it was an
+instrument fault and not a finding. **Every night number this probe produced before the fix
+is void, including the ones in the section above.** The daylight kitchen numbers are
+unaffected — the cascades are the caster there and they were always refreshed.
+
+**2. With the control working, the shadow is not absent. It is underneath the car.**
+Same session, same pose, floor 0 in both columns; `mask: false` measures the same frames
+without excluding the car's own screen silhouette:
+
+| isolated by subtraction | beside the car (masked) | anywhere (unmasked) |
+|---|---|---|
+| **floor** (same render twice) | **0** | **0** |
+| contact halo alone | 0.423%, peak 27.36 | 0.339%, peak 27.36 |
+| **the car's cast shadow alone** | **0, peak 0** | **0.877%, peak 70.33** |
+| box of the car's footprint (control) | 0.049%, peak 25.88 | 1.159%, peak 37.31 |
+
+The cast shadow is there — 0.877% of the region at peak 70.33 — and **not one pixel of it
+falls outside the car's own silhouette**. So D53 is neither "missing" nor "misshapen" nor,
+as the previous pass concluded, "nearly absent". It is rendered correctly and lands where
+nobody can see it.
+
+**The mechanism is arithmetic, not a bug.** The lamp sits at `offset: [-118, 205, -92]`:
+149.6 u horizontally, 205 u up, an elevation of **53.9°**. A shadow is then
+`horizontal / vertical` = **0.73x the caster's height** — about 1.8 u for a car that is 9.12 u
+long and 4.11 u wide. It cannot reach out from under the car. The 3.6 u box escapes slightly,
+which is exactly why the control reads 0.049% masked against the car's 0.
+
+    y = 205  ->  53.9 deg  ->  shadow 0.73x height   <- ships
+    y = 150  ->  45.1 deg  ->  shadow 1.00x height
+    y = 110  ->  36.3 deg  ->  shadow 1.36x height
+    y =  80  ->  28.1 deg  ->  shadow 1.87x height
+
+**The exposure change helped the halo and did nothing for the cast shadow.** Within one
+session at a fixed pose, lifting exposure 1.20 -> 1.95 took the contact halo's peak from
+68.72 to 107.35, and left the cast shadow at 0 either way. That is consistent: exposure
+cannot reveal a shadow that is geometrically hidden.
+
+**Fix candidates, none implemented — this is a look decision like D57.**
+
+1. **Lower the lamp.** `y` 205 -> ~110 puts the elevation at 36° and the shadow at 1.36x
+   height, which reaches clear of the car. It also moves the lamp's pool and relights the
+   whole room, so it is a different night, not a tuning value.
+2. **Leave it and let the contact halo be the grounding.** Defensible: 53.9° is a plausible
+   angle for a bedside lamp, the halo is already doing the work, and the critics' complaint
+   may be about the halo's strength rather than the cast shadow's absence.
+3. **Both** — a lower lamp plus a weaker halo, since a real cast shadow would make the
+   current halo read as double.
+
+Worth putting to the user as a rendered ladder, the way D57 was. Nothing ships until then.
 
 ## D54 — The headlight is tuned for the far end of its own beam and clips to white at the near end — MAJOR — **FIXED** (ships at N=1, decay 0.6)
 
