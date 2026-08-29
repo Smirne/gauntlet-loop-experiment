@@ -256,6 +256,38 @@ function clampFogDensity(v) {
  *    the additive veil in `backdrop` (window, haze, shafts, dust) is cut, since
  *    that is what turns a bright frame milky rather than merely bright.
  */
+/*
+ * NIGHT EXPOSURE — D57.
+ *
+ * bedroom was unplayably dark in two places and the first ramp was one of them:
+ * road-ahead luma swings 37-172 round the lap and the ramp at t = 0.148 sits in
+ * the trough. Four ways of lifting it were rendered from one boot at one moment
+ * and put to the user as frames — see D57 and tools/dark-ladder.js — because
+ * "brighter" is not one option, it is several, and they are different games at
+ * night.
+ *
+ * He picked exposure, which had been in that ladder as the POSITIVE CONTROL and
+ * not as a candidate at all. That is a better answer than the ones I proposed,
+ * and the numbers agree after the fact: of everything measured it was the most
+ * selective, lifting the road 1.55x against the carpet's 1.31x, where "light
+ * only the road" managed 1.97x against 2.53x — it brightened the room MORE than
+ * the road, because bloom spreads an emissive surface. Exposure is also the only
+ * one that adds no light to the rig at all: the scene is unchanged and the same
+ * photons are simply mapped further up the curve, so nothing about the lamp's
+ * direction, falloff or shadow character moves.
+ *
+ * `?nightexp=1.2` restores the old value for an A/B.
+ */
+const NIGHT_EXPOSURE = (() => {
+  const SHIPPED = 1.95;
+  try {
+    const v = new URLSearchParams(location.search).get('nightexp');
+    if (v === null || v === '') return SHIPPED;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.min(4, n) : SHIPPED;
+  } catch (_) { return SHIPPED; }
+})();
+
 export const LIGHT_PRESETS = {
   // Window light raking across a breakfast table, and the preset the flagship
   // track runs. Warm key low in the west, cool *room* fill, warm bounce off the
@@ -457,7 +489,8 @@ fog: { color: 0x92979e, density: 0.00060 },
   nightLamp: {
     id: 'nightLamp',
     look: 'nightLamp',
-    exposure: 1.20,
+    // Was 1.20, which is what made the first ramp unreadable. See NIGHT_EXPOSURE.
+    exposure: NIGHT_EXPOSURE,
     sun: { color: 0x7286c8, intensity: 0.44, elevation: 34, azimuth: 122 },
     fill: { sky: 0x3a4874, ground: 0x2a221b, intensity: 0.26 },
     bounce: { color: 0xffb473, intensity: 0.22, elevation: -18, azimuth: 52 },

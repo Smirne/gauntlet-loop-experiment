@@ -14,7 +14,7 @@ become false. Both corrections are recorded in place.
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
 | **D53** | the car's shadow is nearly absent, not misshapen | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
-| **D57** | bedroom is unplayably dark in two places | MAJOR; reported from play with a screenshot. Luma swings 37&ndash;172 round the lap and the first ramp sits in the hole. **Four candidates rendered and put to the user**; none is selective, and the one I meant to recommend lifts the carpet *more* than the road |
+| **D57** | bedroom is unplayably dark in two places | MAJOR; **exposure shipped** at 1.20&rarr;1.95, chosen by the user from a rendered ladder. It was the ladder's *control*, not a candidate &mdash; and the most selective thing in it. Needs a playthrough, since a still cannot say whether the rest of the lap is now too bright |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
 | **D56** | eliminated with cars still behind you | MAJOR; reported from play. Ranked on `score`, eliminated on `roadDistance` — the two disagree by design |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
@@ -3745,7 +3745,7 @@ of them on the road. Until that is on record, the mechanism above is a reading o
 the source, not a measurement.
 
 
-## D57 — Bedroom is unplayably dark in two places, and the first ramp is one of them — MAJOR — OPEN (candidates rendered; waiting on a look decision)
+## D57 — Bedroom is unplayably dark in two places, and the first ramp is one of them — MAJOR — **EXPOSURE SHIPPED**, awaiting a playthrough
 
 Reported from a playthrough, with a screenshot: *"some places are too dark, it's
 hard to see"*, then *"the initial ramp is all dark"*. In the frame supplied, the
@@ -3850,6 +3850,32 @@ judge cannot flip between is not a comparison:
     https://claude.ai/code/artifact/9f5ed7f7-1e8e-4805-bc54-9fe95b50a950
 
 Not yet answered. Nothing ships here until it is.
+
+### Shipped: exposure, which was in the ladder as the control
+
+The user picked **exposure**, and `nightLamp` now runs at **1.95** instead of 1.20
+(`?nightexp=1.2` reverts). It was in the ladder as the POSITIVE CONTROL — a change that
+cannot fail to be visible, there so the run could detect its own failure — and not as a
+candidate at all. It is a better answer than any of the three I proposed, and the numbers
+agree after the fact:
+
+* **It was the most selective thing measured.** Road 1.55x against carpet 1.31x. The
+  option I intended to recommend, "light only the road", managed 1.97x against **2.53x** —
+  it brightened the room *more* than the road, because bloom spreads an emissive surface.
+* **It adds no light to the rig.** The scene is unchanged; the same photons are mapped
+  further up the tone curve. Nothing about the lamp's direction, falloff, cone or shadow
+  character moves, which is exactly what "keep the night mood" was supposed to protect and
+  what every other candidate would have disturbed.
+
+The lesson worth keeping: **the control was the answer.** It was in the ladder only to
+prove the instrument worked, and I had not thought of it as an option because I was
+looking for somewhere to add light rather than for a way to spend the light already there.
+A ladder that carries a proper control gets one extra candidate for free, and it is the
+one nobody proposed.
+
+**Not finished.** A still frame cannot say whether the bright stretches of the lap
+(t = 0.35 read 172 before this change) are now blown out. That needs driving, and until
+someone has driven it this is shipped-but-unverified rather than fixed.
 
 ## D58 — The game freezes because respawning a car recompiles every shader in the game — MAJOR — **FIXED** (the blink moved off the light-bearing node)
 
