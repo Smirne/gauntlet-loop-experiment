@@ -13,7 +13,7 @@ become false. Both corrections are recorded in place.
 |---|---|---|
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
-| **D53** | the car's cast shadow lands entirely under the car | MAJOR; measured against a box control at a byte-identical floor. Reframed 28 Aug: a lighting-level problem, not a shape one. Needs a daylight replication |
+| **D53** | the car's cast shadow lands entirely under the car | MAJOR; **explained, waiting on a look decision**. The shadow is 233 px of a 1600&times;900 frame, all of it inside the car's own outline &mdash; the arithmetic of a lamp 53.9&deg; up. A rendered ladder puts four lower lamps to the user, brightness-matched, with the cast shadow isolated and counted (110 &rarr; 19&times;, 80 &rarr; 29&times;). *Leave it* is on the page as an explicit outcome |
 | **D57** | bedroom is unplayably dark in two places | MAJOR; **exposure shipped** at 1.20&rarr;1.95, chosen by the user from a rendered ladder. It was the ladder's *control*, not a candidate &mdash; and the most selective thing in it. Needs a playthrough, since a still cannot say whether the rest of the lap is now too bright |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
 | **D56** | eliminated with cars still behind you | MAJOR; **FIXED**. Only the standings tail &mdash; the car the HUD shows last &mdash; is now a candidate; the spatial `roadDistance` gap still decides whether it goes. Disagreements **35.7% &rarr; 0%**, elimination count unchanged (14 vs 16 control) |
@@ -3567,6 +3567,61 @@ cannot reveal a shadow that is geometrically hidden.
    current halo read as double.
 
 Worth putting to the user as a rendered ladder, the way D57 was. Nothing ships until then.
+
+
+### The ladder, rendered — `tools/shadow-ladder.js`
+
+https://claude.ai/code/artifact/d9e0bff5-9b7c-45eb-b7e7-e124c74b1ea7
+
+One boot, one moment (t = 0.280, race clock 11.77 s, frame 952, the shipped race camera at
+94 out / 77 up), 14 rows in one synchronous task. **The candidates are unchanged; what is new
+is that the cast shadow is now counted rather than looked at.**
+
+**Each height was rendered twice — once normally, once with the car's 16 shadow casters off.
+The difference between the two IS the car's cast shadow, and nothing else.**
+
+| lamp y | elevation | shadow len | irradiance | ground luma | frame luma | cast shadow |
+|---|---|---|---|---|---|---|
+| **205 (ships)** | 53.9 deg | 0.73x | 5.60 | 131.95 | 139.41 | **233 px** (0.016 %) |
+| 150 matched | 45.1 deg | 1.00x | 7.80 | 130.51 (-1.44) | 137.23 | **233 px** |
+| 110 matched | 36.3 deg | 1.36x | 11.64 | 130.25 (-1.70) | 134.56 | **4 498 px (19x)** |
+| 80 matched | 28.1 deg | 1.87x | 16.89 | 129.63 (-2.32) | 130.71 | **6 676 px (29x)** |
+| floor for this count | | | | | | **4 px** |
+
+So the arithmetic above is confirmed by pixels: at 45 deg the shadow is still entirely under
+the car (the *same* 233 px), and 36 deg is the first height where any of it gets out.
+
+**The ladder was wrong once before it was right, and the mistake is the reusable part.**
+Lowering the lamp does not only lengthen the shadow — it drops the light. Uncompensated, the
+ground under the car loses 21.8 / 43.4 / 60.8 luma at y = 150 / 110 / 80. A human flipping
+between those frames is judging *dimmer*, not *longer shadow*, and would answer about the
+wrong variable with complete confidence. So every lowered lamp now also gets a twin with
+`irradiance` solved by iteration until the ground band is back within 2 % of shipped (5.6 ->
+7.80 / 11.64 / 16.89), and the raw rows are kept beside them so the cost stays visible.
+
+**A chooser that changes two things at once is not a chooser. It is a leading question.**
+
+Solved against *whole-frame* luma instead, at a darker pose, none of the three converged: y110
+and y80 ran irradiance to a 35x clamp and moved the frame mean from 28.0 to only 32.0 against
+a target of 55.1. That is worth keeping too — a low lamp does not dim the room evenly, it
+concentrates the light into a small pool that blows out long before the rest of the room
+lifts. Hence the match is solved on the ground band and the frame mean is reported unmatched.
+
+**Floor and control.** Control (`nohalo`, the contact halo off): mean per-pixel delta 0.6857,
+about 980x the floor. Floor (`base` rendered again at the end): 752 of 1 440 000 pixels differ,
+mean 1.27 levels, 0.0007 overall — **not byte-identical**, and zeroing film grain plus settling
+the texture drafts did not close it. The residual is unexplained and is written down rather
+than rounded away; it sits three orders of magnitude below everything being compared.
+
+**Where the pose came from.** The first two attempts drove the car with no Driver, so `Input`
+wrote all-zero controls every frame (see `tools/elim-probe.js`) and the car crawled: 6 000
+ticks, `ok: false`, stopping at t = 0.2737 on a frame with a mean luma of 55 against 135 the
+time before — a different, darker part of the room reached by accident. With a borrowed
+Driver it reaches t = 0.280 in 952 ticks, and does so identically across two separate boots.
+The ladder now throws instead of rendering a pose it did not reach.
+
+**Still a look decision, still the user's.** Option 2 (leave it) is on the page as an explicit
+outcome: D53 was reported as a missing shadow and the shadow is not missing.
 
 ## D54 — The headlight is tuned for the far end of its own beam and clips to white at the near end — MAJOR — **FIXED** (ships at N=1, decay 0.6)
 
