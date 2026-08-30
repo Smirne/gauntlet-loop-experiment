@@ -14,7 +14,7 @@ become false. Both corrections are recorded in place.
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
 | **D53** | the car's cast shadow lands entirely under the car | MAJOR; **explained, waiting on a look decision**. The shadow is 233 px of a 1600&times;900 frame, all of it inside the car's own outline &mdash; the arithmetic of a lamp 53.9&deg; up. A rendered ladder puts four lower lamps to the user, brightness-matched, with the cast shadow isolated and counted (110 &rarr; 19&times;, 80 &rarr; 29&times;). *Leave it* is on the page as an explicit outcome |
-| **D57** | bedroom is unplayably dark in two places | MAJOR; **exposure shipped** at 1.20&rarr;1.95, chosen by the user from a rendered ladder. It was the ladder's *control*, not a candidate &mdash; and the most selective thing in it. Needs a playthrough, since a still cannot say whether the rest of the lap is now too bright |
+| **D57** | bedroom is unplayably dark in two places | MAJOR; **exposure shipped at 1.20&rarr;1.95 and the choice was made on one pose**. Measured since across 24 points of the lap: ground luma spans 20.5..205.5, 11 of 24 frames are >20% crushed, and the worst (80% crushed) was never in the ladder. The lift buys the dark end a median of 12&rarr;21 and costs the bright end 13&times; its clipping. A global multiplier cannot serve a 185-luma range. Needs the playthrough, and probably a local instrument instead |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
 | **D56** | eliminated with cars still behind you | MAJOR; **FIXED**. Only the standings tail &mdash; the car the HUD shows last &mdash; is now a candidate; the spatial `roadDistance` gap still decides whether it goes. Disagreements **35.7% &rarr; 0%**, elimination count unchanged (14 vs 16 control) |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
@@ -3986,7 +3986,7 @@ Two things worth reading off that table honestly:
 
 `?elimrule=road` restores the pre-D56 behaviour for an A/B.
 
-## D57 — Bedroom is unplayably dark in two places, and the first ramp is one of them — MAJOR — **EXPOSURE SHIPPED**, awaiting a playthrough
+## D57 — Bedroom is unplayably dark in two places, and the first ramp is one of them — MAJOR — **EXPOSURE SHIPPED ON HALF THE EVIDENCE**; the ladder only ever rendered the dark end
 
 Reported from a playthrough, with a screenshot: *"some places are too dark, it's
 hard to see"*, then *"the initial ramp is all dark"*. In the frame supplied, the
@@ -4117,6 +4117,72 @@ one nobody proposed.
 **Not finished.** A still frame cannot say whether the bright stretches of the lap
 (t = 0.35 read 172 before this change) are now blown out. That needs driving, and until
 someone has driven it this is shipped-but-unverified rather than fixed.
+
+
+### The exposure was shipped on half the evidence — `tools/night-range.js`
+
+Raised by the user looking at the D53 pictures: *"all images seem much bright in comparison
+with the dark parts, isn't the contrast too much? Maybe I should play the track again?"*
+
+Yes to both, and the reason is a hole in the ladder I built.
+
+**The D57 ladder rendered one pose: t = 0.152, the darkest place measured.** Every candidate
+was judged on how well it rescued a trough. Nothing in it showed what any candidate did to the
+bright end of the same lap, so "exposure is the most selective option" was a claim about one
+frame that I generalised to the whole track. It does not survive the other frames.
+
+**The lap at the shipped exposure (measured 2.028), 24 evenly spaced points, one boot:**
+
+| | value |
+|---|---|
+| ground-band luma across the lap | **20.5 .. 205.5** — a span of 185 of 255 |
+| sample points with >20% of the frame crushed below 32 | **11 of 24** |
+| worst point, t = 0.875 | **80.2% crushed**, frame median luma **13**, ground mean 20.5 |
+| the one point that clips, t = 0.333 | 3.4% of frame, **15.3% of the ground band** |
+
+The dark stretch D57 was raised about is still there. t = 0.167 sits at 44% crushed; the
+*worst* place on the lap, t = 0.83..0.96, was never in the D57 ladder at all and runs 59% /
+80% / 59% / 64% crushed.
+
+**Exposure cannot reach it, and the ramp says so. Both ladders floor at 0.00.**
+
+At the dark end (t = 0.856):
+
+| exposure | frame mean | median | crushed |
+|---|---|---|---|
+| 1.20 | 27.5 | 12 | 79.7% |
+| 1.55 | 33.6 | 15 | 72.3% |
+| **1.95 (ships)** | 40.8 | 21 | **64.1%** |
+| 2.35 | 48.3 | 28 | 53.9% |
+
+At the bright end (t = 0.313), the same ramp, the same boot:
+
+| exposure | ground mean | ground clipped |
+|---|---|---|
+| 1.20 | 135.5 | 0.29% |
+| 1.55 | 157.5 | 1.47% |
+| **1.95 (ships)** | 177.8 | **3.79%** |
+| 2.35 | 194.0 | 5.72% |
+
+**So the change buys the dark end a median of 12 -> 21 — still unreadable — and costs the
+bright end 13x its clipping.** Side by side, 1.20 at t = 0.313 still reads as a night carpet
+with a blue car and a legible chequer; 1.95 reads as a cream daylight frame with a white car
+and half the chequer gone. That is not a tuning error. **A global multiplier moves both ends
+of a 185-luma range together, and this track has too much range for one number.**
+
+**And it explains the question that started this.** The D53 frames are at t = 0.280, which
+sits directly beside the lap's brightest point. They are not representative of the bedroom;
+they are representative of its bright quarter.
+
+**What this does NOT say.** It does not say 1.95 is worse than 1.20 overall — that is a look
+judgement across a whole lap and belongs to a playthrough, which is exactly what D57 has been
+waiting on. It says the evidence the choice was made from could not have supported it either
+way, because the bright end was never rendered.
+
+**Instruments.** `tools/night-range.js` — `range()` walks the lap at the shipped preset and
+reports per-point percentiles (a mean cannot tell "evenly lit at 140" from "half crushed, half
+clipped, averaging 140", and those are opposite answers to a contrast question).
+`exposures({t})` runs the ramp at one pose with the first value repeated last as a floor.
 
 ## D58 — The game freezes because respawning a car recompiles every shader in the game — MAJOR — **FIXED** (the blink moved off the light-bearing node)
 
