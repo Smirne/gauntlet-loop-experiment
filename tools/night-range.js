@@ -19,6 +19,23 @@
 //                trade is visible: an exposure that rescues the trough is the
 //                same exposure that blows the peak.
 //
+//   profiles()   the same lap walk, once per candidate rig. This is the one that
+//                answers a brief rather than a question. The user's brief, after
+//                a test drive: "the contrast is too strong... there are parts
+//                where you pass from very low light to strong light very
+//                quickly... I like the dark parts and the headlights, so I'd
+//                stay more on the dark side, with no place under very strong
+//                light (but without getting the darkest spots even more dark)."
+//
+//                That is three separate statistics, and they are scored as three:
+//                  ceiling  the lap's brightest ground reading   -> must come DOWN
+//                  floor    the lap's darkest ground reading     -> must NOT come down
+//                  jump     the biggest step between adjacent    -> should come down
+//                           sample points, i.e. how fast the
+//                           light changes as you drive
+//                A change that improves one by wrecking another is not a fix, and
+//                a single mean would have hidden all three.
+//
 // D57's original numbers — road-ahead luma 37..172 round the lap — were taken at
 // exposure 1.20. They do not describe the build any more. These do.
 //
@@ -48,7 +65,24 @@ async function stage() {
 
   engine.stop();
   if (engine.paused) engine.resume('nightrange');
-  MG.ctx.race.start();
+
+  // A LAP WALK NEEDS THE CAR TO KEEP DRIVING, so the race rules that stop it are
+  // switched off for the duration.
+  //
+  // This is not tidiness. The first version of profiles() died on
+  // "never crossed the start line in 20000 ticks" and the reason was that the
+  // player had been ELIMINATED: an eliminated car's `trackT` never changes
+  // again, so the walk sat there for 333 seconds of race time watching a frozen
+  // number. Three laps also simply end the race. Neither shows up as an error
+  // anywhere — the walk just quietly never advances — which is why both are
+  // disabled explicitly and asserted afterwards rather than hoped for.
+  const race = MG.ctx.race;
+  race.restart();
+  const elimWas = race.elimination.enabled;
+  const lapsWas = race.totalLaps;
+  race.elimination.enabled = false;
+  race.totalLaps = 999;
+  race.start();
 
   const { Driver } = await import('/src/ai/Driver.js');
   const already = (MG.ctx.drivers || []).some((d) => d.vehicle === car);
@@ -75,6 +109,8 @@ async function stage() {
   };
 
   const restore = () => {
+    race.elimination.enabled = elimWas;
+    race.totalLaps = lapsWas;
     if (grain) grain.value = grainWas;
     if (borrowed) {
       try { borrowed.dispose?.(); } catch (_) { /* nothing owns it but us */ }
@@ -84,7 +120,21 @@ async function stage() {
     engine.start();
   };
 
-  return { MG, engine, renderer, canvas, car, tick, restore, drafts: drafts.length ?? 0 };
+  // Put the race back on the grid with the walk's rules applied. Called before
+  // every rig, not once, for two reasons. The obvious one: something in the race
+  // puts the state back to `results` mid-run — measured, with elimination off and
+  // totalLaps at 999 — and a walk against a finished race watches a parked car.
+  // The better one: restarting per rig means every rig is driven from identical
+  // starting conditions with the same seed, so the laps are comparable as laps
+  // and not just as statistics.
+  const freshRace = () => {
+    race.restart();
+    race.elimination.enabled = false;
+    race.totalLaps = 999;
+    race.start();
+  };
+
+  return { MG, engine, renderer, canvas, car, race, tick, restore, freshRace, drafts: drafts.length ?? 0 };
 }
 
 /**
@@ -168,11 +218,21 @@ export async function range(opts = {}) {
     // are a start-line camera rather than a racing one.
     for (let i = 0; i < 180; i++) { S.tick(); ticks++; }
 
+    // Wait for the start line first — see the note in profiles(). Starting a
+    // walk mid-lap fires every remaining boundary in consecutive ticks.
+    let prevT = S.car.trackT ?? 0;
+    let wrapped = false;
+    while (!wrapped && ticks < maxTicks) {
+      S.tick(); ticks++;
+      const t = S.car.trackT ?? 0;
+      if (t < prevT - 0.5) wrapped = true;
+      prevT = t;
+    }
+
     while (next < N && ticks < maxTicks) {
       S.tick(); ticks++;
       const t = S.car.trackT ?? 0;
-      // trackT wraps; take a sample the first time we are past each boundary.
-      if (t >= want[next] || (next > 0 && t < want[next - 1] - 0.5)) {
+      if (t >= want[next]) {
         rows.push({
           t: +t.toFixed(4),
           lap: S.car.lap ?? null,
@@ -204,6 +264,331 @@ export async function range(opts = {}) {
     crushing: rows.filter((r) => r.frame.crushed > 20).map((r) => ({ t: r.t, crushed: r.frame.crushed, mean: r.frame.mean })),
     clipping: rows.filter((r) => r.frame.clipped > 2).map((r) => ({ t: r.t, clipped: r.frame.clipped, mean: r.frame.mean })),
     rows,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 1b. the same lap, once per candidate rig                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The candidates, as functions over the preset. Everything here is a rig change
+ * except `tone`, which swaps the tone-mapping curve on the renderer itself.
+ *
+ * ACES (what ships) has a short shoulder: it rolls off late and hard, so a lamp
+ * pool goes from bright to paper-white over a small range of input. AgX has a
+ * much longer shoulder and desaturates as it approaches white, which is exactly
+ * the "no place under very strong light" half of the brief — and, unlike an
+ * exposure cut, it does almost nothing to the toe, which is the "don't make the
+ * dark parts darker" half.
+ */
+export const RIGS = [
+  { name: 'ships', label: 'what ships now', apply: () => {} },
+
+  // The question actually asked: what does lowering the lamp do to the lap?
+  { name: 'y150', label: 'lamp 205 -> 150', apply: (P) => { P.lamp.offset = [-118, 150, -92]; } },
+  { name: 'y110', label: 'lamp 205 -> 110', apply: (P) => { P.lamp.offset = [-118, 110, -92]; } },
+  { name: 'y80', label: 'lamp 205 -> 80', apply: (P) => { P.lamp.offset = [-118, 80, -92]; } },
+
+  // VOID — DO NOT READ THESE AS A RESULT.
+  //
+  // Swapping `renderer.toneMapping` does nothing here. PostFX's colour grade
+  // owns the tone map (`_gradeOwnsToneMap` is true, confirmed live) and parks
+  // the renderer on NoToneMapping for the composite, so the curve these rows
+  // select never reaches a pixel. They came back within the floor of `ships`,
+  // which reads exactly like "the tone curve does not help" and is really "the
+  // tone curve was never applied". Kept, labelled, and not deleted, because a
+  // silent false null is the most expensive thing this project keeps producing.
+  // Testing a real shoulder means changing the curve inside the grade pass.
+  { name: 'agx', label: 'VOID — AgX (never reached the pixels)', tone: 'agx', void: true, apply: () => {} },
+
+  // Turn the lamp down instead of moving it. The lamp is what makes the bright
+  // places bright; the dark places are lit by ambient, fill and the sun term,
+  // which the lamp does not touch. So this should pull the ceiling down and
+  // leave the floor where it is — which is the brief.
+  { name: 'lamp25', label: 'lamp irradiance -25%', apply: (P) => { P.lamp.irradiance = 4.20; } },
+  { name: 'lamp40', label: 'lamp irradiance -40%', apply: (P) => { P.lamp.irradiance = 3.36; } },
+  { name: 'lamp55', label: 'lamp irradiance -55%', apply: (P) => { P.lamp.irradiance = 2.52; } },
+
+  // Exposure back to where it was, for the record.
+  { name: 'exp120', label: 'exposure back to 1.20', apply: (P) => { P.exposure = 1.20; } },
+
+  // FLOOR — `ships` again at the end. A lap profile is a statistic over 24 poses
+  // on a live race, so it cannot be byte-identical the way a pinned frame can.
+  // What it CAN do is reproduce, and if it does not, none of the rows above mean
+  // anything.
+  { name: 'ships2', label: 'FLOOR — what ships, again', apply: () => {} },
+];
+
+/**
+ * Walk the lap once per rig and score each against the three-part brief.
+ *
+ * ONE RIG PER TASK, with an await between them. A previous version walked all
+ * nine laps in a single synchronous run and held the main thread for minutes:
+ * nothing could poll it, the pane stopped answering, and the only way out was
+ * to close the tab. Anything that takes minutes has to be observable while it
+ * runs or it cannot be debugged when it goes wrong — and this one WAS wrong.
+ *
+ * The walk also renders at 960x540 rather than full size. Every number here
+ * comes off a 160x90 downsample of the canvas, so the statistic does not care,
+ * and the lap takes roughly a third as long.
+ *
+ * @param {{samples?: number, maxTicks?: number, only?: string[], onRig?: (r: object) => void, rw?: number, rh?: number}} [opts]
+ */
+export async function profiles(opts = {}) {
+  const N = opts.samples ?? 24;
+  const maxTicks = opts.maxTicks ?? 20000;
+  const S = await stage();
+  const read = reader(S.canvas);
+  const THREE = S.MG.THREE;
+  const mod = await import('/src/render/Lighting.js');
+  const P = mod.LIGHT_PRESETS.nightLamp;
+  const pristine = clone(P);
+  const lighting = S.MG.ctx.lighting;
+  const toneWas = S.renderer.toneMapping;
+
+  const prevPR = S.renderer.getPixelRatio();
+  const prevW = Math.round(S.renderer.domElement.width / prevPR);
+  const prevH = Math.round(S.renderer.domElement.height / prevPR);
+  const rw = opts.rw ?? 960, rh = opts.rh ?? 540;
+  S.renderer.setPixelRatio(1);
+  S.renderer.setSize(rw, rh, false);
+  S.engine.onResize?.(rw, rh);
+  S.engine.ctx?.postfx?.notifyCameraCut?.();
+
+  const TONES = {
+    aces: THREE.ACESFilmicToneMapping,
+    agx: THREE.AgXToneMapping,
+    neutral: THREE.NeutralToneMapping,
+  };
+
+  const want = Array.from({ length: N }, (_, i) => i / N);
+  const rigs = opts.only ? RIGS.filter((r) => opts.only.includes(r.name)) : RIGS;
+  const out = [];
+
+  try {
+    for (const rig of rigs) {
+      // Let the browser have the thread back between laps, so this run can be
+      // polled while it works.
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 0));
+      Object.assign(P, clone(pristine));
+      rig.apply(P);
+      lighting.setPreset('nightLamp', { transition: 0 });
+      S.renderer.toneMapping = TONES[rig.tone || 'aces'] ?? toneWas;
+      // A tone-mapping swap recompiles every material; do it before the walk
+      // rather than in the middle of one.
+      S.MG.ctx.scene.traverse((o) => {
+        const m = o.material;
+        if (!m) return;
+        for (const mm of (Array.isArray(m) ? m : [m])) if (mm) mm.needsUpdate = true;
+      });
+      S.engine.syncSystems?.();
+      if (lighting.lamp?.shadow) lighting.lamp.shadow.needsUpdate = true;
+
+      S.freshRace();
+
+      // THREE THINGS HAVE TO HAPPEN BEFORE A SAMPLE IS WORTH TAKING, and each of
+      // them broke a version of this walk:
+      //
+      //  1. THE LIGHTS HAVE TO GO OUT. `race.start()` puts the race on the GRID;
+      //     the state does not become 'racing' until the countdown ends. A walk
+      //     that begins on the grid samples a stationary car under a start-line
+      //     camera.
+      //  2. THE GRID RESET IS NOT A LAP. Restarting drops `trackT` from wherever
+      //     the last rig left it back to the line, which looks exactly like a
+      //     lap wrap — so `prevT` is re-read AFTER the countdown, not before.
+      //  3. THE CAR HAS TO CROSS THE LINE ONCE. Sampling from a standing start
+      //     bunches the first boundaries into consecutive ticks, because the car
+      //     begins just behind t = 0 and is instantly "past" several of them.
+      //
+      // None of these announces itself in the output. Every one of them produces
+      // 24 numbers that look like a lap profile and are not one.
+      let ticks = 0;
+      while (S.race.state !== 'racing' && ticks < maxTicks) { S.tick(); ticks++; }
+      if (S.race.state !== 'racing') throw new Error(`${rig.name}: never left '${S.race.state}'`);
+
+      let prevT = S.car.trackT ?? 0;
+      let wrapped = false;
+      while (!wrapped && ticks < maxTicks) {
+        S.tick(); ticks++;
+        const t = S.car.trackT ?? 0;
+        if (t < prevT - 0.5) wrapped = true;      // crossed the line
+        prevT = t;
+      }
+      if (!wrapped) {
+        const pe = S.MG.ctx.race.entries.find((x) => x.isPlayer);
+        throw new Error(`${rig.name}: never crossed the start line in ${maxTicks} ticks `
+          + `(state=${S.MG.ctx.race.state} eliminated=${!!pe?.eliminated} finished=${!!pe?.finished} t=${(S.car.trackT ?? 0).toFixed(3)})`);
+      }
+
+      // Sample at the FIRST crossing of each boundary, and do not give up if the
+      // car goes backwards. It does: a spin or a respawn drops `trackT`, and an
+      // earlier version treated that as "lapped again" and bailed with 5 of 24
+      // samples. Going round twice to collect 24 first-crossings is fine — the
+      // rig is identical on both laps — so the only thing worth recording is
+      // HOW many laps it took, so a walk that needed three is visible.
+      const rows = [];
+      let next = 0;
+      let laps = 0;
+      while (next < N && ticks < maxTicks) {
+        S.tick(); ticks++;
+        const t = S.car.trackT ?? 0;
+        if (S.race.state !== 'racing') {
+          throw new Error(`${rig.name}: race left 'racing' (now '${S.race.state}') after ${rows.length}/${N} samples `
+            + `— a walk against a parked car is not a lap profile`);
+        }
+        if (t < prevT - 0.5) laps++;
+        if (t >= want[next]) {
+          rows.push({ t: +t.toFixed(4), tick: ticks, frame: read.frame(), ground: read.ground() });
+          next++;
+        }
+        prevT = t;
+      }
+      if (rows.length < N) {
+        const pe = S.MG.ctx.race.entries.find((x) => x.isPlayer);
+        throw new Error(`${rig.name}: only ${rows.length}/${N} samples in ${ticks} ticks `
+          + `(laps=${laps} state=${S.MG.ctx.race.state} eliminated=${!!pe?.eliminated} t=${(S.car.trackT ?? 0).toFixed(3)})`);
+      }
+
+      const g = rows.map((r) => r.ground.mean);
+      let jump = 0, jumpAt = null;
+      for (let i = 1; i < g.length; i++) {
+        const d = Math.abs(g[i] - g[i - 1]);
+        if (d > jump) { jump = d; jumpAt = rows[i].t; }
+      }
+      const sorted = g.slice().sort((a, b) => a - b);
+      const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+
+      out.push({
+        rig: rig.name,
+        label: rig.label,
+        tone: rig.tone || 'aces',
+        exposure: +(S.renderer.toneMappingExposure ?? -1).toFixed(3),
+        lampY: +(lighting.lamp?.position?.y ?? -1).toFixed(0),
+        samples: rows.length,
+        lapsUsed: laps + 1,
+        // THE THREE NUMBERS THE BRIEF ASKS FOR.
+        ceiling: +Math.max(...g).toFixed(1),      // must come DOWN
+        floorLuma: +Math.min(...g).toFixed(1),    // must NOT come down
+        jump: +jump.toFixed(1),                   // should come down
+        jumpAt,
+        span: +(Math.max(...g) - Math.min(...g)).toFixed(1),
+        p10: q(0.10), median: q(0.5), p90: q(0.90),
+        // Where the frame is actually losing information.
+        crushedFrames: rows.filter((r) => r.frame.crushed > 20).length,
+        clippedFrames: rows.filter((r) => r.ground.clipped > 3).length,
+        worstCrush: +Math.max(...rows.map((r) => r.frame.crushed)).toFixed(1),
+        worstClip: +Math.max(...rows.map((r) => r.ground.clipped)).toFixed(1),
+        darkestMedian: rows.reduce((m, r) => (r.ground.mean === Math.min(...g) ? r.frame.median : m), null),
+        rows: rows.map((r) => [r.t, r.ground.mean, r.frame.mean, r.frame.crushed, r.ground.clipped]),
+      });
+      try { opts.onRig?.(out[out.length - 1]); } catch (_) { /* a reporter must not stop the run */ }
+    }
+  } finally {
+    Object.assign(P, clone(pristine));
+    lighting.setPreset('nightLamp', { transition: 0 });
+    S.renderer.toneMapping = toneWas;
+    S.MG.ctx.scene.traverse((o) => {
+      const m = o.material;
+      if (!m) return;
+      for (const mm of (Array.isArray(m) ? m : [m])) if (mm) mm.needsUpdate = true;
+    });
+    S.engine.syncSystems?.();
+    S.renderer.setPixelRatio(prevPR);
+    S.renderer.setSize(prevW, prevH, false);
+    S.engine.onResize?.(prevW, prevH);
+    S.engine.ctx?.postfx?.notifyCameraCut?.();
+    S.restore();
+  }
+
+  const a = out.find((r) => r.rig === 'ships');
+  const b = out.find((r) => r.rig === 'ships2');
+  return {
+    // The floor for a lap statistic: the same rig, walked twice, one boot apart
+    // in race time. Not zero and cannot be — say how far off instead of pretending.
+    floor: a && b ? {
+      ceiling: +(b.ceiling - a.ceiling).toFixed(1),
+      floorLuma: +(b.floorLuma - a.floorLuma).toFixed(1),
+      jump: +(b.jump - a.jump).toFixed(1),
+    } : null,
+    rigs: out,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 1c. the same pose, under two rigs                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Drive to one pose and render it under each named rig, first rig repeated last
+ * as the floor. This is the looking half — the profiles above are statistics
+ * over a lap and cannot say whether the result is nice.
+ * @param {{t?: number, rigs?: string[], prefix?: string, tol?: number}} [opts]
+ */
+export async function frames(opts = {}) {
+  const wantT = opts.t ?? 0.33;
+  const tol = opts.tol ?? 0.025;
+  const names = opts.rigs ?? ['ships', 'lamp40'];
+  const prefix = opts.prefix ?? 'd57r';
+
+  const S = await stage();
+  const read = reader(S.canvas);
+  const mod = await import('/src/render/Lighting.js');
+  const P = mod.LIGHT_PRESETS.nightLamp;
+  const pristine = clone(P);
+  const lighting = S.MG.ctx.lighting;
+
+  S.freshRace();
+  let ticks = 0;
+  while (S.race.state !== 'racing' && ticks < 12000) { S.tick(); ticks++; }
+
+  let arrived = { ok: false, t: null, ticks };
+  for (; ticks < 24000; ticks++) {
+    const t = S.car.trackT ?? 0;
+    if (Math.abs(t - wantT) < tol) { arrived = { ok: true, t: +t.toFixed(4), ticks }; break; }
+    S.tick();
+  }
+  if (!arrived.ok) { S.restore(); throw new Error(`never reached t=${wantT}`); }
+
+  const plan = [...names, names[0]];
+  const rows = [];
+  const shots = [];
+  for (let i = 0; i < plan.length; i++) {
+    const rig = RIGS.find((r) => r.name === plan[i]);
+    if (!rig) throw new Error(`no rig named ${plan[i]}`);
+    Object.assign(P, clone(pristine));
+    rig.apply(P);
+    lighting.setPreset('nightLamp', { transition: 0 });
+    S.engine.syncSystems?.();
+    if (lighting.lamp?.shadow) lighting.lamp.shadow.needsUpdate = true;
+    for (const c of (lighting.cascades || [])) c.light.shadow.needsUpdate = true;
+    lighting._updateContactShadows?.(S.MG.ctx);
+    S.engine.renderFrame(0);
+    S.engine.renderFrame(0);
+    rows.push({
+      rig: rig.name,
+      isFloor: i === plan.length - 1,
+      lampIntensity: +(lighting.lamp?.intensity ?? -1).toFixed(0),
+      frame: read.frame(),
+      ground: read.ground(),
+    });
+    shots.push({ name: `${prefix}-${rig.name}${i === plan.length - 1 ? '-floor' : ''}`, url: S.canvas.toDataURL('image/png') });
+  }
+
+  Object.assign(P, clone(pristine));
+  lighting.setPreset('nightLamp', { transition: 0 });
+  S.engine.syncSystems?.();
+  S.restore();
+
+  const written = [];
+  for (const s of shots) {
+    const res = await fetch('/__shot?name=' + encodeURIComponent(s.name), { method: 'POST', body: s.url });
+    written.push((await res.json()).path);
+  }
+  return {
+    arrived, rows, written,
+    floorDelta: +(rows[rows.length - 1].ground.mean - rows[0].ground.mean).toFixed(2),
   };
 }
 

@@ -14,7 +14,7 @@ become false. Both corrections are recorded in place.
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
 | **D53** | the car's cast shadow lands entirely under the car | MAJOR; **explained, waiting on a look decision**. The shadow is 233 px of a 1600&times;900 frame, all of it inside the car's own outline &mdash; the arithmetic of a lamp 53.9&deg; up. A rendered ladder puts four lower lamps to the user, brightness-matched, with the cast shadow isolated and counted (110 &rarr; 19&times;, 80 &rarr; 29&times;). *Leave it* is on the page as an explicit outcome |
-| **D57** | bedroom is unplayably dark in two places | MAJOR; **exposure shipped at 1.20&rarr;1.95 and the choice was made on one pose**. Measured since across 24 points of the lap: ground luma spans 20.5..205.5, 11 of 24 frames are >20% crushed, and the worst (80% crushed) was never in the ladder. The lift buys the dark end a median of 12&rarr;21 and costs the bright end 13&times; its clipping. A global multiplier cannot serve a 185-luma range. Needs the playthrough, and probably a local instrument instead |
+| **D57** | bedroom's contrast, both ends of it | MAJOR; **driven, and the brief is now the user's**: stay dark, no very-strong-light places, don't darken the darkest. Measured: the lamp's *irradiance* is a ceiling control with **no floor cost** &mdash; &minus;25/40/55% drops the lap ceiling 24.8/48.7/73.0 against a floor of &plusmn;3.8, while cutting it 55% changes the lap's darkest frame by **0.03% of pixels at a peak of 2**. Lamp *height* is the wrong lever (ceiling &minus;8.8, lap median 79&rarr;36). Awaiting a pick from the chooser |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
 | **D56** | eliminated with cars still behind you | MAJOR; **FIXED**. Only the standings tail &mdash; the car the HUD shows last &mdash; is now a candidate; the spatial `roadDistance` gap still decides whether it goes. Disagreements **35.7% &rarr; 0%**, elimination count unchanged (14 vs 16 control) |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
@@ -4183,6 +4183,84 @@ way, because the bright end was never rendered.
 reports per-point percentiles (a mean cannot tell "evenly lit at 140" from "half crushed, half
 clipped, averaging 140", and those are opposite answers to a contrast question).
 `exposures({t})` runs the ramp at one pose with the first value repeated last as a floor.
+
+
+### The lamp is a ceiling control with no floor cost — `tools/night-range.js` `profiles()`
+
+The user drove it and gave a brief: *"the contrast is too strong. And there are parts where
+you pass from very low light to strong light very quickly. I like the dark parts and the
+headlights, so I'd stay more on the dark side, with no place under very strong light (but
+without getting the darkest spots even more dark)."*
+
+Three requirements, so three statistics, walked over a full lap at 24 points per rig, one race
+per rig from an identical start. **Floor (the shipped rig walked twice): ceiling ±3.8, dark
+end ±0.4.**
+
+**THE FINDING: turning the lamp DOWN moves only the bright end.**
+
+| setting | irradiance | ceiling | dark end | lap median | frames >20% crushed | worst clipping |
+|---|---|---|---|---|---|---|
+| ships | 5.60 | 209.2 | 17.6 | 91.6 | 11 of 24 | 15.3% |
+| −25% | 4.20 | **184.4** (−24.8) | 17.0 | 78.6 | 13 | 5.5% |
+| −40% | 3.36 | **160.5** (−48.7) | 19.6 | 61.4 | 15 | 4.6% |
+| −55% | 2.52 | **136.2** (−73.0) | 16.9 | 50.9 | 16 | 2.3% |
+| FLOOR — ships again | 5.60 | 205.4 (−3.8) | 18.0 | 86.2 | 14 | 15.0% |
+
+**And the mechanism is confirmed at the pixel, with its own control.** At t = 0.850, the lap's
+darkest point, cutting the lamp by 55% changes **0.03% of pixels at a peak of 2 levels** — the
+frames are the same picture. The same rigs, the same code, the same run, at t = 0.305: **99.9%
+of pixels at a peak of 224.** The rig applies; the light does not reach. Whatever lights the
+dark stretch — ambient 0.18, fill 0.26, the sun term at 0.44, the headlights — the bedside
+lamp is not part of it.
+
+That is why this works where exposure could not. Exposure is a multiplier on everything, so it
+cannot move one end of a 192-luma range without moving the other. The lamp only touches the
+end that needs moving.
+
+**The cost, stated: the middle of the lap does get darker.** Lap median 91.6 → 78.6 / 61.4 /
+50.9 and crushed frames 11 → 13 / 15 / 16. The *darkest* spot is untouched, but "more of the
+lap is dark" is real and is the trade being bought.
+
+**What lowering the lamp's HEIGHT does instead** — the user's direct question, from the
+previous run (floor ±4.0):
+
+| lamp y | ceiling | dark end | lap median | frames >20% crushed |
+|---|---|---|---|---|
+| 205 (ships) | 201.9 | 17.0 | 79.3 | 14 of 24 |
+| 150 | 204.9 | 16.9 | 55.1 | 16 |
+| 110 | 194.5 | 15.2 | 39.5 | 17 |
+| 80 | 193.1 | 16.9 | **36.0** | 19 |
+
+A worse answer to this brief on every count: the ceiling barely moves (−8.8 at y = 80, about
+2x the floor), the dark end is unchanged, and the middle of the lap collapses. It makes more of
+the track dark **without taking the bright peak away** — the opposite of what was asked. It
+remains the only lever that gives the car a cast shadow (D53); it is just not a contrast fix.
+
+**VOID — the tone curve.** Swapping ACES for AgX came back inside the floor, which reads as
+"the tone curve does not help" and is not that. PostFX's colour grade owns the tone map
+(`_gradeOwnsToneMap === true`, confirmed live) and parks the renderer on `NoToneMapping` for
+the composite, so `renderer.toneMapping` never reaches a pixel. A real shoulder test means
+changing the curve inside the grade pass and has not been done. **This was the elegant answer
+and it is still untested.**
+
+**NOT MEASURABLE — the transitions.** The brief's "very low to strong light very quickly" was
+scored as the largest step in ground luma between adjacent sample points. Its floor came back
+at **28.3** in one run and **4.9** in another, against candidate differences of about 16. At 24
+samples a lap the statistic is dominated by where the samples happen to land. Reported as
+unusable rather than as a number.
+
+**Four faults in the walk itself**, each of which produced 24 plausible numbers that were not a
+lap, and each now asserted rather than assumed:
+
+* an **eliminated** player's `trackT` never changes again, so the walk watched a frozen number
+  for 333 s of race time and reported "never crossed the start line";
+* **three laps end the race** — `totalLaps` is now 999 and elimination is off for the walk;
+* the **grid reset looks exactly like a lap wrap** (`trackT` drops from 0.96 to the line), so
+  `prevT` is re-read only after the countdown;
+* a walk **started mid-lap** fires every remaining boundary in consecutive ticks — 24 samples
+  at one pose, with correct-looking `t` values, because they are read from the car.
+
+Chooser: https://claude.ai/code/artifact/465e08f3-0ea9-4d69-a954-924b7bbe7658
 
 ## D58 — The game freezes because respawning a car recompiles every shader in the game — MAJOR — **FIXED** (the blink moved off the light-bearing node)
 
