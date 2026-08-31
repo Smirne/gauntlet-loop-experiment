@@ -278,6 +278,61 @@ function clampFogDensity(v) {
  *
  * `?nightexp=1.2` restores the old value for an A/B.
  */
+// The bedside lamp's brightness, and its height.
+//
+// Both are here rather than inline because both are look decisions the user is
+// still driving, and because they answer two DIFFERENT complaints that were
+// being confused with each other (see D57 and D53):
+//
+//   irradiance  is a CEILING control with no floor cost. Measured over a lap:
+//               -25/-40/-55% drops the brightest ground reading by 24.8/48.7/73.0
+//               against a walk-to-walk floor of +/-3.8, while the DARKEST reading
+//               does not move at all. At the lap's darkest point, cutting the lamp
+//               by 55% changes 0.03% of pixels by a peak of 2 levels -- the same
+//               picture -- while the same change at the bright end moves 99.9% of
+//               pixels at a peak of 224. The lamp simply does not light the dark
+//               parts of this track, so turning it down cannot darken them. That
+//               is why this works where the exposure lift did not: exposure is a
+//               multiplier on everything.
+//
+//   height      is a SHADOW control and a poor contrast control. Lowering it barely
+//               touches the ceiling (-8.8 at y = 80, about 2x the floor) and
+//               collapses the middle of the lap (median 79.3 -> 36.0). What it does
+//               do is give the car a cast shadow: the lamp is a fixed point in the
+//               room, so the elevation from car to lamp swings from 29.7 to 78.2
+//               degrees around one lap, and at the shipped height the middle half of
+//               the track has no cast shadow at all.
+//
+// They interact, and not in the obvious direction. Dimming the lamp at the SHIPPED
+// height costs what little shadow there is (median 114 -> 76 px, and the middle of
+// the lap goes to 0). Dimming it at y = 110 costs nothing (median 310 -> 318). A
+// low lamp puts more of its output at grazing angles, where a shadow is long, so
+// there is shadow to spare.
+const NIGHT_LAMP_IRRADIANCE = (() => {
+  // 5.60 shipped originally. 4.20 is -25%: the brightest ground reading on the lap
+  // drops 24.8 and clipping goes 15.3% -> 5.5%, while the lap median moves only 13.
+  // `&lampirr=3.36` is -40%, the more visible option.
+  const SHIPPED = 4.20;
+  try {
+    const v = new URLSearchParams(location.search).get('lampirr');
+    if (v === null || v === '') return SHIPPED;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.min(40, n) : SHIPPED;
+  } catch (_) { return SHIPPED; }
+})();
+
+const NIGHT_LAMP_Y = (() => {
+  // Unchanged at 205 until the shadow question is decided. `&lampy=110` is the
+  // height that gives the middle of the lap a real cast shadow.
+  const SHIPPED = 205;
+  try {
+    const v = new URLSearchParams(location.search).get('lampy');
+    if (v === null || v === '') return SHIPPED;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 20 ? Math.min(400, n) : SHIPPED;
+  } catch (_) { return SHIPPED; }
+})();
+
 const NIGHT_EXPOSURE = (() => {
   const SHIPPED = 1.95;
   try {
@@ -501,7 +556,7 @@ fog: { color: 0x92979e, density: 0.00060 },
     // three intensity is derived as irradiance * distance^2 because punctual
     // lights are physically falling off since r155.
     lamp: {
-      color: 0xffc27a, irradiance: 5.6, offset: [-118, 205, -92],
+      color: 0xffc27a, irradiance: NIGHT_LAMP_IRRADIANCE, offset: [-118, NIGHT_LAMP_Y, -92],
       angle: 0.66, penumbra: 0.58, shadow: true,
     },
     fog: { color: 0x202239, density: 0.00080 },

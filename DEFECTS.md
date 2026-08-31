@@ -13,8 +13,8 @@ become false. Both corrections are recorded in place.
 |---|---|---|
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
-| **D53** | the car's cast shadow lands entirely under the car | MAJOR; **explained, waiting on a look decision**. The shadow is 233 px of a 1600&times;900 frame, all of it inside the car's own outline &mdash; the arithmetic of a lamp 53.9&deg; up. A rendered ladder puts four lower lamps to the user, brightness-matched, with the cast shadow isolated and counted (110 &rarr; 19&times;, 80 &rarr; 29&times;). *Leave it* is on the page as an explicit outcome |
-| **D57** | bedroom's contrast, both ends of it | MAJOR; **driven, and the brief is now the user's**: stay dark, no very-strong-light places, don't darken the darkest. Measured: the lamp's *irradiance* is a ceiling control with **no floor cost** &mdash; &minus;25/40/55% drops the lap ceiling 24.8/48.7/73.0 against a floor of &plusmn;3.8, while cutting it 55% changes the lap's darkest frame by **0.03% of pixels at a peak of 2**. Lamp *height* is the wrong lever (ceiling &minus;8.8, lap median 79&rarr;36). Awaiting a pick from the chooser |
+| **D53** | the car has no cast shadow for half the lap | MAJOR; **located**. Not uniform: the lamp is a fixed point, so car-to-lamp elevation swings 29.7&ndash;78.2&deg; round one lap and the shadow with it &mdash; **7 of 16 sample points under 100 px, one at 1200**, floor 0 px at all 48 samples. `&lampy=110` takes it to 4 of 16, y&nbsp;80 to 2 of 16. And dimming the lamp costs shadow at 205 but **nothing at 110**. Needs a look call |
+| **D57** | bedroom's contrast, both ends of it | MAJOR; **lamp irradiance shipped at 5.60&rarr;4.20** (&minus;25%), `&lampirr=` to drive the alternatives. It is a ceiling control with **no floor cost**: cutting the lamp 55% changes the lap's darkest frame by 0.03% of pixels at a peak of 2, while the same change moves the bright frame by 99.9%. Lamp *height* is the wrong contrast lever (ceiling &minus;8.8, lap median 79&rarr;36) and is left at 205. Needs a playthrough |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
 | **D56** | eliminated with cars still behind you | MAJOR; **FIXED**. Only the standings tail &mdash; the car the HUD shows last &mdash; is now a candidate; the spatial `roadDistance` gap still decides whether it goes. Disagreements **35.7% &rarr; 0%**, elimination count unchanged (14 vs 16 control) |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
@@ -3623,6 +3623,68 @@ The ladder now throws instead of rendering a pose it did not reach.
 **Still a look decision, still the user's.** Option 2 (leave it) is on the page as an explicit
 outcome: D53 was reported as a missing shadow and the shadow is not missing.
 
+
+### Where on the lap the shadow is missing — `tools/night-range.js` `shadowWalk()`
+
+Asked by the user while choosing a lamp setting: *"is the shadow problem in all the track or
+in some specific points?"*
+
+**Specific points, and it is the middle half of the lap.** The lamp is a fixed point in the
+room, not a sun — `offset` is a world position — so the elevation from car to lamp is a
+function of where the car IS. Over one lap at the shipped height it swings from **29.7 deg to
+78.2 deg**, and shadow length is the cotangent of that: 0.21x caster height under the bedside
+table, 1.75x at the far end of the carpet.
+
+Measured the D53 way at every sample point of a lap walk: render the pose, render it again with
+the car's 16 shadow casters off, difference the two. **Read back at 800x450, and the floor —
+the same state rendered twice — came back at 0 px at every one of 48 sample points.**
+
+| rig | min | median | max | points with < 100 px |
+|---|---|---|---|---|
+| ships (y 205) | 5 | 114 | 1200 | **7 of 16** |
+| y 110 | 0 | 310 | 1470 | 4 of 16 |
+| y 80 | 33 | 744 | 2580 | 2 of 16 |
+
+So it is not "the car has no shadow". It is **a 200x swing around one lap**, with roughly half
+the track at nothing and one point (t = 0.500) already carrying 1200 px at the shipped height.
+The pose D53 originally measured — 233 px at 1600x900, about 58 at this readback — was a
+below-median spot, which is worth knowing about that number.
+
+**And elevation alone does not predict it**, which is the interesting part. At t = 0.625 the
+shipped rig has elevation 29.7 deg and a shadow length of 1.75x — better geometry than y = 110
+averages — and still only 174 px, because that is the far end of the carpet and there is almost
+no light there to cast with. Two factors pull against each other: the places with the longest
+shadow geometry are the places furthest from the lamp. Lowering the lamp actually made t =
+0.125..0.19 slightly WORSE (225 -> 151, 198 -> 137) for exactly that reason.
+
+**The interaction with the D57 contrast fix, matched sample positions, N = 12 both:**
+
+| t | lamp 205, -25% | lamp 110, -25% |
+|---|---|---|
+| 0.25 | 12 | 255 |
+| 0.33 | **0** | 1130 |
+| 0.42 | 13 | 153 |
+| 0.50 | 10 | 2218 |
+| 0.58 | 2 | 1144 |
+| 0.67 | **0** | 7621 |
+| 0.75 | 88 | 1224 |
+| median | 76 | 318 |
+| points < 100 px | 8 of 12 | **1 of 12** |
+
+**Dimming the lamp at the SHIPPED height costs what little shadow there is** — the whole middle
+of the lap goes to 0..13 px. **Dimming it at y = 110 costs nothing** (median 310 -> 318, inside
+the noise of a 12-vs-16-sample comparison). A low lamp puts more of its output at grazing
+angles, where shadows are long, so there is shadow to spare and the contrast cut can be taken
+out of it for free.
+
+That is the reverse of what I expected before measuring, and it changes the advice: the two
+changes are not independent trades, they are complementary in one direction only.
+
+**Caveat, stated rather than buried.** The `ships`/`y110`/`y80` set is N = 16 and the
+`lamp25`/`y110lamp25` pair is N = 12, so their sample positions differ and cross-set medians
+are indicative rather than measured. Within each set the positions are identical and the
+per-point numbers are exact, floor 0.
+
 ## D54 — The headlight is tuned for the far end of its own beam and clips to white at the near end — MAJOR — **FIXED** (ships at N=1, decay 0.6)
 
 Raised by the D52 discriminator, from evidence it was not looking for.
@@ -4261,6 +4323,29 @@ lap, and each now asserted rather than assumed:
   at one pose, with correct-looking `t` values, because they are read from the car.
 
 Chooser: https://claude.ai/code/artifact/465e08f3-0ea9-4d69-a954-924b7bbe7658
+
+
+### Shipped: the lamp goes to 4.20, and both knobs get an override
+
+`nightLamp.lamp.irradiance` **5.60 -> 4.20** (&minus;25%), from the user's *"I'd go to 40% or
+25%"*. The conservative end of what they asked for, because it is the one that costs least of
+the lap median (&minus;13 against &minus;30 at &minus;40%), and because both are now one flag
+apart:
+
+    &lampirr=3.36    the -40% option
+    &lampirr=5.6     what shipped before
+    &lampy=110       the lamp height that gives the middle of the lap a cast shadow
+
+Height is **unchanged at 205** on purpose: it is a shadow decision (D53), not a contrast one,
+and the user asked for it only *"if needed for shadows"*. The shadow walk says it is needed —
+half the track has no cast shadow without it — but that is a separate look call and it has not
+been driven yet.
+
+Verified live on both settings: `irradiance` 4.20 / lamp intensity 270535 at the default, and
+3.36 / 115880 with `&lampirr=3.36&lampy=110`.
+
+**Still unverified**: nobody has driven either. Marked shipped-but-unverified for the same
+reason the exposure was, and this time the ladder covered both ends of the lap.
 
 ## D58 — The game freezes because respawning a car recompiles every shader in the game — MAJOR — **FIXED** (the blink moved off the light-bearing node)
 

@@ -310,6 +310,12 @@ export const RIGS = [
   { name: 'lamp40', label: 'lamp irradiance -40%', apply: (P) => { P.lamp.irradiance = 3.36; } },
   { name: 'lamp55', label: 'lamp irradiance -55%', apply: (P) => { P.lamp.irradiance = 2.52; } },
 
+  // The combination the user is actually weighing: turn the lamp down for the
+  // contrast, and move it down for the shadow. They pull against each other —
+  // the shadow needs light to be cast with, and the contrast fix removes light.
+  { name: 'y110lamp25', label: 'lamp at 110, irradiance -25%', apply: (P) => { P.lamp.offset = [-118, 110, -92]; P.lamp.irradiance = 4.20; } },
+  { name: 'y110lamp40', label: 'lamp at 110, irradiance -40%', apply: (P) => { P.lamp.offset = [-118, 110, -92]; P.lamp.irradiance = 3.36; } },
+
   // Exposure back to where it was, for the record.
   { name: 'exp120', label: 'exposure back to 1.20', apply: (P) => { P.exposure = 1.20; } },
 
@@ -514,6 +520,168 @@ export async function profiles(opts = {}) {
     } : null,
     rigs: out,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* 1d. where on the lap does the car have a shadow at all              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * D53 measured the car's cast shadow at ONE pose and found 233 px of a 1600x900
+ * frame, all of it under the car. The obvious next question, and the user's:
+ * is that the whole lap, or that spot?
+ *
+ * It should NOT be the whole lap, and the reason is geometry. The lamp is a
+ * fixed point in the room, not a sun — `offset` is a world position. So the
+ * elevation from car to lamp is a function of where the car IS: nearly overhead
+ * when it drives under the bedside table, low and raking at the far end of the
+ * carpet. Shadow length is horizontal/vertical of that vector, so it changes
+ * round the lap by a large factor. What ALSO changes is how much light is there
+ * to cast it with, and those two work against each other: the places with the
+ * longest shadow geometry are the places furthest from the lamp.
+ *
+ * Measured the same way as tools/shadow-ladder.js — render the pose, render it
+ * again with the car's shadow casters off, and the difference is the cast shadow
+ * and nothing else — but now at every sample point of a lap walk, with its own
+ * floor at every point.
+ *
+ * @param {{samples?: number, rigs?: string[], maxTicks?: number, onRig?: Function}} [opts]
+ */
+export async function shadowWalk(opts = {}) {
+  const N = opts.samples ?? 16;
+  const names = opts.rigs ?? ['ships'];
+  const maxTicks = opts.maxTicks ?? 40000;
+  const S = await stage();
+  const mod = await import('/src/render/Lighting.js');
+  const P = mod.LIGHT_PRESETS.nightLamp;
+  const pristine = clone(P);
+  const lighting = S.MG.ctx.lighting;
+  const canvas = S.canvas;
+
+  const casters = (S.MG.ctx.player?.visual?.meshes || []).filter((m) => m.castShadow);
+  if (!casters.length) throw new Error('no shadow casters on the player — this would measure nothing');
+  const setCasting = (on) => { for (const m of casters) m.castShadow = on; };
+
+  // The shadow is small: 233 px of 1.44M at the shipped rig. Reading it back at
+  // 800x450 keeps roughly a quarter of those pixels, which is still ~58 — well
+  // clear of a floor that comes back at single digits. Reading at the 160x90 the
+  // luma statistics use would put the whole shadow under one pixel.
+  const RW = 800, RH = 450;
+  const oc = new OffscreenCanvas(RW, RH);
+  const g = oc.getContext('2d', { willReadFrequently: true });
+  const grab = () => {
+    g.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, RW, RH);
+    return g.getImageData(0, 0, RW, RH).data;
+  };
+  const lum = (p, o) => 0.2126 * p[o] + 0.7152 * p[o + 1] + 0.0722 * p[o + 2];
+  // `b` is the frame with the car casting NOTHING, so it is brighter wherever
+  // the car's shadow lands. Count those pixels.
+  const darkerBy = (a, b) => {
+    let n = 0;
+    for (let i = 0; i < RW * RH; i++) { const o = i * 4; if (lum(b, o) - lum(a, o) >= 6) n++; }
+    return n;
+  };
+
+  const refresh = () => {
+    if (lighting.lamp?.shadow) lighting.lamp.shadow.needsUpdate = true;
+    for (const c of (lighting.cascades || [])) c.light.shadow.needsUpdate = true;
+    S.engine.renderFrame(0);
+    S.engine.renderFrame(0);   // the map flagged above is only USED by the second
+  };
+
+  const want = Array.from({ length: N }, (_, i) => i / N);
+  const out = [];
+
+  try {
+    for (const name of names) {
+      const rig = RIGS.find((r) => r.name === name);
+      if (!rig) throw new Error(`no rig named ${name}`);
+      Object.assign(P, clone(pristine));
+      rig.apply(P);
+      lighting.setPreset('nightLamp', { transition: 0 });
+      S.engine.syncSystems?.();
+
+      S.freshRace();
+      let ticks = 0;
+      while (S.race.state !== 'racing' && ticks < maxTicks) { S.tick(); ticks++; }
+      let prevT = S.car.trackT ?? 0;
+      let wrapped = false;
+      while (!wrapped && ticks < maxTicks) {
+        S.tick(); ticks++;
+        const t = S.car.trackT ?? 0;
+        if (t < prevT - 0.5) wrapped = true;
+        prevT = t;
+      }
+
+      const rows = [];
+      let next = 0;
+      while (next < N && ticks < maxTicks) {
+        S.tick(); ticks++;
+        const t = S.car.trackT ?? 0;
+        if (t < want[next]) { prevT = t; continue; }
+        prevT = t;
+
+        // Freeze here and take the pair, plus this point's own floor.
+        refresh();
+        const a = grab();
+        refresh();
+        const a2 = grab();          // FLOOR: same state, twice
+        setCasting(false);
+        refresh();
+        const b = grab();
+        setCasting(true);
+        refresh();
+
+        const lamp = lighting.lamp?.position;
+        const car = S.car.position ?? S.car.root?.position;
+        let dist = null, elev = null;
+        if (lamp && car) {
+          const dx = lamp.x - car.x, dy = lamp.y - car.y, dz = lamp.z - car.z;
+          const horiz = Math.hypot(dx, dz);
+          dist = +Math.hypot(dx, dy, dz).toFixed(0);
+          elev = +((Math.atan2(dy, horiz) * 180) / Math.PI).toFixed(1);
+        }
+
+        rows.push({
+          t: +t.toFixed(4),
+          shadowPx: darkerBy(a, b),
+          floorPx: darkerBy(a, a2),
+          lampDist: dist,
+          elevation: elev,
+          shadowLen: elev !== null ? +(1 / Math.tan((elev * Math.PI) / 180)).toFixed(2) : null,
+        });
+        next++;
+      }
+      if (rows.length < N) throw new Error(`${name}: only ${rows.length}/${N} samples`);
+
+      const px = rows.map((r) => r.shadowPx);
+      out.push({
+        rig: name,
+        label: rig.label,
+        lampY: +(lighting.lamp?.position?.y ?? -1).toFixed(0),
+        samples: rows.length,
+        min: Math.min(...px),
+        max: Math.max(...px),
+        median: px.slice().sort((x, y) => x - y)[px.length >> 1],
+        // The number that answers the question: at how many places on the lap is
+        // there effectively no cast shadow at all?
+        pointsUnder100: rows.filter((r) => r.shadowPx < 100).length,
+        worstFloor: Math.max(...rows.map((r) => r.floorPx)),
+        rows,
+      });
+      try { opts.onRig?.(out[out.length - 1]); } catch (_) { /* a reporter must not stop the run */ }
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  } finally {
+    setCasting(true);
+    Object.assign(P, clone(pristine));
+    lighting.setPreset('nightLamp', { transition: 0 });
+    S.engine.syncSystems?.();
+    S.restore();
+  }
+
+  return { rigs: out };
 }
 
 /* ------------------------------------------------------------------ */
