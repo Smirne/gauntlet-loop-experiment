@@ -4358,10 +4358,20 @@ not a comparison. It is why the D53 and D57 chooser pages are flip-to-compare ra
 side-by-side, and the running build had no equivalent.
 
 `tools/lamp-live.js` binds the six candidates to keys and switches them in place, mid-corner,
-with no reload and no loss of race state (`[` `]` step, `\` reset, `1`..`6` jump). Verified
-live: lamp y 214 -> 119 and intensity 270535 -> 144850 -> 115880 on keypress, restored on
-reset. `transition: 0` deliberately — a cross-fade makes an A/B unreadable because you end up
-judging the blend.
+with no reload and no loss of race state (`Q` `E` step, `1`..`6` jump). `transition: 0`
+deliberately — a cross-fade makes an A/B unreadable because you end up judging the blend.
+
+**The first key choice was wrong twice, and the second mistake is the instructive one.** `[`
+and `]` need AltGr on the user's Italian keyboard, so the tool was simply unusable. But `\`,
+which the tool used for "reset the lamp", is **already the game's restart** — bound at both
+`Backslash` and `IntlBackslash` precisely because Input.js had this exact layout problem once
+before and its own source comment says so. A reset key would have restarted the race. Keys are
+now matched on `KeyboardEvent.code`, the physical key, and the free letters next to the
+throttle are Q and E — W, S, A, D, Space, Shift, B, R, C and V are all taken.
+
+Verified live on the fixed bindings: E steps y 214 -> 119 with intensity 270535 -> 144850 ->
+115880, Q steps back, `Digit5` jumps to y 89, `Digit1` returns to 214/270535, `Numpad3` works,
+and the race stays in `racing` throughout.
 
 **And the combination the user pointed at, profiled — with a caveat that matters more than the
 table.** `lampy=110` at the shipped `-25%`:

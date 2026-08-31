@@ -12,9 +12,20 @@
 // with no reload and no loss of race state. Drive into the stretch you care
 // about, then tap through them.
 //
-//   [  and  ]     previous / next candidate
-//   \             back to what ships
+//   Q  and  E     previous / next candidate
 //   1 .. 6        jump straight to one
+//
+// KEYS ARE MATCHED ON `KeyboardEvent.code`, NOT `.key`. The first version used
+// `[`, `]` and `\`, which is wrong twice over on an Italian keyboard: the
+// brackets need AltGr, and `\` is ALREADY BOUND — it is the game's restart, in
+// both its Backslash and IntlBackslash positions, precisely because Input.js
+// learned this same lesson once already (see the comment on DEFAULT_KEYS). So a
+// "reset the lamp" key would have reset the race instead.
+//
+// `code` is the physical key, so KeyQ is the key left of W on every layout.
+// Q and E are chosen because they are adjacent to the throttle key and are the
+// only unbound letters nearby: W, S, A, D, Space, Shift, B, R, C and V are all
+// taken by Input.js.
 //
 // Load it from the console once, then drive:
 //
@@ -24,12 +35,12 @@
 // back exactly as it was found.
 
 const CANDIDATES = [
-  { key: '1', name: 'ships now', y: 205, irr: 4.20 },
-  { key: '2', name: 'lamp lower', y: 110, irr: 4.20 },
-  { key: '3', name: 'lamp lower + dimmer', y: 110, irr: 3.36 },
-  { key: '4', name: 'dimmer only', y: 205, irr: 3.36 },
-  { key: '5', name: 'lamp lowest', y: 80, irr: 4.20 },
-  { key: '6', name: 'before any of this', y: 205, irr: 5.60 },
+  { key: '1', code: 'Digit1', name: 'ships now', y: 205, irr: 4.20 },
+  { key: '2', code: 'Digit2', name: 'lamp lower', y: 110, irr: 4.20 },
+  { key: '3', code: 'Digit3', name: 'lamp lower + dimmer', y: 110, irr: 3.36 },
+  { key: '4', code: 'Digit4', name: 'dimmer only', y: 205, irr: 3.36 },
+  { key: '5', code: 'Digit5', name: 'lamp lowest', y: 80, irr: 4.20 },
+  { key: '6', code: 'Digit6', name: 'before any of this', y: 205, irr: 5.60 },
 ];
 
 let state = null;
@@ -73,7 +84,7 @@ function apply(i) {
   overlay().textContent =
     `${c.key}  ${c.name}\n`
     + `lamp y ${c.y}   irradiance ${c.irr.toFixed(2)}\n`
-    + `[ ] step   \\ reset`;
+    + `Q E step   1-6 jump`;
 }
 
 export async function enable() {
@@ -93,17 +104,16 @@ export async function enable() {
     handler: null,
   };
 
-  // Capture phase, and keys the game does not use. Input.js reads the arrow
-  // keys, WASD and space; brackets are free. preventDefault so the browser does
-  // not treat them as anything either.
+  // Capture phase, so this runs before Input.js and can stop the event reaching
+  // it. Matched on `code` — the physical key — so the binding is the same on
+  // every layout. Digits are accepted from the number row and the numpad.
   state.handler = (ev) => {
-    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.repeat) return;
     let next = null;
-    if (ev.key === ']') next = (state.i + 1) % CANDIDATES.length;
-    else if (ev.key === '[') next = (state.i - 1 + CANDIDATES.length) % CANDIDATES.length;
-    else if (ev.key === '\\') next = 0;
+    if (ev.code === 'KeyE') next = (state.i + 1) % CANDIDATES.length;
+    else if (ev.code === 'KeyQ') next = (state.i - 1 + CANDIDATES.length) % CANDIDATES.length;
     else {
-      const k = CANDIDATES.findIndex((c) => c.key === ev.key);
+      const k = CANDIDATES.findIndex((c) => c.code === ev.code || `Numpad${c.key}` === ev.code);
       if (k >= 0) next = k;
     }
     if (next === null) return;
