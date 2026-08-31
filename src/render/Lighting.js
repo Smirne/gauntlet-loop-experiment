@@ -309,10 +309,14 @@ function clampFogDensity(v) {
 // low lamp puts more of its output at grazing angles, where a shadow is long, so
 // there is shadow to spare.
 const NIGHT_LAMP_IRRADIANCE = (() => {
-  // 5.60 shipped originally. 4.20 is -25%: the brightest ground reading on the lap
-  // drops 24.8 and clipping goes 15.3% -> 5.5%, while the lap median moves only 13.
-  // `&lampirr=3.36` is -40%, the more visible option.
-  const SHIPPED = 4.20;
+  // 5.60 -> 4.20 -> 3.36. The last step is -40% overall, chosen by the user from a
+  // live flip (tools/lamp-live.js) rather than from separate page loads, because
+  // the URL ladder produced "hard to tell": each setting needed its own boot, so
+  // the comparison was against a memory. Measured at this setting, with the lamp
+  // at 110: the lap's brightest ground reading falls 190.1 -> 164.6 and the worst
+  // clipping 11.9% -> 4.5%, while the darkest reading does not move (17.0 -> 21.6,
+  // against a walk-to-walk floor of 0.0). `&lampirr=5.6` is the original.
+  const SHIPPED = 3.36;
   try {
     const v = new URLSearchParams(location.search).get('lampirr');
     if (v === null || v === '') return SHIPPED;
@@ -322,9 +326,19 @@ const NIGHT_LAMP_IRRADIANCE = (() => {
 })();
 
 const NIGHT_LAMP_Y = (() => {
-  // Unchanged at 205 until the shadow question is decided. `&lampy=110` is the
-  // height that gives the middle of the lap a real cast shadow.
-  const SHIPPED = 205;
+  // 205 -> 110. This is the SHADOW decision (D53), not the contrast one, and the
+  // two were deliberately shipped as separate knobs because each is bad at the
+  // other's job: height barely touches the ceiling (-8.8 at y = 80, about 2x the
+  // floor) and dropping the lamp does not fix the clipping (10.0% at y110 -25%
+  // against 11.9% shipped).
+  //
+  // What it does buy: at 205 the car has no cast shadow for roughly half the lap
+  // (7 of 16 sample points under 100 px, floor 0 px at all 48 samples). At 110
+  // that is 4 of 16, and with the irradiance cut above it is 1 of 12 — because a
+  // low lamp puts more of its output at grazing angles, where shadows are long,
+  // so there is shadow to spare to pay for the dimming. `&lampy=205` is the
+  // original height.
+  const SHIPPED = 110;
   try {
     const v = new URLSearchParams(location.search).get('lampy');
     if (v === null || v === '') return SHIPPED;

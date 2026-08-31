@@ -13,8 +13,8 @@ become false. Both corrections are recorded in place.
 |---|---|---|
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
-| **D53** | the car has no cast shadow for half the lap | MAJOR; **located**. Not uniform: the lamp is a fixed point, so car-to-lamp elevation swings 29.7&ndash;78.2&deg; round one lap and the shadow with it &mdash; **7 of 16 sample points under 100 px, one at 1200**, floor 0 px at all 48 samples. `&lampy=110` takes it to 4 of 16, y&nbsp;80 to 2 of 16. And dimming the lamp costs shadow at 205 but **nothing at 110**. Needs a look call |
-| **D57** | bedroom's contrast, both ends of it | MAJOR; **lamp irradiance shipped at 5.60&rarr;4.20** (&minus;25%), `&lampirr=` to drive the alternatives. It is a ceiling control with **no floor cost**: cutting the lamp 55% changes the lap's darkest frame by 0.03% of pixels at a peak of 2, while the same change moves the bright frame by 99.9%. Lamp *height* is the wrong contrast lever (ceiling &minus;8.8, lap median 79&rarr;36) and is left at 205. Needs a playthrough |
+| **D53** | the car has no cast shadow for half the lap | MAJOR; **shipped &mdash; lamp height 205&rarr;110**. The lamp is a fixed point, so car-to-lamp elevation swings 29.7&ndash;78.2&deg; round one lap and the shadow with it: at 205, **7 of 16 sample points were under 100 px** (floor 0 px at all 48). At 110 with the irradiance cut, 1 of 12. The shadow walk has not been re-run at the exact shipped pair &mdash; extrapolated from &minus;25%, and labelled as such |
+| **D57** | bedroom's contrast, both ends of it | MAJOR; **shipped &mdash; irradiance 5.60&rarr;3.36**, chosen from a live in-game flip after the URL ladder produced "hard to tell". A ceiling control with **no floor cost**: worst clipping 11.9%&rarr;4.5%, lap dark end unmoved against a floor of 0.0. Needs one more playthrough to confirm |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
 | **D56** | eliminated with cars still behind you | MAJOR; **FIXED**. Only the standings tail &mdash; the car the HUD shows last &mdash; is now a candidate; the spatial `roadDistance` gap still decides whether it goes. Disagreements **35.7% &rarr; 0%**, elimination count unchanged (14 vs 16 control) |
 | **D55** | a pinned frame is not the moment it says it is | CRITICAL (method); `pin-shot` does not survive a boot, and its camera does not follow the step |
@@ -4396,6 +4396,36 @@ was also &plusmn;8.3 against &plusmn;3.8 in the earlier one. Something varies be
 the sample positions do not control (traffic, the line the AI takes, where the director points),
 and at 24 samples the median is not robust to it. So only the dark end (which held at 0.0
 exactly) and the clipping are quoted; the median is dropped rather than explained away.
+
+
+### SHIPPED — candidate 3: lamp at 110, irradiance 3.36
+
+Chosen by the user from the live flip, not from separate page loads. Worth recording that the
+decision only became possible once the comparison was flippable: the same person, given the
+same six settings as URL overrides, said *"hard to tell, maybe I like this best"* and picked a
+different one.
+
+    nightLamp.lamp.offset      [-118, 205, -92]  ->  [-118, 110, -92]
+    nightLamp.lamp.irradiance  5.60 (then 4.20)  ->  3.36
+
+Verified live: `irradiance` 3.36, `offset` [-118, 110, -92], lamp intensity 115880, 0 module
+failures. `&lampy=205` and `&lampirr=5.6` restore the original.
+
+**What this is expected to do, from the measurements that got it here** — and it is two
+different answers to two different complaints that were being asked to share one knob:
+
+| | shipped before | candidate 3 | floor |
+|---|---|---|---|
+| lap ceiling | 190.1 | 164.6 | &plusmn;8.3 |
+| lap dark end | 17.0 | 21.6 | &plusmn;0.0 |
+| worst clipping | 11.9% | **4.5%** | ~1.0 |
+| points with no cast shadow | 7 of 16 | 1 of 12 (at &minus;25%) | 0 px |
+
+**Still unverified at this exact combination: the shadow.** The shadow walk was run at `y110`
+alone and at `y110` with &minus;25%, and both held (median 310 and 318 px). It was NOT run at
+`y110` with &minus;40% — that run was killed after sixteen minutes of blocking the main thread.
+The expectation is that it holds, because dimming at 110 cost nothing at &minus;25%, but that
+is an extrapolation and is labelled as one.
 
 ## D58 — The game freezes because respawning a car recompiles every shader in the game — MAJOR — **FIXED** (the blink moved off the light-bearing node)
 
