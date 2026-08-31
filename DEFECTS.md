@@ -13,7 +13,7 @@ become false. Both corrections are recorded in place.
 |---|---|---|
 | **D27** | the livery lever is nearly exhausted | needs a bigger roster, not a fix |
 | **D51** | the texture budget trims the wrong surfaces | MAJOR, unstarted |
-| **D53** | the car has no cast shadow for half the lap | MAJOR; **shipped &mdash; lamp height 205&rarr;110**. The lamp is a fixed point, so car-to-lamp elevation swings 29.7&ndash;78.2&deg; round one lap and the shadow with it: at 205, **7 of 16 sample points were under 100 px** (floor 0 px at all 48). At 110 with the irradiance cut, 1 of 12. The shadow walk has not been re-run at the exact shipped pair &mdash; extrapolated from &minus;25%, and labelled as such |
+| **D53** | the car has no cast shadow for half the lap | MAJOR; **shipped &mdash; lamp height 205&rarr;110**. The lamp is a fixed point, so car-to-lamp elevation swings 29.7&ndash;78.2&deg; round one lap and the shadow with it: at 205, **7 of 16 sample points were under 100 px** (floor 0 px at all 48). At 110 with the irradiance cut, 1 of 12. Re-run at the exact shipped pair: median **556 px**, only **2 of 12** points under 100, floor 0. The two that remain are the far corner of the carpet &mdash; good geometry, no light &mdash; and are not a lamp-position problem |
 | **D57** | bedroom's contrast, both ends of it | MAJOR; **shipped &mdash; irradiance 5.60&rarr;3.36**, chosen from a live in-game flip after the URL ladder produced "hard to tell". A ceiling control with **no floor cost**: worst clipping 11.9%&rarr;4.5%, lap dark end unmoved against a floor of 0.0. Needs one more playthrough to confirm |
 | **D58** | the game freezes while you drive | MAJOR; **FIXED**. The respawn blink hid the car *and its headlights*, changing `NUM_SPOT_LIGHTS` and recompiling every material, several times a second. Worst mid-race stall 567 ms &rarr; 71 ms; programs made during a race 130 &rarr; 16 |
 | **D56** | eliminated with cars still behind you | MAJOR; **FIXED**. Only the standings tail &mdash; the car the HUD shows last &mdash; is now a candidate; the spatial `roadDistance` gap still decides whether it goes. Disagreements **35.7% &rarr; 0%**, elimination count unchanged (14 vs 16 control) |
@@ -4421,11 +4421,22 @@ different answers to two different complaints that were being asked to share one
 | worst clipping | 11.9% | **4.5%** | ~1.0 |
 | points with no cast shadow | 7 of 16 | 1 of 12 (at &minus;25%) | 0 px |
 
-**Still unverified at this exact combination: the shadow.** The shadow walk was run at `y110`
-alone and at `y110` with &minus;25%, and both held (median 310 and 318 px). It was NOT run at
-`y110` with &minus;40% — that run was killed after sixteen minutes of blocking the main thread.
-The expectation is that it holds, because dimming at 110 cost nothing at &minus;25%, but that
-is an extrapolation and is labelled as one.
+**And the shadow, now measured at the exact shipped pair rather than extrapolated.** The gap
+was real — the walk had only been run at `y110` alone and at `y110` with &minus;25% — so it was
+re-run on what actually ships:
+
+| rig | min | median | max | points < 100 px |
+|---|---|---|---|---|
+| was shipped (y 205, 5.60) | 5 | 114 | 1200 | **7 of 16** |
+| y 110, &minus;25% | 22 | 318 | 7621 | 1 of 12 |
+| **y 110, &minus;40% (ships)** | 16 | **556** | 1142 | **2 of 12** |
+
+Floor 0 px at every sample point, again. The extrapolation held: dimming at 110 does not cost
+the shadow, and the middle of the lap — 0 to 13 px at the old height — now runs 556, 1142,
+1069, 1013, 961, 1043 across t = 0.25..0.75. The two places still under 100 px are t = 0.083
+(elevation 38.2&deg;) and t = 0.167 (21.1&deg;), which is the far corner of the carpet: good
+shadow geometry, almost no light to cast it with. That pair is the residue of D53 and it is not
+a lamp-position problem.
 
 ## D58 — The game freezes because respawning a car recompiles every shader in the game — MAJOR — **FIXED** (the blink moved off the light-bearing node)
 
