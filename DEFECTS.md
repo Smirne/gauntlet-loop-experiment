@@ -4347,6 +4347,46 @@ Verified live on both settings: `irradiance` 4.20 / lamp intensity 270535 at the
 **Still unverified**: nobody has driven either. Marked shipped-but-unverified for the same
 reason the exposure was, and this time the ladder covered both ends of the lap.
 
+
+### "Hard to tell" is the method's fault — `tools/lamp-live.js`
+
+The user drove the URL-override ladder and came back with *"hard to tell, maybe I like this
+best"*, pointing at `&lampy=110`. That is not indecision. Each setting needs its own page load,
+so the comparison is between the frame in front of you and a **memory** of a frame from two
+minutes ago — and this project already knows that a comparison the judge cannot flip between is
+not a comparison. It is why the D53 and D57 chooser pages are flip-to-compare rather than
+side-by-side, and the running build had no equivalent.
+
+`tools/lamp-live.js` binds the six candidates to keys and switches them in place, mid-corner,
+with no reload and no loss of race state (`[` `]` step, `\` reset, `1`..`6` jump). Verified
+live: lamp y 214 -> 119 and intensity 270535 -> 144850 -> 115880 on keypress, restored on
+reset. `transition: 0` deliberately — a cross-fade makes an A/B unreadable because you end up
+judging the blend.
+
+**And the combination the user pointed at, profiled — with a caveat that matters more than the
+table.** `lampy=110` at the shipped `-25%`:
+
+| rig | ceiling | dark end | worst clipping |
+|---|---|---|---|
+| ships (y 205, 4.20) | 190.1 | 17.0 | 11.9% |
+| y 110, &minus;25% | 173.8 | 17.6 | **10.0%** |
+| y 110, &minus;40% | 164.6 | 21.6 | **4.5%** |
+| FLOOR — ships again | 181.8 | 17.0 | 10.9% |
+
+**The useful finding: lowering the lamp does not fix the clipping.** 10.0% against the shipped
+11.9%, where the floor on that column is about 1.0. The blown-out stretch stays blown out. Only
+the irradiance cut removes it (4.5% at &minus;40%). So the setting the user likes is a mood and
+shadow change, not an answer to "no place under very strong light" — those are different knobs
+and they were being asked to do each other's job.
+
+**What is NOT reported from this run, and why.** The lap-median column came back incoherent:
+`y110lamp40` measured a HIGHER median (60.6) than `y110lamp25` (35.6), which is impossible for
+the lamp's own contribution — less light cannot make a lap brighter. This run's ceiling floor
+was also &plusmn;8.3 against &plusmn;3.8 in the earlier one. Something varies between walks that
+the sample positions do not control (traffic, the line the AI takes, where the director points),
+and at 24 samples the median is not robust to it. So only the dark end (which held at 0.0
+exactly) and the clipping are quoted; the median is dropped rather than explained away.
+
 ## D58 — The game freezes because respawning a car recompiles every shader in the game — MAJOR — **FIXED** (the blink moved off the light-bearing node)
 
 Reported from a playthrough: *"sometimes the game slows down / get stuck"*. It is not
